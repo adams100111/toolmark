@@ -33,7 +33,7 @@ Post-1.0 consumer track:          └─► Innov P0 ─► P1 ─► P2 ─► 
 
 | Unit | Repo | Plan | Depends on | Exit check | Status | Branch | Updated |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| T-M1 Core | toolmark | `…-m1-core.md` | — | CI green; round budget `simple_form_within_3_rounds`; tarball smoke | ready | — | 2026-09-24 |
+| T-M1 Core | toolmark | `…-m1-core.md` | — | CI green; round budget `simple_form_within_3_rounds`; tarball smoke | active | `feat/m1-core` | 2026-09-24 |
 | T-M2 Forms | toolmark | `…-m2-forms.md` | T-M1 | round budget `wizard_within_5_rounds`; tarball smoke | todo | — | — |
 | T-M3 Reach | toolmark | `…-m3-reach.md` | T-M2 | same tool via WebMCP + MCP + Playwright (`reach.spec.ts`); tarball smoke incl. `toolmark-mcp` | todo | — | — |
 | T-M4 Tours & tooling | toolmark | `…-m4-tours-tooling.md` | T-M3 | authored + planned tours (3 browsers, axe-clean); Laravel authored tour; same-tools e2e; Laravel + Next.js suites; `docs:build`; lint clean; tarball smoke | todo | — | — |
@@ -222,3 +222,6 @@ also record progress in Innovation's own branch history.
 - 2026-09-24 — Plan audit pass 3: pass-2 proposals applied to spec/overview; cross-plan consistency
   fixed (M1 owns Inertia visit outcomes and WebSocket hooks; shared-files table in the overview);
   lane board synced with the plans. T-M1 stays `ready`.
+- 2026-09-24 — Plan audit complete (4 passes + independent blocker verification; PR #1 merged).
+  Owner goal: execute M1→M5 autonomously to a complete 1.0, stopping only at owner actions.
+  T-M1 started on `feat/m1-core` (worktree `~/repos/toolmark-wt/m1`).
