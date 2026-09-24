@@ -27,8 +27,36 @@ function segments(path: string): string[] {
 }
 
 /**
- * @internal Like {@link flatten}, also returning the paths it refused (prototype keys, empty
- * segments). A refused key's subtree is not visited.
+ * Finds the first unsafe key inside a leaf value (arrays and plain objects, depth-bounded).
+ * Returns its full path, or `null` when the value is safe.
+ */
+function unsafeInside(
+  value: unknown,
+  path: string,
+  depth: number,
+  seen: WeakSet<object>,
+): string | null {
+  if (typeof value !== 'object' || value === null) return null
+  const isArray = Array.isArray(value)
+  if (!isArray && !isPlainObject(value)) return null
+  if (depth > MAX_DEPTH || seen.has(value)) return path
+  seen.add(value)
+  const keys = isArray ? value.map((_, i) => String(i)) : Object.keys(value)
+  for (const key of keys) {
+    const child = `${path}.${key}`
+    if (!isSafePath(key)) return child
+    const found = unsafeInside((value as Record<string, unknown>)[key], child, depth + 1, seen)
+    if (found !== null) return found
+  }
+  seen.delete(value)
+  return null
+}
+
+/**
+ * @internal Like {@link flatten}, also returning the paths it refused: prototype keys and empty
+ * segments anywhere (including inside array / object leaves, reported with their full path, e.g.
+ * `tags.0.__proto__`), cycles and values nested deeper than 64 levels. A refused subtree is not
+ * emitted.
  */
 export function flattenWithRejected(obj: unknown): {
   values: Record<string, unknown>
@@ -36,9 +64,9 @@ export function flattenWithRejected(obj: unknown): {
 } {
   const values: Record<string, unknown> = {}
   const rejected: string[] = []
-  const seen = new WeakSet<object>()
+  const ancestors = new WeakSet<object>()
   const walk = (node: Record<string, unknown>, prefix: string, depth: number): void => {
-    seen.add(node)
+    ancestors.add(node)
     for (const key of Object.keys(node)) {
       const path = prefix === '' ? key : `${prefix}.${key}`
       if (!isSafePath(key) || !isSafePath(path)) {
@@ -46,26 +74,54 @@ export function flattenWithRejected(obj: unknown): {
         continue
       }
       const value = node[key]
-      if (isPlainObject(value) && depth < MAX_DEPTH && !seen.has(value)) {
-        walk(value, path, depth + 1)
-      } else {
-        Object.defineProperty(values, path, {
-          value,
-          enumerable: true,
-          writable: true,
-          configurable: true,
-        })
+      if (isPlainObject(value)) {
+        if (depth >= MAX_DEPTH || ancestors.has(value)) rejected.push(path)
+        else walk(value, path, depth + 1)
+        continue
       }
+      const unsafe = unsafeInside(value, path, depth + 1, new WeakSet())
+      if (unsafe !== null) {
+        rejected.push(unsafe)
+        continue
+      }
+      Object.defineProperty(values, path, {
+        value,
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      })
     }
+    ancestors.delete(node)
   }
   if (isPlainObject(obj)) walk(obj, '', 0)
   return { values, rejected }
 }
 
 /**
+ * @internal Copies plain objects and arrays deeply (own keys) and keeps every other value by
+ * reference (so `File`/`Blob` identity survives), for change detection snapshots.
+ */
+export function snapshotValue<T>(value: T, depth = 0): T {
+  if (depth > MAX_DEPTH) return value
+  if (Array.isArray(value)) return value.map((v) => snapshotValue(v, depth + 1) as unknown) as T
+  if (!isPlainObject(value)) return value
+  const out: Record<string, unknown> = {}
+  for (const key of Object.keys(value)) {
+    Object.defineProperty(out, key, {
+      value: snapshotValue(value[key], depth + 1),
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    })
+  }
+  return out as T
+}
+
+/**
  * Flattens a plain object into leaf dot paths (`{ a: { b: 1 } }` → `{ 'a.b': 1 }`). Arrays and
  * non-plain objects (e.g. `Date`, `File`) are leaves; empty objects produce no path. Keys that are
- * `__proto__`, `prototype` or `constructor` are never emitted. Only own properties are read.
+ * `__proto__`, `prototype` or `constructor` (at any depth, including inside array leaves), cycles
+ * and values nested deeper than 64 levels are never emitted. Only own properties are read.
  * @param obj - The value to flatten (non-objects yield `{}`).
  * @returns A record keyed by dot path.
  */

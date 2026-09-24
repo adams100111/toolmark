@@ -62,6 +62,10 @@ export function resolveJsonSchema(
     return { ok: true, schema: { type: 'object', properties: {}, additionalProperties: false } }
   }
   const reasons: string[] = []
+  const props = (input as Partial<StandardSchemaV1>)['~standard'] as unknown
+  if (typeof props !== 'object' || props === null) {
+    return { ok: false, reason: 'input is not a Standard Schema (no "~standard" property)' }
+  }
   const std = (input['~standard'] as { jsonSchema?: { input?: unknown } }).jsonSchema
   if (std && typeof std.input === 'function') {
     try {

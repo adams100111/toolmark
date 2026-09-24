@@ -1,5 +1,6 @@
 import { PendingStore, type PendingConfirmation } from './confirm.js'
 import { confirmRequestSignals } from './confirm-queue.js'
+import { snapshotHookOf } from './confirm-snapshot.js'
 import { ToolmarkError } from './errors.js'
 import { newId } from './ids.js'
 import { isAllowed, needsConfirmation } from './policy.js'
@@ -95,8 +96,61 @@ export function createCallRuntime(state: RegistryState): CallRuntime {
     })
   }
 
+  /** Takes the tool's confirm snapshot, if it has a snapshot hook. */
+  const takeSnapshot = (entry: Entry): { value: unknown } | undefined => {
+    const hook = snapshotHookOf(entry.tool)
+    if (!hook) return undefined
+    try {
+      return { value: hook.take() }
+    } catch (cause) {
+      state.report({ code: 'tool_threw', message: 'snapshot failed', tool: entry.fullName, cause })
+      return { value: undefined }
+    }
+  }
+  const snapshotPrecheck =
+    (entry: Entry, snapshot: { value: unknown } | undefined) => (): ToolResult<unknown> | null => {
+      const hook = snapshotHookOf(entry.tool)
+      if (!hook || snapshot === undefined) return null
+      let changed = true
+      try {
+        changed = hook.changed(snapshot.value)
+      } catch (cause) {
+        state.report({
+          code: 'tool_threw',
+          message: 'snapshot check failed',
+          tool: entry.fullName,
+          cause,
+        })
+      }
+      return changed
+        ? refuse('stale', 'Form changed since confirmation was requested', { rev: state.rev })
+        : null
+    }
+
   const expiredResult = (): ToolResult<never> =>
     refuse('confirmation_expired', 'The confirmation expired or was already used')
+
+  /**
+   * Validates with `schema`, never throwing: a throwing validator becomes `error` "Tool failed"
+   * plus a `tool_threw` event (C1).
+   */
+  async function check(
+    entry: Entry,
+    value: unknown,
+  ): Promise<{ ok: true; value: unknown } | { ok: false; result: ToolResult<unknown> }> {
+    try {
+      const v = await validateInput(entry.tool.input, value)
+      return v.ok ? v : { ok: false, result: invalid(v.issues) }
+    } catch (cause) {
+      state.report({
+        code: 'tool_threw',
+        message: `Input validation of "${entry.fullName}" threw`,
+        tool: entry.fullName,
+        cause,
+      })
+      return { ok: false, result: errorResult('Tool failed') }
+    }
+  }
 
   /** Asks the inline handler, bounded by `signal` and the confirmation expiry. Never rejects. */
   function askInline(
@@ -318,6 +372,7 @@ export function createCallRuntime(state: RegistryState): CallRuntime {
     caller: Caller,
     callId: string,
     signal: AbortSignal | undefined,
+    precheck?: () => ToolResult<unknown> | null,
   ): Promise<ToolResult<unknown>> {
     return new Promise<ToolResult<unknown>>((resolve) => {
       let settled = false
@@ -343,6 +398,11 @@ export function createCallRuntime(state: RegistryState): CallRuntime {
         }
         if (signal?.aborted) {
           done(cancelled('signal'))
+          return
+        }
+        const refused = precheck?.()
+        if (refused) {
+          done(refused)
           return
         }
         done(await runTool(entry, value, caller, callId, signal))
@@ -403,16 +463,17 @@ export function createCallRuntime(state: RegistryState): CallRuntime {
     const finish = track(callId, name, caller, input)
     if (signal?.aborted) return finish(cancelled('signal'))
 
-    const validated = await validateInput(entry.tool.input, input)
-    if (!validated.ok) return finish(invalid(validated.issues))
+    const validated = await check(entry, input)
+    if (!validated.ok) return finish(validated.result)
     let value = validated.value
+    let precheck: (() => ToolResult<unknown> | null) | undefined
 
     if (needsConfirmation(entry.cls) && caller !== 'human') {
       const summary = summaryOf(entry, value)
       if (state.modeOf(caller) === 'deferred') {
         const confirmId = newId()
         const now = Date.now()
-        pending.add(
+        const evicted = pending.add(
           {
             confirmId,
             tool: entry.fullName,
@@ -425,20 +486,26 @@ export function createCallRuntime(state: RegistryState): CallRuntime {
           },
           entry,
           () => emitConfirm(confirmId, entry, 'expired', expiredResult()),
+          takeSnapshot(entry),
         )
+        for (const e of evicted) {
+          emitConfirm(e.public.confirmId, e.owner, 'expired', expiredResult())
+        }
         emitConfirm(confirmId, entry, 'pending')
         return finish(Object.freeze({ status: 'needs_confirmation' as const, confirmId, summary }))
       }
+      const snapshot = takeSnapshot(entry)
+      precheck = snapshotPrecheck(entry, snapshot)
       const outcome = await askInline(entry, { summary }, caller, value, signal)
       if (outcome.kind === 'signal') return finish(cancelled('signal'))
       if (outcome.kind !== 'approved') return finish(cancelled('operator'))
       if (outcome.input !== undefined) {
-        const edited = await validateInput(entry.tool.input, outcome.input)
-        if (!edited.ok) return finish(invalid(edited.issues))
+        const edited = await check(entry, outcome.input)
+        if (!edited.ok) return finish(edited.result)
         value = edited.value
       }
     }
-    return finish(await enqueue(entry, value, caller, callId, signal))
+    return finish(await enqueue(entry, value, caller, callId, signal, precheck))
   }
 
   async function confirmPending(
@@ -455,38 +522,56 @@ export function createCallRuntime(state: RegistryState): CallRuntime {
     }
     let value = stored.public.input
     if (outcome.input !== undefined) {
-      const edited = await validateInput(entry.tool.input, outcome.input)
+      const edited = await check(entry, outcome.input)
       if (!edited.ok) {
-        const r = invalid(edited.issues)
-        emitConfirm(confirmId, entry, 'approved', r)
-        return r
+        emitConfirm(confirmId, entry, 'approved', edited.result)
+        return edited.result
       }
       value = edited.value
     }
     const callId = newId()
     const finish = track(callId, entry.fullName, 'human', value)
-    const r = finish(await enqueue(entry, value, 'human', callId, undefined))
+    const r = finish(
+      await enqueue(
+        entry,
+        value,
+        'human',
+        callId,
+        undefined,
+        snapshotPrecheck(entry, stored.snapshot),
+      ),
+    )
     emitConfirm(confirmId, entry, 'approved', r)
     return r
   }
 
-  async function undo(callId: string): Promise<ToolResult<{ changes: FieldChange[] }>> {
+  /** Runs a stored undo restorer once, on the tool's scope queue (m7). */
+  function undo(callId: string): Promise<ToolResult<{ changes: FieldChange[] }>> {
     const item = undos.take(callId)
     if (!item || !item.owner.alive) {
-      return refuse('undo_unavailable', 'Nothing to undo for this call')
+      return Promise.resolve(refuse('undo_unavailable', 'Nothing to undo for this call'))
     }
-    try {
-      const r: unknown = await item.restore()
-      if (isToolResult(r)) return r as ToolResult<{ changes: FieldChange[] }>
-    } catch (cause) {
-      state.report({
-        code: 'tool_threw',
-        message: `Undo of "${item.owner.fullName}" threw`,
-        tool: item.owner.fullName,
-        cause,
-      })
+    const owner = item.owner
+    const restore = async (): Promise<ToolResult<{ changes: FieldChange[] }>> => {
+      if (!owner.alive) return refuse('undo_unavailable', 'Nothing to undo for this call')
+      try {
+        const r: unknown = await item.restore()
+        if (isToolResult(r)) return r as ToolResult<{ changes: FieldChange[] }>
+      } catch (cause) {
+        state.report({
+          code: 'tool_threw',
+          message: `Undo of "${owner.fullName}" threw`,
+          tool: owner.fullName,
+          cause,
+        })
+      }
+      return errorResult('Tool failed')
     }
-    return errorResult('Tool failed')
+    return new Promise((resolve) => {
+      const slot = queueFor(owner.scope).push(async () => resolve(await restore()))
+      if (!slot)
+        resolve(refuse('busy', `Too many pending calls in the scope of "${owner.fullName}"`))
+    })
   }
 
   return {

@@ -18,6 +18,7 @@ import { isValidToolName, toLlmName } from './names.js'
 import {
   hintClass,
   isAllowed,
+  isKnownCaller,
   needsConfirmation,
   POLICY_CALLERS,
   resolvePolicy,
@@ -53,7 +54,12 @@ export interface ConfirmRequest {
   changes?: FieldChange[]
 }
 
-/** Options for {@link createToolmark}. */
+/**
+ * Options for {@link createToolmark}. Invalid `confirmMode` / `policy` entries are validated while
+ * `createToolmark` runs: in development they throw; in production they are reported as `error`
+ * events (`invalid_confirm_mode`, `invalid_policy`) before any `events.on` listener can exist, so
+ * only `onError` observes them.
+ */
 export interface ToolmarkOptions {
   /** Development behaviour: misconfiguration throws instead of emitting `error` events. */
   dev?: boolean
@@ -128,6 +134,7 @@ export interface Toolmark {
   /**
    * Completes a `needs_confirmation` call (single use). Approval runs the tool as caller `human`
    * (with re-validated edited `input`, if given); rejection → `cancelled` `operator`.
+   * Known limit: the approved run has no caller signal, so it cannot be cancelled.
    */
   confirmPending(confirmId: string, outcome: ConfirmOutcome): Promise<ToolResult<unknown>>
   /** Runs the undo restorer a call registered (once); otherwise `refused` `undo_unavailable`. */
@@ -151,6 +158,8 @@ export interface Entry {
   readonly source: ManifestSource
   alive: boolean
   readonly registration: Registration
+  /** Detaches the registration's abort listener (I5). */
+  detach?: () => void
 }
 
 type ConfirmMode = 'deferred' | 'inline'
@@ -224,7 +233,9 @@ function outputJsonSchema(tool: ToolDefinition<unknown, unknown>): JsonSchema | 
 
 /**
  * Creates a tool registry.
- * @param options - Registry options; see {@link ToolmarkOptions}.
+ * @param options - Registry options; see {@link ToolmarkOptions}. Production-mode option errors
+ * (`invalid_confirm_mode`, `invalid_policy`) fire during this call, so only `options.onError`
+ * receives them.
  * @returns The registry. In SSR (no `document`) registration and consumers are inert no-ops.
  */
 export function createToolmark(options: ToolmarkOptions = {}): Toolmark {
@@ -232,6 +243,7 @@ export function createToolmark(options: ToolmarkOptions = {}): Toolmark {
   const browser = detectBrowser(options.__environment)
   const emitter = createEmitter<ToolmarkEventMap>()
   const entries = new Map<string, Entry>()
+  const llmNames = new Map<string, Entry>()
   const revListeners = new Set<(rev: number) => void>()
   let notifyPending = false
 
@@ -277,7 +289,7 @@ export function createToolmark(options: ToolmarkOptions = {}): Toolmark {
   const policy = resolvePolicy(options.policy, (message) => fail('invalid_policy', message))
 
   const modeOf = (caller: Caller): ConfirmMode | undefined =>
-    caller === 'human' ? undefined : modes[caller]
+    caller !== 'human' && isKnownCaller(caller) ? modes[caller] : undefined
   const inlineWithoutHandler = (caller: Caller): boolean =>
     modeOf(caller) === 'inline' && options.confirm === undefined
   const visible = (entry: Entry, caller?: Caller): boolean => {
@@ -315,6 +327,8 @@ export function createToolmark(options: ToolmarkOptions = {}): Toolmark {
   const removeEntry = (entry: Entry): void => {
     if (!entry.alive) return
     entry.alive = false
+    entry.detach?.()
+    if (llmNames.get(entry.source.llmName) === entry) llmNames.delete(entry.source.llmName)
     if (entries.get(entry.fullName) === entry) entries.delete(entry.fullName)
     runtime.onEntryRemoved(entry)
     markChanged()
@@ -340,9 +354,19 @@ export function createToolmark(options: ToolmarkOptions = {}): Toolmark {
     tool: ToolDefinition<I, O>,
     opts?: { scope?: Scope; signal?: AbortSignal },
   ): Registration {
-    const scope = opts?.scope instanceof ScopeNode ? opts.scope : root
-    const fullName = scope.path === '' ? tool.name : `${scope.path}.${tool.name}`
+    const given = opts?.scope
+    const scope = given ?? root
+    const fullName =
+      typeof scope.path === 'string' && scope.path !== '' ? `${scope.path}.${tool.name}` : tool.name
     if (!browser) return inert(fullName)
+    if (!(scope instanceof ScopeNode) || scope.root() !== root) {
+      fail(
+        'invalid_scope',
+        `Cannot register "${fullName}": the scope does not belong to this registry`,
+        fullName,
+      )
+      return inert(fullName)
+    }
     if (scope.disposed) {
       fail('scope_disposed', `Cannot register "${fullName}": its scope is disposed`, fullName)
       return inert(fullName)
@@ -359,6 +383,16 @@ export function createToolmark(options: ToolmarkOptions = {}): Toolmark {
       fail('duplicate_name', `A tool named "${fullName}" is already registered`, fullName)
       return inert(fullName)
     }
+    const llmName = toLlmName(fullName)
+    const llmOwner = llmNames.get(llmName)
+    if (llmOwner) {
+      fail(
+        'duplicate_name',
+        `"${fullName}" has the same LLM name "${llmName}" as "${llmOwner.fullName}"`,
+        fullName,
+      )
+      return inert(fullName)
+    }
     if (opts?.signal?.aborted) return inert(fullName)
 
     const def = tool as unknown as ToolDefinition<unknown, unknown>
@@ -369,7 +403,7 @@ export function createToolmark(options: ToolmarkOptions = {}): Toolmark {
     if (needsConfirmation(cls)) {
       const allowed = POLICY_CALLERS.filter((c) => isAllowed(policy, c, cls, fullName))
       const withPath = allowed.filter((c) => !inlineWithoutHandler(c))
-      if (withPath.length === 0) {
+      if (allowed.length > 0 && withPath.length === 0) {
         fail(
           'missing_confirm_handler',
           `"${fullName}" needs confirmation but no caller allowed to use it has a confirmation ` +
@@ -418,7 +452,7 @@ export function createToolmark(options: ToolmarkOptions = {}): Toolmark {
       registration,
       source: {
         name: fullName,
-        llmName: toLlmName(fullName),
+        llmName,
         title: def.title,
         description: def.description,
         hints: def.hints,
@@ -427,8 +461,14 @@ export function createToolmark(options: ToolmarkOptions = {}): Toolmark {
       },
     }
     entries.set(fullName, entry)
+    llmNames.set(llmName, entry)
     markChanged()
-    opts?.signal?.addEventListener('abort', () => registration.dispose(), { once: true })
+    const signal = opts?.signal
+    if (signal) {
+      const onAbort = (): void => registration.dispose()
+      signal.addEventListener('abort', onAbort, { once: true })
+      entry.detach = () => signal.removeEventListener('abort', onAbort)
+    }
     return registration
   }
 

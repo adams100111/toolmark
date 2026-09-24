@@ -4,14 +4,17 @@ import { invalid, ok, type FieldChange, type ToolResult } from '../result.js'
 import { resolveJsonSchema, stripRequired, validateInput } from '../schema.js'
 import type { Scope } from '../scope.js'
 import type { StandardSchemaV1 } from '../standard-schema.js'
-import type { JsonSchema } from '../tool.js'
+import type { JsonSchema, ToolDefinition } from '../tool.js'
+import { CONFIRM_SNAPSHOT, type ConfirmSnapshotHook } from '../confirm-snapshot.js'
 import {
   deepEqual,
   flatten,
   flattenWithRejected,
   getPath,
   isPlainObject,
+  isSafePath,
   setPath,
+  snapshotValue,
 } from './paths.js'
 import type { FieldInfo, FormAdapter, FormToolOptions } from './types.js'
 
@@ -84,15 +87,17 @@ function declaredPaths(root: JsonSchema): Set<string> {
 /** The `fill` manifest schema (M1 rulings): input schema without `required`, `$defs` hoisted. */
 function fillJsonSchema(inputSchema: JsonSchema): JsonSchema {
   const values = stripRequired(inputSchema)
-  const defs = values.$defs
-  delete values.$defs
-  delete values.$schema
   const schema: JsonSchema = {
     type: 'object',
     properties: { values, overwrite: { type: 'boolean' } },
     required: ['values'],
   }
-  if (defs !== undefined) schema.$defs = defs
+  // Hoist definitions so `#/$defs/…` and `#/definitions/…` refs keep resolving from the root.
+  for (const key of ['$defs', 'definitions'] as const) {
+    if (values[key] !== undefined) schema[key] = values[key]
+    delete values[key]
+  }
+  delete values.$schema
   return schema
 }
 
@@ -137,12 +142,80 @@ function isUnder(path: string, base: string): boolean {
   return path === base || path.startsWith(`${base}.`)
 }
 
+/** Replaces every sensitive sub-path inside `value` (rooted at `path`) with `'[redacted]'`. */
+function redactInside(value: unknown, path: string, sensitive: string[]): unknown {
+  let out = value
+  for (const s of sensitive) {
+    if (!s.startsWith(`${path}.`) || typeof out !== 'object' || out === null) continue
+    const rel = s.slice(path.length + 1)
+    if (isSafePath(rel) && getPath(out, rel) !== undefined) out = setPath(out, rel, REDACTED)
+  }
+  return out
+}
+
+/** Redacts sensitive paths and sensitive values nested under changed ancestors (I1). */
 function redact(changes: FieldChange[], sensitive: string[]): FieldChange[] {
   return changes.map((c) =>
     sensitive.some((s) => isUnder(c.path, s))
       ? { path: c.path, before: REDACTED, after: REDACTED }
-      : c,
+      : {
+          path: c.path,
+          before: redactInside(c.before, c.path, sensitive),
+          after: redactInside(c.after, c.path, sensitive),
+        },
   )
+}
+
+/** Keeps only the keys the JSON Schema declares (arrays via `items`); used when no validated
+ * value is available. Unknown schemas (`{}`) keep the value. */
+function sanitize(value: unknown, node: unknown, root: JsonSchema, depth = 0): unknown {
+  if (depth > 64 || !isRecord(node)) return value
+  let schema: Record<string, unknown> = node
+  if (typeof schema.$ref === 'string') {
+    const m = /^#\/(\$defs|definitions)\/(.+)$/.exec(schema.$ref)
+    const defs = m ? root[m[1]!] : undefined
+    const target = m && isRecord(defs) ? defs[m[2]!] : undefined
+    if (isRecord(target)) schema = target
+  }
+  const props: Record<string, unknown> = {}
+  let hasProps = false
+  let open = schema.additionalProperties !== undefined && schema.additionalProperties !== false
+  let items: unknown = schema.items
+  const collect = (n: Record<string, unknown>): void => {
+    if (isRecord(n.properties)) {
+      hasProps = true
+      Object.assign(props, n.properties)
+    }
+    if (n.additionalProperties !== undefined && n.additionalProperties !== false) open = true
+    if (items === undefined && n.items !== undefined) items = n.items
+  }
+  collect(schema)
+  for (const key of ['anyOf', 'oneOf', 'allOf'] as const) {
+    const branches = schema[key]
+    if (Array.isArray(branches)) for (const b of branches) if (isRecord(b)) collect(b)
+  }
+  if (Array.isArray(value)) return value.map((v) => sanitize(v, items, root, depth + 1))
+  if (!isPlainObject(value) || !hasProps) return value
+  const out: Record<string, unknown> = {}
+  for (const key of Object.keys(value)) {
+    if (Object.prototype.hasOwnProperty.call(props, key)) {
+      out[key] = sanitize(value[key], props[key], root, depth + 1)
+    } else if (open) {
+      out[key] = value[key]
+    }
+  }
+  return out
+}
+
+/** The JSON Schema node declaring `path` (walking `properties`), or `undefined`. */
+function schemaAt(root: JsonSchema, path: string): unknown {
+  let node: unknown = root
+  for (const seg of path.split('.')) {
+    if (!isRecord(node)) return undefined
+    const props = isRecord(node.properties) ? node.properties : undefined
+    node = props && Object.prototype.hasOwnProperty.call(props, seg) ? props[seg] : undefined
+  }
+  return node
 }
 
 const byPath = (a: { path: string }, b: { path: string }): number =>
@@ -190,10 +263,26 @@ export function createFormTools<V extends Record<string, unknown>>(
   /** The value the agent last stored at each path (as read back from the adapter). */
   const agentSet = new Map<string, unknown>()
 
-  const isUserEdited = (path: string, current: unknown, dirty: string[]): boolean => {
-    if (!dirty.some((d) => isUnder(path, d))) return false
-    return !agentSet.has(path) || !deepEqual(current, agentSet.get(path))
+  /** The value the agent last stored at `path` (directly or via an ancestor write). */
+  const agentValueAt = (path: string): { value: unknown } | undefined => {
+    if (agentSet.has(path)) return { value: agentSet.get(path) }
+    for (const [p, v] of agentSet) {
+      if (path.startsWith(`${p}.`)) return { value: getPath(v, path.slice(p.length + 1)) }
+    }
+    return undefined
   }
+  const differsFromAgent = (values: unknown, path: string): boolean => {
+    const agent = agentValueAt(path)
+    return agent === undefined || !deepEqual(getPath(values, path), agent.value)
+  }
+  /** Two-way (I2): a dirty path at, above or below `path` that the agent did not write. */
+  const isUserEdited = (path: string, values: unknown, dirty: string[]): boolean =>
+    dirty.some((d) => {
+      if (!isSafePath(d)) return false
+      if (isUnder(path, d)) return differsFromAgent(values, path)
+      if (isUnder(d, path)) return differsFromAgent(values, d)
+      return false
+    })
 
   async function fill(
     input: FillInput,
@@ -209,7 +298,7 @@ export function createFormTools<V extends Record<string, unknown>>(
     const touched: string[] = []
     for (const path of Object.keys(flat)) {
       if (flat[path] === undefined) continue
-      if (input.overwrite !== true && isUserEdited(path, getPath(current, path), dirty)) {
+      if (input.overwrite !== true && isUserEdited(path, current, dirty)) {
         skipped.push(path)
       } else {
         touched.push(path)
@@ -236,9 +325,19 @@ export function createFormTools<V extends Record<string, unknown>>(
     }
 
     const before = new Map(touched.map((p) => [p, getPath(current, p)] as const))
+    // C2: write the validated value (schema-stripped); without one, the schema-sanitized value.
+    const safeValue = (path: string): unknown => {
+      const raw = flat[path]
+      if (raw === null) return null
+      if (checked.ok) {
+        const v = getPath(checked.value, path)
+        if (v !== undefined) return v
+      }
+      return sanitize(raw, schemaAt(inputSchema, path), inputSchema)
+    }
     const toWrite: Record<string, unknown> = {}
     for (const path of touched) {
-      const next = flat[path]
+      const next = safeValue(path)
       const prev = before.get(path)
       const changes = next === null ? prev !== undefined && prev !== null : !deepEqual(prev, next)
       if (changes) toWrite[path] = next
@@ -304,20 +403,25 @@ export function createFormTools<V extends Record<string, unknown>>(
     },
     opts.scope ? { scope: opts.scope } : undefined,
   )
+  // I3: a confirmation is refused `stale` when the form changed after it was requested.
+  const snapshotHook: ConfirmSnapshotHook = {
+    take: () => snapshotValue(adapter.getValues()),
+    changed: (snapshot) => !deepEqual(adapter.getValues(), snapshot),
+  }
+  const submitTool: ToolDefinition<unknown, unknown> & { [CONFIRM_SNAPSHOT]: ConfirmSnapshotHook } =
+    {
+      name: `${opts.name}.submit`,
+      ...title,
+      description: `${opts.description} Submit the form.`,
+      hints: { consequential: true },
+      summary: () =>
+        opts.submitSummary?.(adapter.getValues()) ?? `Submit ${opts.title ?? opts.name}`,
+      run: () => adapter.submit(),
+      [CONFIRM_SNAPSHOT]: snapshotHook,
+    }
   let submitReg: { dispose(): void }
   try {
-    submitReg = tm.register(
-      {
-        name: `${opts.name}.submit`,
-        ...title,
-        description: `${opts.description} Submit the form.`,
-        hints: { consequential: true },
-        summary: () =>
-          opts.submitSummary?.(adapter.getValues()) ?? `Submit ${opts.title ?? opts.name}`,
-        run: () => adapter.submit(),
-      },
-      opts.scope ? { scope: opts.scope } : undefined,
-    )
+    submitReg = tm.register(submitTool, opts.scope ? { scope: opts.scope } : undefined)
   } catch (e) {
     fillReg.dispose()
     throw e

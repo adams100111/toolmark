@@ -2,6 +2,8 @@ packages:
   - 'packages/*'
   - 'examples/*'
 
+engineStrict: true
+
 # Dependency build scripts (pnpm >= 11 fails the install on unlisted ones).
 allowBuilds:
   esbuild: true
@@ -71,5 +73,6 @@ catalogs:
   ts7:
     typescript: 7.0.2
 
+# Remove once vite 8.3.1 passes minimumReleaseAge.
 minimumReleaseAgeExclude:
   - vite@8.3.1
