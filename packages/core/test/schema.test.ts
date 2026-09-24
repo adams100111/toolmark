@@ -82,7 +82,7 @@ describe('resolveJsonSchema', () => {
     const input = z3.object({ title: z3.string() })
     const tool: ToolDefinition = { name: 't', description: 'd', input, run }
     const converter = (s: StandardSchemaV1): JsonSchema | undefined =>
-      s === (input as unknown) ? (zodToJsonSchema(input)) : undefined
+      s === (input as unknown) ? zodToJsonSchema(input) : undefined
     const r = resolveJsonSchema(tool, converter)
     expect(r.ok).toBe(true)
     if (r.ok) {
