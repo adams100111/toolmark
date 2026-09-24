@@ -1,10 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call,
-   @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return,
-   @typescript-eslint/no-unnecessary-type-assertion --
-   typescript-eslint's type-aware checker cannot resolve any export of `@inertiajs/react` in this
-   workspace (confirmed with a minimal repro: even a bare `import { Head } from '@inertiajs/react'`
-   comes back as an unresolved/error type), while `tsc -p tsconfig.test.json` typechecks this file
-   with zero errors. Real types are enforced by `pnpm typecheck`; these lines are not unsafe. */
 import { router, useForm } from '@inertiajs/react'
 import type { FormAdapter, ToolResult } from '@toolmark/core'
 import { act, cleanup, render } from '@testing-library/react'
@@ -17,7 +10,12 @@ interface Values extends Record<string, unknown> {
   address: { city: string }
 }
 
-const initialValues: Values = { title: '', address: { city: '' } }
+// Deliberately untyped: Inertia's `useForm<TForm>` requires `TForm extends FormDataType<TForm>`,
+// which a type with an index signature (like `Values`, needed for `FormAdapter<V extends
+// Record<string, unknown>>`) can never satisfy. Passing a plain literal here lets `useForm` infer
+// its own precise, index-signature-free `TForm`; `useStableForm` below casts across the boundary
+// to `Values` (same runtime shape either way).
+const initialFormData = { title: '', address: { city: '' } }
 
 /** The subset of a real Inertia visit's options this suite reads or fires. */
 interface CapturedVisitOptions {
@@ -32,11 +30,9 @@ interface CapturedVisitOptions {
 /** Replaces `router.visit` with a stub that records the options Inertia built for the visit. */
 function mockVisit(): { getOptions: () => CapturedVisitOptions } {
   let captured: CapturedVisitOptions | undefined
-  vi.spyOn(router, 'visit').mockImplementation(
-    ((_href: unknown, options: unknown) => {
-      captured = options as CapturedVisitOptions
-    }) as unknown as typeof router.visit,
-  )
+  vi.spyOn(router, 'visit').mockImplementation((_href: unknown, options: unknown) => {
+    captured = options as CapturedVisitOptions
+  })
   return {
     getOptions: (): CapturedVisitOptions => {
       if (!captured) throw new Error('router.visit was not called')
@@ -49,23 +45,23 @@ function mockVisit(): { getOptions: () => CapturedVisitOptions } {
  * Wraps `useForm()` in an object whose identity (and whose `setData`) never changes across
  * renders, so tests can hold a single reference to spy on regardless of Inertia's own memoization.
  */
-function useStableForm(initial: Values): InertiaFormLike<Values> {
-  const form = useForm<Values>(initial)
+function useStableForm(initial: typeof initialFormData): InertiaFormLike<Values> {
+  const form = useForm(initial)
   const latest = useRef(form)
   latest.current = form
   const stableRef = useRef<InertiaFormLike<Values> | undefined>(undefined)
   stableRef.current ??= {
     get data() {
-      return latest.current.data
+      return latest.current.data as Values
     },
     setData: (d: Values) => {
-      latest.current.setData(d)
+      latest.current.setData(d as typeof initialFormData)
     },
     get errors() {
       return latest.current.errors as Partial<Record<string, string>>
     },
     transform: (cb) => {
-      latest.current.transform(cb)
+      latest.current.transform((data) => cb(data))
     },
     submit: (method, url, opts) => {
       latest.current.submit(method as 'post', url, opts)
@@ -79,7 +75,7 @@ function Harness({
 }: {
   expose: (adapter: FormAdapter<Values>, form: InertiaFormLike<Values>) => void
 }) {
-  const form = useStableForm(initialValues)
+  const form = useStableForm(initialFormData)
   const adapter = inertiaAdapter(form, { submit: { method: 'post', url: '/things' } })
   expose(adapter, form)
   return null
