@@ -28,6 +28,8 @@ export interface StoredPending<Owner> {
   readonly public: PendingConfirmation
   readonly owner: Owner
   timer: ReturnType<typeof setTimeout> | undefined
+  /** Snapshot taken by the tool's confirm-snapshot hook, if it has one. */
+  snapshot?: { value: unknown }
 }
 
 /** @internal Maximum pending deferred confirmations (oldest evicted). */
@@ -53,11 +55,13 @@ export class PendingStore<Owner> {
     item: PendingConfirmation,
     owner: Owner,
     onExpire: (p: StoredPending<Owner>) => void,
+    snapshot?: { value: unknown },
   ): StoredPending<Owner>[] {
     const stored: StoredPending<Owner> = {
       public: { ...item, input: cloneValue(item.input) },
       owner,
       timer: undefined,
+      ...(snapshot !== undefined ? { snapshot } : {}),
     }
     stored.timer = setTimeout(
       () => {

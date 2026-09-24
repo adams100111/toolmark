@@ -1,5 +1,6 @@
 import { PendingStore, type PendingConfirmation } from './confirm.js'
 import { confirmRequestSignals } from './confirm-queue.js'
+import { snapshotHookOf } from './confirm-snapshot.js'
 import { ToolmarkError } from './errors.js'
 import { newId } from './ids.js'
 import { isAllowed, needsConfirmation } from './policy.js'
@@ -94,6 +95,37 @@ export function createCallRuntime(state: RegistryState): CallRuntime {
       ...(result !== undefined ? { result } : {}),
     })
   }
+
+  /** Takes the tool's confirm snapshot, if it has a snapshot hook. */
+  const takeSnapshot = (entry: Entry): { value: unknown } | undefined => {
+    const hook = snapshotHookOf(entry.tool)
+    if (!hook) return undefined
+    try {
+      return { value: hook.take() }
+    } catch (cause) {
+      state.report({ code: 'tool_threw', message: 'snapshot failed', tool: entry.fullName, cause })
+      return { value: undefined }
+    }
+  }
+  const snapshotPrecheck =
+    (entry: Entry, snapshot: { value: unknown } | undefined) => (): ToolResult<unknown> | null => {
+      const hook = snapshotHookOf(entry.tool)
+      if (!hook || snapshot === undefined) return null
+      let changed = true
+      try {
+        changed = hook.changed(snapshot.value)
+      } catch (cause) {
+        state.report({
+          code: 'tool_threw',
+          message: 'snapshot check failed',
+          tool: entry.fullName,
+          cause,
+        })
+      }
+      return changed
+        ? refuse('stale', 'Form changed since confirmation was requested', { rev: state.rev })
+        : null
+    }
 
   const expiredResult = (): ToolResult<never> =>
     refuse('confirmation_expired', 'The confirmation expired or was already used')
@@ -340,6 +372,7 @@ export function createCallRuntime(state: RegistryState): CallRuntime {
     caller: Caller,
     callId: string,
     signal: AbortSignal | undefined,
+    precheck?: () => ToolResult<unknown> | null,
   ): Promise<ToolResult<unknown>> {
     return new Promise<ToolResult<unknown>>((resolve) => {
       let settled = false
@@ -365,6 +398,11 @@ export function createCallRuntime(state: RegistryState): CallRuntime {
         }
         if (signal?.aborted) {
           done(cancelled('signal'))
+          return
+        }
+        const refused = precheck?.()
+        if (refused) {
+          done(refused)
           return
         }
         done(await runTool(entry, value, caller, callId, signal))
@@ -428,6 +466,7 @@ export function createCallRuntime(state: RegistryState): CallRuntime {
     const validated = await check(entry, input)
     if (!validated.ok) return finish(validated.result)
     let value = validated.value
+    let precheck: (() => ToolResult<unknown> | null) | undefined
 
     if (needsConfirmation(entry.cls) && caller !== 'human') {
       const summary = summaryOf(entry, value)
@@ -447,6 +486,7 @@ export function createCallRuntime(state: RegistryState): CallRuntime {
           },
           entry,
           () => emitConfirm(confirmId, entry, 'expired', expiredResult()),
+          takeSnapshot(entry),
         )
         for (const e of evicted) {
           emitConfirm(e.public.confirmId, e.owner, 'expired', expiredResult())
@@ -454,6 +494,8 @@ export function createCallRuntime(state: RegistryState): CallRuntime {
         emitConfirm(confirmId, entry, 'pending')
         return finish(Object.freeze({ status: 'needs_confirmation' as const, confirmId, summary }))
       }
+      const snapshot = takeSnapshot(entry)
+      precheck = snapshotPrecheck(entry, snapshot)
       const outcome = await askInline(entry, { summary }, caller, value, signal)
       if (outcome.kind === 'signal') return finish(cancelled('signal'))
       if (outcome.kind !== 'approved') return finish(cancelled('operator'))
@@ -463,7 +505,7 @@ export function createCallRuntime(state: RegistryState): CallRuntime {
         value = edited.value
       }
     }
-    return finish(await enqueue(entry, value, caller, callId, signal))
+    return finish(await enqueue(entry, value, caller, callId, signal, precheck))
   }
 
   async function confirmPending(
@@ -489,7 +531,16 @@ export function createCallRuntime(state: RegistryState): CallRuntime {
     }
     const callId = newId()
     const finish = track(callId, entry.fullName, 'human', value)
-    const r = finish(await enqueue(entry, value, 'human', callId, undefined))
+    const r = finish(
+      await enqueue(
+        entry,
+        value,
+        'human',
+        callId,
+        undefined,
+        snapshotPrecheck(entry, stored.snapshot),
+      ),
+    )
     emitConfirm(confirmId, entry, 'approved', r)
     return r
   }
