@@ -55,7 +55,7 @@ its exit check passes. Task numbers refer to the unit's plan.
 - [x] Wave 1 · Lane B (T8–T9, high, **security**) bridge + transports (incl. WebSocket hooks for M3)
 - [ ] Wave 1 · Lane C (T10–T12) React + RHF
 - [ ] Wave 1 · Lane D (T13) Inertia adapter + visit-outcome mapping
-- [ ] Wave 1 · Lane E (T14) testing package
+- [x] Wave 1 · Lane E (T14) testing package
 - [ ] Wave 2 · Lane F (T15–T16, high; T16 **security**) example + round-budget e2e, docs, Laravel reference, CI, tarballs + smoke → `docs/release/{round-budget,next-tarballs}.md`
 - [ ] Unit exit: CI green on `main`; `simple_form_within_3_rounds`; tarball smoke logged
 
