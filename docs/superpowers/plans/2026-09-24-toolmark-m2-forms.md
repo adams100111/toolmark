@@ -28,6 +28,9 @@ wizard engine and the DOM layer. React and Inertia add thin bindings.
   (`date`, `time`, `date-time`, `email`, `uri`), `anyOf`, `oneOf`, `default`, `title`,
   `description`. Other keywords are ignored and listed in the docs.
 - New reserved `refused` codes: `file_rejected`, `navigation_failed`.
+- Node-project tests build registries with `createTestRegistry` (`packages/core/test/helpers/`,
+  M1 Task 4); browser-mode tests may call `createToolmark` directly.
+- Nothing is published to npm; the milestone ends with the `-next` tarball hand-off (Task 10).
 
 ## Rulings made while planning
 
@@ -75,8 +78,11 @@ packages/core/src/dom/button-tools.ts · table-tools.ts
 packages/core/src/dom/index.ts
 packages/react/src/use-wizard-tool.ts
 packages/inertia/src/pages.ts · props-tools.ts · navigation.ts · form-component.ts
-examples/react-vite/src/{wizard.tsx,plain-form.html,dom-page.tsx}  e2e/{wizard,dom}.spec.ts
-docs/guides/{forms,wizards,files,dom,inertia}.md
+packages/core/vitest.browser.config.ts   core-browser Vitest project
+vitest.config.ts                          (modify: append the core-browser project)
+examples/react-vite/src/{wizard.tsx,dom-page.tsx}  examples/react-vite/public/plain-form.html
+examples/react-vite/e2e/{wizard,dom}.spec.ts
+docs/guides/{forms,wizards,files,dom,inertia}.md  docs/release/next-tarballs.md (append)
 .changeset/m2-forms.md
 ```
 
@@ -84,22 +90,28 @@ docs/guides/{forms,wizards,files,dom,inertia}.md
 
 | Wave | Lane | Tasks | Owns files | Consumes |
 | --- | --- | --- | --- | --- |
-| 0 | A (high) | 1–4 | `packages/core/src/{forms,json-schema,wizard}/**`, `files.ts`, `scope.ts`, `registry.ts`, `tool.ts`, `manifest.ts`, `index.ts`, `package.json` (new `./dom` export), `tsdown.config.ts`, matching tests | M1 |
+| 0 | A (high) | 1–4 | `packages/core/src/{forms,json-schema,wizard}/**`, `files.ts`, `scope.ts`, `registry.ts`, `tool.ts`, `manifest.ts`, `index.ts`, `package.json` (new `./dom` export, browser-mode devDeps), `pnpm-lock.yaml`, `tsdown.config.ts`, `packages/core/vitest.browser.config.ts`, root `vitest.config.ts`, matching tests | M1 |
 | 1 | B (high) | 5–6 | `packages/core/src/dom/**`, `packages/core/test/dom-*.test.ts` | A |
-| 1 | C (normal) | 7 | `packages/react/src/use-wizard-tool.ts`, `packages/react/src/index.ts`, react tests | A |
+| 1 | C (normal) | 7 | `packages/react/src/use-wizard-tool.ts`, `packages/react/src/use-form-tool.ts`, `packages/react/src/index.ts`, react tests | A |
 | 1 | D (normal) | 8 | `packages/inertia/src/{pages,props-tools,navigation}.ts`, `packages/inertia/src/index.ts`, inertia tests for them | A |
-| 2 | E (normal) | 9–10 | `packages/inertia/src/form-component.ts` (+ its export line in `index.ts`), `examples/**`, `docs/guides/**`, `.changeset/m2-forms.md` | A–D |
+| 2 | E (normal) | 9–10 | `packages/inertia/src/form-component.ts` (+ its export line in `index.ts`), `packages/inertia/test/form-component.test.tsx`, `examples/**` except `package.json`, `docs/guides/**`, `docs/release/next-tarballs.md`, `.changeset/m2-forms.md` | A–D |
 
-Core tests for DOM run in Vitest **browser mode**: Task 1 of this plan switches core's
-`vitest.config.ts` to two projects (`core-node`, and `core-browser` for `test/dom-*.test.ts` and `test/browser-*.test.ts`).
+Core tests for DOM run in Vitest **browser mode**: Task 1 of this plan adds
+`packages/core/vitest.browser.config.ts` (project `core-browser`, for `test/dom-*.test.ts` and
+`test/browser-*.test.ts`) and appends it to the root `vitest.config.ts` project list; `core-node`
+(`packages/core/vitest.node.config.ts`, M1) already excludes those files. Core gates run from the
+root: `pnpm exec vitest run --project core-node|core-browser <files>`.
 
 ---
 
 ### Task 1: Arrays, transparent scopes, tool `mode`/`origin`   (Lane A, risk: high)
 
 **Files:** Modify `src/forms/paths.ts`, `src/forms/form-tools.ts`, `src/scope.ts`,
-`src/registry.ts`, `src/tool.ts`, `src/manifest.ts`, `packages/core/vitest.config.ts`; Test
-`test/form-arrays.test.ts`, `test/scope-transparent.test.ts`.
+`src/registry.ts`, `src/tool.ts`, `src/manifest.ts`, `packages/core/package.json` (devDeps
+`@vitest/browser`, `@vitest/browser-playwright` from the catalog), `pnpm-lock.yaml`, root
+`vitest.config.ts` (append `'packages/core/vitest.browser.config.ts'`); Create
+`packages/core/vitest.browser.config.ts`; Test `test/form-arrays.test.ts`,
+`test/scope-transparent.test.ts`.
 
 **Interfaces — Produces:**
 ```ts
@@ -116,14 +128,14 @@ type ArrayOp = { $append: unknown[] } | { $remove: number[] }
 - Fill values for an array path may be an array (replace), `{ $append: [...] }` or `{ $remove: [indexes] }` (indexes refer to the current array; out-of-range → `invalid` issue at that path).
 - `changes` report the whole array; user-edited if any `dirtyPaths()` entry starts with `path + '.'` or equals it.
 - A transparent scope does not add a name segment; disposing it still disposes its tools; `when` still applies.
-- `vitest.config.ts` defines projects `core-node` (`test/**/*.test.ts` excluding `dom-*` and `browser-*`) and `core-browser` (`test/{dom,browser}-*.test.ts`, Playwright chromium).
+- `packages/core/vitest.browser.config.ts` defines project `core-browser` (`test/{dom,browser}-*.test.ts`, provider `playwright` from `@vitest/browser-playwright`, chromium, headless, `resolve.conditions` includes `'source'`); the root config lists it explicitly next to `core-node`.
 
 **Tests (write first):**
 - `array_replace_append_remove` · `array_remove_out_of_range_invalid` · `array_changes_whole_unit` · `array_user_edited_when_child_dirty`.
 - `transparent_scope_keeps_names_and_disposes`.
 - `stepwise_mode_in_manifest`; `origin_not_in_manifest`.
 
-**Task gate:** `pnpm -F @toolmark/core exec vitest run --project core-node test/form-arrays.test.ts test/scope-transparent.test.ts`
+**Task gate:** `pnpm exec vitest run --project core-node test/form-arrays.test.ts test/scope-transparent.test.ts`
 
 ---
 
@@ -150,7 +162,7 @@ interface FormToolOptions<V> { options?: Record<string, OptionsProvider> }   // 
 - `json_schema_types_enum_required_nested` · `json_schema_string_number_limits` · `json_schema_formats` · `json_schema_anyof_oneof` · `json_schema_unknown_keywords_ignored`.
 - `options_tool_registered_and_truncated` · `options_provider_error_result` · `options_description_hint_in_fill_schema`.
 
-**Task gate:** `pnpm -F @toolmark/core exec vitest run --project core-node test/json-schema.test.ts test/form-options.test.ts`
+**Task gate:** `pnpm exec vitest run --project core-node test/json-schema.test.ts test/form-options.test.ts`
 
 ---
 
@@ -181,7 +193,7 @@ function fileFieldSchema(spec: FileFieldSpec): JsonSchema
 - `url_disabled_by_default` · `url_origin_not_allowed` · `url_redirect_rejected` (review focus 2; assert fetch called with `redirect:'error'` and `credentials:'omit'`) · `url_size_limit_header_and_stream` · `url_mime_accept`.
 - `form_fill_with_file_sets_file_value` · `form_fill_file_failure_sets_nothing`.
 
-**Task gate:** `pnpm -F @toolmark/core exec vitest run --project core-node test/files.test.ts test/form-files.test.ts`
+**Task gate:** `pnpm exec vitest run --project core-node test/files.test.ts test/form-files.test.ts`
 
 ---
 
@@ -216,7 +228,7 @@ function createStepwiseWizardTools(tm: Toolmark, opts: StepwiseWizardOptions & {
 **Tests (write first):**
 - `wizard_fill_multiple_steps_one_call` · `wizard_invalid_step_writes_nothing` · `wizard_current_step_respects_dirty` (review focus 1) · `wizard_goto_and_submit_confirmation` · `wizard_undo_all_steps` · `wizard_options_step_field_enum` · `stepwise_tools_and_mode`.
 
-**Task gate:** `pnpm -F @toolmark/core exec vitest run --project core-node test/wizard.test.ts`
+**Task gate:** `pnpm exec vitest run --project core-node test/wizard.test.ts`
 
 ---
 
@@ -243,7 +255,7 @@ function discoverFields(form: HTMLFormElement): Array<{ path: string; element: E
 - `synthesize_types_table` (one fixture form with every control in §10.2) · `synthesize_descriptions_precedence` · `synthesize_excludes_password_and_cc`.
 - `dom_fill_sets_native_controls` · `dom_fill_updates_react_controlled_input` (review focus 3) · `dom_fill_files_via_datatransfer` · `dirty_only_from_trusted_events` · `shadow_and_form_associated_fields_found`.
 
-**Task gate:** `pnpm -F @toolmark/core exec vitest run --project core-browser test/dom-form-adapter.test.ts test/dom-synthesize.test.ts`
+**Task gate:** `pnpm exec vitest run --project core-browser test/dom-form-adapter.test.ts test/dom-synthesize.test.ts`
 
 ---
 
@@ -273,7 +285,7 @@ function scanDom(opts?: { root?: Document | Element | ShadowRoot; observe?: bool
 **Tests (write first):**
 - `native_form_registered_with_origin` · `data_tool_form_and_group_scope` · `autosubmit_controls_confirmation` · `button_tool_clicks_and_hints` · `table_query_where_and_limit` · `table_limit_capped` (review focus 4) · `options_url_provider` · `observer_adds_and_removes_tools` · `shadow_root_observed`.
 
-**Task gate:** `pnpm -F @toolmark/core exec vitest run --project core-browser test/dom-scan.test.ts test/dom-table.test.ts`
+**Task gate:** `pnpm exec vitest run --project core-browser test/dom-scan.test.ts test/dom-table.test.ts`
 
 ---
 
@@ -317,7 +329,7 @@ function inertiaPages(o: { router: RouterLike; initialPage: { props: Record<stri
 interface PropsToolEntry { name: string; title?: string; description: string; inputSchema: JsonSchema; hints?: ToolHints; visit: { url: string; method: 'get' | 'post' | 'put' | 'patch' | 'delete' } }
 function propsTools(tm: Toolmark, entries: PropsToolEntry[], scope: Scope): void
 type RouteFn = (params?: Record<string, unknown>) => { url: string; method: string }
-function navigationTool(o: { routes: Record<string, RouteFn>; visit: (url: string) => void; name?: string; description?: string }): ToolDefinition<{ route: string; params?: Record<string, unknown> }, { url: string }>
+function navigationTool(o: { routes: Record<string, RouteFn>; visit: (url: string, opts: { method: string }) => void; name?: string; description?: string }): ToolDefinition<{ route: string; params?: Record<string, unknown> }, { url: string }>
 ```
 
 **Exact values:** default `propsKey`: `'toolmark'`; default navigation tool name `navigate`, description
@@ -326,10 +338,10 @@ function navigationTool(o: { routes: Record<string, RouteFn>; visit: (url: strin
 **Behaviour:**
 - `inertiaPages` holds one **transparent** page scope; on each `navigate` event disposes it and registers the new page's `props[propsKey]` entries via `propsTools` (input validated with `fromJsonSchema`, `origin: 'server'`).
 - A props tool's run calls `router.visit(url, { method, data: input, preserveState: true })` and resolves on the next `success` → `ok({})`, `error` → `invalid` (keys → paths), `finish` without either → `ok({})`.
-- `navigationTool` input `route` is an enum of the route keys; run → `visit(route(params).url)` → returns `ok({ url })` immediately (before the page swap disposes scopes); a throwing `RouteFn` → `refused` `navigation_failed`.
+- `navigationTool` input `route` is an enum of the route keys; run → `const { url, method } = route(params)`; `visit(url, { method })` → returns `ok({ url })` immediately (before the page swap disposes scopes); a throwing `RouteFn` → `refused` `navigation_failed`.
 
 **Tests (write first):**
-- `props_tools_registered_with_server_names` · `props_tool_success_and_error_mapping` · `navigation_ok_then_old_props_tools_gone` (review focus 5) · `navigation_route_enum_and_failure`.
+- `props_tools_registered_with_server_names` · `props_tool_success_and_error_mapping` · `navigation_ok_then_old_props_tools_gone` (review focus 5) · `navigation_route_enum_and_failure` · `navigation_passes_route_method` (a `RouteFn` returning `method: 'post'` → `visit` receives `{ method: 'post' }`).
 
 **Task gate:** `pnpm -F @toolmark/inertia exec vitest run test/pages.test.ts test/navigation.test.ts`
 
@@ -358,17 +370,19 @@ function inertiaFormComponentAdapter(o: { element: HTMLFormElement; formRef: { c
 ### Task 10: Example pages, guides, changeset   (Lane E, risk: normal)
 
 **Files:** Create `examples/react-vite/src/wizard.tsx`, `src/dom-page.tsx`,
-`public/plain-form.html`, `e2e/wizard.spec.ts`, `e2e/dom.spec.ts`; `docs/guides/forms.md`,
-`wizards.md`, `files.md`, `dom.md`, `inertia.md`; `.changeset/m2-forms.md`.
+`examples/react-vite/public/plain-form.html`, `e2e/wizard.spec.ts`, `e2e/dom.spec.ts`;
+`docs/guides/forms.md`, `wizards.md`, `files.md`, `dom.md`, `inertia.md`; `.changeset/m2-forms.md`;
+Modify `docs/release/next-tarballs.md` (append the M2 entry).
 
 **Behaviour:**
 - Wizard page mirrors a real pattern: three steps, one `useForm` per step, parent `useState` data, one step mounted at a time; `useWizardTool` with `currentAdapter`.
-- DOM page: plain HTML form with native attributes + a `data-tool` table + button, scanned by `scanDom`.
+- DOM page: `public/plain-form.html`, a plain HTML form with native attributes + a `data-tool` table + button, scanned by `scanDom` (loaded from `src/dom-page.tsx`).
 - Guides document every public name added in M2 with a runnable snippet, the JSON-Schema-subset keyword list, the files security model, and the `data-tool-*` attribute reference.
+- **Tarball hand-off (last step):** `pnpm changeset version` (pre mode `next`, versions only — no publish), commit, `pnpm -r --filter "./packages/*" pack --pack-destination "$PWD/dist-tarballs"`, and append the M2 entry (version, filenames, SHA-256) to `docs/release/next-tarballs.md`; Innovation vendors them under `innovation/vendor/toolmark/` as in M1 Task 16.
 
 **Tests (write first):** `e2e/wizard.spec.ts`: `wizard_fill_all_steps_one_call`, `wizard_submit_confirmation`; `e2e/dom.spec.ts`: `plain_form_filled_and_skips_user_field`, `table_query_returns_rows`.
 
-**Task gate:** `pnpm -F @toolmark-examples/react-vite exec playwright test` then lane gate `pnpm lint && pnpm typecheck && pnpm test && pnpm build`.
+**Task gate:** `pnpm -F @toolmark-examples/react-vite exec playwright test` then lane gate `pnpm lint && pnpm typecheck && pnpm test && pnpm build`, then the M2 tarballs exist and are listed in `docs/release/next-tarballs.md`.
 
 ---
 

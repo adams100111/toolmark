@@ -5,8 +5,8 @@
 - **Owner:** adams100111
 - **First consumer:** Innovation (`dits-sa/innovation`), its AI assistant's form-filling "Entry Mode"
 - **Release model:** one complete, production-ready `1.0`. No MVP. Internal milestones ship as
-  private `-next` pre-releases consumed by Innovation; nothing is public until every release gate
-  (§21) passes.
+  `-next` versioned tarballs consumed by Innovation (packed with `pnpm pack`, vendored in Innovation;
+  nothing is published to npm before M5); nothing is public until every release gate (§21) passes.
 
 ## 1. Purpose
 
@@ -52,7 +52,7 @@ spec (a Community Group draft in origin trial) keeps changing underneath.
 | D4  | No custom polyfill; native WebMCP or MCP-B's polyfill as optional peer. | MCP-B tracks the spec and its WPT suite. |
 | D5  | Types via **Standard Schema v1**; manifest JSON Schema via **Standard JSON Schema**, with fallbacks (D14). | Library-agnostic. |
 | D6  | Every call returns a typed `ToolResult`; expected outcomes never throw. | Structured outcomes for agents. |
-| D7  | Policy lives in the registry; consequential/destructive tools require confirmation. | Safety in code, not prompt text. |
+| D7  | Policy lives in the registry; consequential/destructive tools require confirmation. Registration fails only when such a tool has no confirmation path for any allowed caller; inline-mode callers without a handler just don't see it (§7). | Safety in code, not prompt text. |
 | D8  | Tour hooks (anchors, state, interaction events) in core. | Tours consume the registry. |
 | D9  | No AI model in runtime packages. | Stability, no lock-in, no keys in the browser. |
 | D10 | Name **Toolmark**, npm scope `@toolmark/*`. | Free on npm as of 2026-09-24. |
@@ -77,7 +77,7 @@ spec (a Community Group draft in origin trial) keeps changing underneath.
 | D29 | Package set in §4. Includes MCP bridge, OpenTelemetry exporter, Next.js docs; no Vue/Svelte. | Complete for the React ecosystem. |
 | D30 | Tours ship a styled, themeable overlay (CSS variables, RTL, accessible, reduced-motion) **and** a headless mode; agent-planned **and** authored tours. | UI is the product for tours. |
 | D31 | `@toolmark/mcp`: CLI MCP server over stdio, **dual-era** (`2026-07-28` stateless and legacy `initialize` revisions ≤ `2025-11-25`), paired localhost WebSocket to the page. | Clients are mid-migration; pairing prevents drive-by control. |
-| D32 | Release gates (§21); private `-next` pre-releases before `1.0`; post-release spec-watch CI. | Production readiness is verified, not asserted. |
+| D32 | Release gates (§21); `-next` versioned tarballs consumed by Innovation before `1.0` (no npm publish before M5); post-release spec-watch CI. | Production readiness is verified, not asserted. |
 
 ## 3. Architecture
 
@@ -146,8 +146,8 @@ Registry API:
 const tm = createToolmark({ confirm, policy, jsonSchema, files, onError })
 tm.clientId                                   // random per page load (D17)
 tm.register(tool, { scope?, signal? })        // → { name, dispose() }
-tm.scope(name, { parent?, when? })
-tm.manifest({ caller?, scope?, detail: 'summary' | 'full' })   // sorted by name; carries rev
+tm.scope(name, { when? })                     // root-level; nest with scope.scope(name, { when? })
+tm.manifest({ caller?, detail: 'summary' | 'full' })          // sorted by name; carries rev
 tm.describe(name)                             // full manifest entry (D21)
 tm.call(name, input, { caller, rev?, signal? })               // Promise<ToolResult>, never throws
 tm.confirmPending(confirmId, outcome)         // completes a needs_confirmation call (D16)
@@ -209,21 +209,27 @@ type ToolResult<T> =
   - **Inline** (default for `webmcp`, `mcp`, `tour`): `ctx.confirm()` awaits the app's handler in the
     page, since those callers wait on their own.
 - Pending confirmations expire (default 10 minutes) and are dropped on scope disposal.
-- Registering a consequential or destructive tool with no confirmation handler configured fails
-  immediately. Toolmark core ships no confirm UI (D13).
+- Registering a consequential or destructive tool fails (`missing_confirm_handler`) **only** when no
+  caller allowed to use it has a confirmation path (deferred mode, or inline mode with a `confirm`
+  handler configured). A caller whose mode is `inline` while no inline `confirm` handler is configured
+  does not see the tool (filtered from `manifest()`/`describe()` for that caller), and a call from it
+  returns `refused` `not_allowed`; a single dev-only `error` event `missing_confirm_handler` (warning
+  semantics) is emitted per such tool. Toolmark core ships no confirm UI (D13).
 - **Client policy is not an authorization boundary.** The server authorizes every mutation.
 
 ## 8. Forms
 
 ### 8.1 Form adapters and `useFormTool`
 
-`FormAdapter<V>`: `getValues`, `setValues(partial, { overwrite })`, `dirtyFields()`, `validate?`,
-`submit`, `fields()`, `reset(values)`.
+`FormAdapter<V>`: `getValues()`, `setValues(values, { source })` (`source: 'agent' | 'undo'`; flat
+dot paths; `null` clears), `dirtyPaths()`, `submit()`, `fields()`, optional `onUserInteraction(cb)`
+(tour interaction events, §13). Overwrite decisions, validation and undo live in the form-tool core,
+not the adapter.
 
 `useFormTool(adapter, { name, description, input, options?, files? })` registers:
 
 - `<name>.fill`: partial input. Returns `ok({ changes, skipped })` (D19). Skips fields the user has
-  edited (per `dirtyFields`) unless `overwrite: true`. `null` clears; `undefined` leaves unchanged.
+  edited (per `dirtyPaths`) unless `overwrite: true`. `null` clears; `undefined` leaves unchanged.
 - `<name>.submit`: consequential.
 - `<name>.options`: present when any field declares async `options` (§8.3).
 - `tm.undo(callId)` restores the `before` values of a `fill` while the form is mounted.
@@ -313,9 +319,12 @@ useWizardTool({
 
 - `tm.use(bridge({ transport }))` speaks protocol v1 (§12).
 - Transports: `echoTransport` (Laravel Echo in, HTTP POST out), `websocketTransport`,
-  `postMessageTransport` (iframes, extensions; origin-checked), `inPageTransport` (client-side LLM).
-- Sends `manifest` on attach and `changed` on each revision; answers each addressed `call` exactly
-  once; honours `cancel`; forwards deferred confirmations as `confirmed` messages.
+  `postMessageTransport` (iframes, extensions; origin-checked), and `createInPageChannel()` (returns a
+  page-side transport plus an agent handle, for a client-side LLM and tests).
+- Sends `manifest` on attach and a full summary `manifest` on each revision by default
+  (`bridge({ onChange: 'manifest' | 'changed' })`; `'changed'` sends the bare `changed` message);
+  answers each addressed `call` exactly once; honours `cancel`; forwards deferred confirmations as
+  `confirmed` messages.
 
 ### 11.2 WebMCP (`@toolmark/core/webmcp`, **experimental**, D28)
 
@@ -401,8 +410,10 @@ Toolmark ships **no server package**. Any backend implements this protocol.
 - Default: `page_call(tool, input)` whose description renders the **summary** manifest, plus
   `page_describe(tool)`; both stay stable across pages so provider prompt caching holds.
 - Alternative: one LLM tool per manifest entry via `llmName`.
-- Deferred confirmations: the agent tells the user a confirmation is pending; the `confirmed`
-  message is appended to the conversation as the tool outcome when it arrives.
+- Deferred confirmations: the agent tells the user a confirmation is pending. When the `confirmed`
+  message arrives, the server appends the outcome to the conversation as a tool-result message and
+  starts **one** follow-up agent turn limited to acknowledging that outcome. The follow-up turn gets
+  no page tools (`page_call`/`page_describe` are withheld), so it cannot start new actions.
 
 ### 12.4 Server-declared tools
 
@@ -462,7 +473,7 @@ Latest stable versions checked on npm, 2026-09-24 (re-verify when the plan execu
 | Tool | Version | Note |
 | --- | --- | --- |
 | pnpm | 12.6.0 | workspace + catalogs |
-| TypeScript | 7.0.2 | confirm tsdown/Vitest compatibility before pinning |
+| TypeScript | 7.0.2 | workspace pins 6.0.3; 7.0.2 checked in CI (§23) |
 | tsdown | 0.23.0 | ESM + `.d.ts` |
 | Vitest | 5.0.1 | unit + browser mode |
 | @playwright/test | 1.63.0 | e2e + testing package |
@@ -499,10 +510,18 @@ Latest stable versions checked on npm, 2026-09-24 (re-verify when the plan execu
   plus the WPT suites.
 - **Consumer:** Innovation's measured before/after run (success criterion 1).
 
-## 19. Innovation adoption (app-side work, consumes `-next` builds)
+## 19. Innovation adoption (app-side work, consumes `-next` tarballs)
 
+The adoption plan is written in the Innovation repo with its own Spec Kit flow before M1 starts.
+
+0. **Baseline first:** record the current snapshot-and-script flow — 10 runs each of the simple-form
+   task and the wizard task, recording rounds, wall time, input tokens and success rate — saved to
+   `docs/release/innovation-baseline.md` in the Toolmark repo. It is a prerequisite for the M1 exit
+   check.
 1. Put `browser_script` behind a config flag defaulting to off (independent security fix).
-2. Depend on `@toolmark/*` pre-releases (local `link:` during development).
+2. Depend on `@toolmark/*` `-next` versioned tarballs: each milestone's `pnpm pack` output is
+   committed under `innovation/vendor/toolmark/` and referenced as `file:vendor/toolmark/<tgz>`
+   (`link:` for local development). Nothing is published to npm before M5.
 3. `SimpleChallengeForm`: `useFormTool(rhfAdapter(form), …)` with a global `zod-to-json-schema`
    converter; localized fields via an app-side adapter; lookups via async `options`.
 4. Advanced wizard: `useWizardTool` over `ChallengeForm`'s `formData`/`setFormData`.
@@ -510,11 +529,16 @@ Latest stable versions checked on npm, 2026-09-24 (re-verify when the plan execu
    card (existing options-bubble pattern).
 6. `AiAssistant` module: `PageCallTool`/`PageDescribeTool`, protocol-v1 `BrowserBridge` with the
    §12.2 security rules (adapted from §12.5). Snapshot stays as fallback for pages without tools.
-7. Measure before/after on the same tasks.
+7. Measure after on the same tasks as the baseline; results go to
+   `docs/release/innovation-results.md` in the Toolmark repo.
 8. Idea and project create/edit forms; then delete the snapshot scraper and the prompt's filling
    recipes. Other pages migrate after `1.0` (Innovation's scope).
 
 ## 20. Build milestones (internal, all ship in `1.0`)
+
+Each milestone ends with `-next` versioned tarballs consumed by Innovation (no npm publish before
+M5). The M1 exit check requires the Innovation baseline (`docs/release/innovation-baseline.md`, §19
+step 0) to exist first.
 
 | Milestone | Scope | Exit check |
 | --- | --- | --- |
@@ -542,3 +566,28 @@ Latest stable versions checked on npm, 2026-09-24 (re-verify when the plan execu
 
 - Reserve the `toolmark` npm org.
 - Confirm code ownership (employment IP terms) before the first public commit.
+
+## 23. Implementation rulings
+
+Rulings made while writing the milestone plans (`docs/superpowers/plans/2026-09-24-toolmark-*.md`).
+Where one amends a section above, that section has been updated to match.
+
+| Ruling | Plan reference |
+| --- | --- |
+| Workspace on **TypeScript 6.0.3** (`typescript-eslint` peers `<6.1.0`); CI also type-checks the emitted `.d.ts` with TypeScript 7.0.2. | Overview constraints; M1 rulings, T16; M5 T1 |
+| In-page transport is **`createInPageChannel()`** (page transport + agent handle); the earlier name `inPageTransport` is retired (§11.1 amended). | M1 T9 |
+| Bridge sends a full summary `manifest` on every revision by default (`onChange: 'manifest' \| 'changed'`). | M1 rulings, T8 |
+| Fill validation is **merge-based**: the full schema runs on current values merged with input; only issues on touched paths count. | M1 rulings, T6 |
+| **Agent-set tracking**: a dirty field is user-edited unless its value equals what the agent last set. | M1 rulings, T6 |
+| The inline **confirm queue lives in core** (`createConfirmQueue`); `useConfirmQueue(queue)` only subscribes. | M1 rulings, T5, T11 |
+| **Transparent scopes** (`{ transparent: true }`) group tools without prefixing names. | M2 rulings, T1 |
+| Tool **`origin`** field (`'code' \| 'native-form' \| 'dom' \| 'server'`), not in the manifest. | M2 rulings, T1; M3 T2 |
+| `inertiaPages` (with props-declared tools and navigation) ships in **M2**; M1 ships `inertiaAdapter`. | M1 rulings; M2 T8 |
+| **Lint reads manifests, not source** (`--manifest`, `--url`). | M4 rulings, T3 |
+| Dev-only **tool budget**: `ToolmarkOptions.budget` (default 40) emits `tool_budget_exceeded` in `dev` only. | M1 constraints, T4 |
+| **FormAdapter** members are `getValues`, `setValues(values, { source })`, `dirtyPaths()`, `submit()`, `fields()`, optional `onUserInteraction` (§8.1 amended; `dirtyFields`/`validate?`/`reset` dropped). | M1 T6; M3 T1 |
+| `tm.manifest` has no `scope` option and `tm.scope` has no `parent` option; nesting is via `scope.scope()` (§5 amended). | M1 T4 |
+| **MCP era routing** is Toolmark's own front door: the first stdio message picks the legacy handler (`initialize`) or the SDK's modern server. | M3 rulings, T3 |
+| **Node floor `>=22.12`** (global `WebSocket`); CI matrix Node 22.x and 24.x. | Overview constraints; M1 T1; M5 constraints |
+| **Tarball consumption**: pre-1.0 Innovation consumes `-next` versioned tarballs from `pnpm pack`, vendored under `innovation/vendor/toolmark/`; nothing is published before M5 (header, D32, §19, §20 amended). | Overview; final lane of M1–M4 |
+| **Confirm rule**: `missing_confirm_handler` only when no allowed caller has a confirmation path; inline callers without a handler don't see the tool (§7, D7 amended). | M1 constraints, T4, T5 |

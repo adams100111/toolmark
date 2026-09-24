@@ -19,7 +19,7 @@ major at execution), GitHub OIDC for provenance.
 
 ## Global constraints (M5 additions)
 
-- CI matrix (exact): Node `20.19.x`, `22.x`, `24.x`; React `18.3.1`, `19.3.0`; `@inertiajs/react`
+- CI matrix (exact): Node `22.x`, `24.x` (floor `>=22.12`); React `18.3.1`, `19.3.0`; `@inertiajs/react`
   `2.3.28`, `3.7.1`; zod `3.25.x` (converter path) and `4.6.5`; Playwright browsers `chromium`,
   `firefox`, `webkit` for DOM/e2e suites (WebMCP suites on `chromium` only).
 - Size budgets: set in Task 2 as **measured gzip size of the first release build + 10 %, rounded up
@@ -28,16 +28,18 @@ major at execution), GitHub OIDC for provenance.
 - Release version `1.0.0` for every `@toolmark/*` package; the WebMCP entry's JSDoc and docs page
   keep the **experimental** label (D28).
 - npm publish uses `--provenance` (`NPM_CONFIG_PROVENANCE=true`) from GitHub Actions with
-  `permissions: { id-token: write, contents: write }`.
+  `permissions: { id-token: write, contents: write }`. `release.yml` (Task 7) is the **first and only**
+  workflow that publishes; every earlier build reached Innovation as a `-next` tarball.
 
 ## Rulings made while planning
 
 - **Security fixes are their own wave** after the review so parallel lanes never race on arbitrary
   files.
-- **Innovation evidence is a gate artifact**: `docs/release/innovation-results.md` must record the
-  measured before/after numbers (rounds, time, input tokens, success rate) for the simple form and
-  the wizard, produced by the Innovation adoption plan. Missing or below success criterion 1 → the
-  release stops.
+- **Innovation evidence is a gate artifact**: `docs/release/innovation-baseline.md` (the "before":
+  10 runs each of the simple-form and wizard tasks on the snapshot-and-script flow, recorded by the
+  adoption plan's first step) and `docs/release/innovation-results.md` (the "after" on the release
+  candidate) must both record rounds, wall time, input tokens and success rate, produced by the
+  Innovation adoption plan. Either missing, or results below success criterion 1 → the release stops.
 
 ## Review focus
 
@@ -56,11 +58,14 @@ major at execution), GitHub OIDC for provenance.
 | Wave | Lane | Tasks | Owns files | Consumes |
 | --- | --- | --- | --- | --- |
 | 0 | A (normal) | 1–2 | `.github/workflows/ci.yml`, `scripts/check-zero-deps.mjs`, `.size-limit.json`, root `package.json` scripts | M4 |
-| 1 | B (normal) | 3 | `README.md`, `SECURITY.md`, `CONTRIBUTING.md`, `docs/policies/**`, `packages/*/README.md` | A |
+| 1 | B (normal) | 3 | `README.md`, `SECURITY.md`, `CONTRIBUTING.md`, `docs/policies/**`, `packages/*/README.md`, JSDoc comments only in `packages/*/src/**` (no code changes) | A |
 | 1 | C (high, security) | 4 | `docs/security/**` (review report only) | A |
-| 1 | D (normal) | 6 | `.github/workflows/spec-watch.yml`, `.spec-watch/**`, `scripts/spec-watch.mjs` | A |
+| 1 | D (normal) | 6 | `.github/workflows/spec-watch.yml`, `.spec-watch/**`, `scripts/spec-watch.mjs`, `scripts/spec-watch.test.mjs` | A |
 | 2 | E (high, security) | 5 | any source file named by a finding + its tests | C |
-| 3 | F (high) | 7 | `.github/workflows/release.yml`, `.changeset/**`, `docs/release/**` | all |
+| 3 | F (high) | 7 | `.github/workflows/release.yml`, `.changeset/**`, `docs/release/**` (the two Innovation files are produced by the adoption plan and only verified here) | all |
+
+Lane B and Lane E never overlap in time (waves 1 and 2); Lane B's `packages/*/src/**` grant covers
+JSDoc comment text only, so any code change a doc gap reveals is reported to the controller.
 
 ### Task 1: Complete CI matrix   (Lane A, risk: normal)
 
@@ -102,7 +107,9 @@ browsers cached.
 **Files:** Create/complete `README.md`, `SECURITY.md` (private reporting via GitHub Security
 Advisories, supported versions), `CONTRIBUTING.md`, `docs/policies/versioning.md` (semver scope per
 §17, experimental WebMCP, deprecation ≥ one minor with warning), `docs/policies/tool-names.md` (tool
-names are a public contract), every `packages/*/README.md` (install, minimal example, link to docs).
+names are a public contract), every `packages/*/README.md` (install, minimal example, link to docs);
+Modify JSDoc comments in `packages/*/src/**` where TypeDoc reports an undocumented export (comments
+only — no code changes).
 
 **Tests:** `pnpm docs:build` with TypeDoc `notDocumented` validation → zero warnings (every public
 export documented).
@@ -154,7 +161,7 @@ Scoped re-review of Critical/security fixes (sdd-lanes rule).
 ### Task 6: Spec-watch workflow   (Lane D, risk: normal)
 
 **Files:** Create `.github/workflows/spec-watch.yml`, `scripts/spec-watch.mjs`,
-`.spec-watch/state.json`.
+`.spec-watch/state.json`; Test `scripts/spec-watch.test.mjs` (fixtures under `.spec-watch/fixtures/`).
 
 **Exact values:** schedule `cron: '0 6 * * 1'` (Mondays 06:00 UTC) plus `workflow_dispatch`;
 watched sources `https://raw.githubusercontent.com/webmachinelearning/webmcp/main/index.bs`,
@@ -183,7 +190,8 @@ branch.
 ### Task 7: Release 1.0.0   (Lane F, risk: high)
 
 **Files:** Create `.github/workflows/release.yml`, `.changeset/release-1-0.md`,
-`docs/release/checklist.md`; Verify `docs/release/innovation-results.md` (produced by the
+`docs/release/checklist.md`; Modify `docs/release/next-tarballs.md` (release-candidate entry); Verify
+`docs/release/innovation-baseline.md` and `docs/release/innovation-results.md` (both produced by the
 Innovation adoption plan).
 
 **Behaviour:**
@@ -191,12 +199,16 @@ Innovation adoption plan).
   with provenance.
 - Steps before publish (controller verifies each, recorded in `docs/release/checklist.md`):
   1. Every §21 gate green on `main` (CI, quality, docs, security review closed).
-  2. `innovation-results.md` meets success criterion 1.
-  3. `changeset pre exit`; versions set to `1.0.0`.
-  4. **Owner confirmation** for: making `github.com/adams100111/toolmark` public, the npm org
+  2. Release-candidate hand-off: `pnpm changeset version` (pre mode `next`), then
+     `pnpm -r --filter "./packages/*" pack --pack-destination "$PWD/dist-tarballs"`, RC entry
+     appended to `docs/release/next-tarballs.md`; Innovation runs on these tarballs (spec §21).
+  3. `innovation-baseline.md` exists with 10 runs per task, and `innovation-results.md` (measured on
+     the RC tarballs) meets success criterion 1 against it.
+  4. `changeset pre exit`; versions set to `1.0.0`.
+  5. **Owner confirmation** for: making `github.com/adams100111/toolmark` public, the npm org
      `toolmark` existing with 2FA and an automation token / trusted publishing configured, and
      code-ownership confirmation (spec §22). The controller asks and waits.
-  5. Merge the version PR → publish → verify each package on npm shows the provenance badge.
+  6. Merge the version PR → publish → verify each package on npm shows the provenance badge.
 - Post-release: tag `v1.0.0`, GitHub release notes from changesets, spec-watch enabled.
 
 **Tests:** dry run `pnpm changeset publish --dry-run` (or `pnpm -r publish --dry-run`) in CI before
@@ -210,7 +222,7 @@ the real publish.
 
 - **Spec coverage:** §21 gates → T1 (matrix, TS7), T2 (size, zero deps, package quality), T3 (docs
   completeness), T4/T5 (security), T7 (changesets, provenance, Innovation evidence); §17 → T3;
-  post-release spec-watch → T6; §22 owner actions → T7 step 4.
+  post-release spec-watch → T6; §22 owner actions → T7 step 5.
 - **Placeholders:** two execution-time facts are named with how to resolve them (the Chrome switch
   for WebMCP testing; the latest `changesets/action` major). Size numbers come from a defined
   measurement rule.

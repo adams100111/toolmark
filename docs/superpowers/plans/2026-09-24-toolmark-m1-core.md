@@ -37,6 +37,22 @@ mode via Playwright), ESLint 10 + typescript-eslint 8.70.1, React 19.3.0, react-
 - Tool budget (spec D21): `ToolmarkOptions.budget` default `40` visible tools; exceeding it emits
   `tool_budget_exceeded` once per revision, **in `dev` only** (never throws).
 - Ids (`clientId`, `callId`, `confirmId`) come from `crypto.randomUUID()`.
+- **Confirm rule (spec §7, D7):** registration fails with `missing_confirm_handler` **only** when a
+  consequential/destructive tool has no confirmation path for **any** caller allowed to use it (a
+  path = deferred mode, or inline mode with an inline `confirm` handler configured). A caller whose
+  mode is `inline` while no inline handler is configured does not see the tool (filtered from
+  `manifest`/`describe` for that caller) and a call from it returns `refused` `not_allowed`; one
+  dev-only `error` event `missing_confirm_handler` (warning semantics, never throws) is emitted per
+  such tool.
+- **Node-environment tests:** `createToolmark({ __environment })` stays as the undocumented test
+  hook. Every node-project test in M1–M4 builds registries through
+  `packages/core/test/helpers/create-test-registry.ts` (`createTestRegistry(opts)`, which sets
+  `__environment: 'browser'`), or through `createTestToolmark` from `@toolmark/testing` where a
+  package outside core needs one; only the SSR test passes `__environment: 'server'` directly.
+- **Source-first resolution:** every package entry's `exports` has a `"source"` condition pointing at
+  `src/*.ts`; Vitest and `tsc` resolve it, so tests and typecheck never need a prior build.
+- **Pre-1.0 hand-off by tarball:** nothing is published to npm before M5; the final lane packs
+  `-next` tarballs for Innovation (Task 16).
 
 ## Rulings made while planning
 
@@ -76,7 +92,7 @@ mode via Playwright), ESLint 10 + typescript-eslint 8.70.1, React 19.3.0, react-
 package.json · pnpm-workspace.yaml · tsconfig.base.json · eslint.config.js · .prettierrc.json
 vitest.config.ts · .changeset/config.json · .gitignore · .npmrc · LICENSE · README.md
 .github/workflows/ci.yml
-packages/core/      package.json tsconfig.json tsdown.config.ts vitest.config.ts
+packages/core/      package.json tsconfig.json tsdown.config.ts vitest.node.config.ts
   src/index.ts                 public exports
   src/standard-schema.ts       vendored Standard Schema v1 + Standard JSON Schema types
   src/tool.ts                  ToolDefinition, ToolHints, Caller, ToolContext, defineTool
@@ -105,6 +121,7 @@ packages/core/      package.json tsconfig.json tsdown.config.ts vitest.config.ts
   src/bridge/echo.ts · websocket.ts · post-message.ts · in-page.ts
   scripts/emit-protocol-schemas.ts
   test/*.test.ts
+  test/helpers/create-test-registry.ts   createTestRegistry (sets __environment: 'browser')
 packages/react/     package.json tsconfig.json tsdown.config.ts vitest.config.ts
   src/index.ts context.ts provider.tsx scope.tsx use-tool.ts use-agent-activity.ts
   src/use-form-tool.ts use-confirm-queue.ts use-pending-confirmations.ts
@@ -116,7 +133,7 @@ packages/testing/   package.json tsconfig.json tsdown.config.ts vitest.config.ts
   src/index.ts fixture.ts matchers.ts test-toolmark.ts page/install-test-hook.ts
   test/*.test.ts
 examples/react-vite/  package.json vite.config.ts index.html src/* e2e/*.spec.ts playwright.config.ts
-docs/protocol-v1.md · docs/guides/laravel-reference.md
+docs/protocol-v1.md · docs/guides/laravel-reference.md · docs/release/next-tarballs.md
 .changeset/initial-release.md
 ```
 
@@ -124,17 +141,18 @@ docs/protocol-v1.md · docs/guides/laravel-reference.md
 
 | Wave | Lane | Tasks | Owns files | Consumes (from) |
 | --- | --- | --- | --- | --- |
-| 0 | A (high) | 1–7 | root config, every `packages/*/package.json`, `pnpm-lock.yaml`, `packages/core/src/**` except `bridge/`, core tests for those | — |
+| 0 | A (high) | 1–7 | root config, every `packages/*/package.json`, `examples/react-vite/package.json`, `pnpm-lock.yaml`, `packages/core/src/**` except `bridge/`, `packages/core/test/helpers/**`, core tests for those | — |
 | 1 | B (high, security) | 8–9 | `packages/core/src/bridge/**`, `packages/core/test/bridge*.test.ts`, `test/transport-*.test.ts` | A |
 | 1 | C (normal) | 10–12 | `packages/react/src/**`, `packages/react/test/**` | A |
 | 1 | D (normal) | 13 | `packages/inertia/src/**`, `packages/inertia/test/**` | A |
-| 1 | E (normal) | 14 | `packages/testing/src/**`, `packages/testing/test/**` | A |
-| 2 | F (normal) | 15–16 | `examples/react-vite/**`, `docs/**` (except `docs/superpowers`), `.github/workflows/ci.yml`, `.changeset/initial-release.md`, `packages/core/src/index.ts` export additions for bridge | A–E |
+| 1 | E (normal) | 14 | `packages/testing/src/**`, `packages/testing/test/**`, `packages/testing/playwright.config.ts` | A |
+| 2 | F (normal) | 15–16 | `examples/react-vite/**` except `package.json`, `docs/**` (except `docs/superpowers`), `.github/workflows/ci.yml`, `.changeset/initial-release.md`, `packages/core/src/index.ts` export additions for bridge | A–E |
 
-Shared-file rules: `pnpm-lock.yaml` and every `package.json` are **Lane A only** — Task 1 declares
+Shared-file rules: `pnpm-lock.yaml` and every `package.json` (including the example's) are **Lane A only** — Task 1 declares
 all M1 dependencies up front; Wave-1 lanes must not add dependencies (report to the controller
 instead). `packages/core/src/index.ts` is Lane A's, except that Lane F adds the bridge exports.
-Lane B exports its symbols from `packages/core/src/bridge/index.ts` only.
+Lane B exports its symbols from `packages/core/src/bridge/index.ts` only. `packages/core/test/helpers/**`
+is Lane A's; other lanes import it read-only.
 
 ---
 
@@ -143,34 +161,56 @@ Lane B exports its symbols from `packages/core/src/bridge/index.ts` only.
 **Files:** Create root `package.json`, `pnpm-workspace.yaml`, `tsconfig.base.json`,
 `eslint.config.js`, `.prettierrc.json`, `vitest.config.ts`, `.changeset/config.json`, `.gitignore`,
 `.npmrc`, `LICENSE`, `README.md`; for each of `core`, `react`, `inertia`, `testing`:
-`package.json`, `tsconfig.json`, `tsdown.config.ts`, `vitest.config.ts`, `src/index.ts`
-(empty export); `packages/core/test/smoke.test.ts`.
+`package.json`, `tsconfig.json`, `tsdown.config.ts`, `src/index.ts` (empty export), plus the Vitest
+project config (`packages/core/vitest.node.config.ts`; `vitest.config.ts` for the other three);
+`examples/react-vite/package.json`; `packages/core/test/smoke.test.ts`.
 
 **Interfaces:** Produces the workspace scripts: root `pnpm build` (`pnpm -r build`),
 `pnpm typecheck` (`pnpm -r typecheck`), `pnpm lint` (`eslint .`), `pnpm test` (`vitest run`),
 `pnpm format:check`.
 
 **Exact values:**
-- Root `packageManager`: `"pnpm@12.6.0"`; `engines.node`: `">=20.19"`.
+- Root `packageManager`: `"pnpm@12.6.0"`; `engines.node`: `">=22.12"` (root and every package).
 - `pnpm-workspace.yaml`: `packages: ['packages/*', 'examples/*']` and a `catalog:` with every
   version in the overview's dev-tool table.
 - Package deps: `core` — none (dev: `zod`, `zod-to-json-schema`, `ajv` 8.20.0, `ajv-formats` 3.0.1);
   `react` — dep `@toolmark/core: workspace:*`, peers `react >=18.3.0 <20`,
   `react-hook-form ^7.0.0` (optional), dev `react`, `react-dom`, `@types/react`, `@types/react-dom`, `react-hook-form`, `zod`, `@testing-library/react`, `@vitest/browser`, `@vitest/browser-playwright`; `inertia` — dep `@toolmark/core: workspace:*`, peers
   `@inertiajs/react ^2.0.0 || ^3.0.0`, `react >=18.3.0 <20`, dev `@inertiajs/react` (3.7.1) + the react dev set; `testing` — dep
-  `@toolmark/core: workspace:*`, peer `@playwright/test ^1.63.0`, dev `@playwright/test`, `vite`; `examples/react-vite` — private package `@toolmark-examples/react-vite` with `vite`, `@vitejs/plugin-react`, `react`, `react-dom`, `react-hook-form`, `zod`, `@playwright/test`, and the four `workspace:*` packages.
+  `@toolmark/core: workspace:*`, peer `@playwright/test ^1.63.0`, dev `@playwright/test`, `vite`; `examples/react-vite` (created here, owned by Lane A) — private package `@toolmark-examples/react-vite` with `vite`, `@vitejs/plugin-react`, `react`, `react-dom`, `react-hook-form`, `zod`, `@playwright/test`, and the four `workspace:*` packages.
 - `react` package `exports`: `"."` and `"./rhf"`. `core` package `exports`: `"."`, `"./protocol"`,
   `"./bridge"`, `"./bridge/echo"`, `"./bridge/websocket"`, `"./bridge/post-message"`,
-  `"./bridge/in-page"`, and `"./protocol/v1/*.json"` (emitted files).
+  `"./bridge/in-page"`, and `"./protocol/v1/*.json"` (emitted files). `testing` package `exports`:
+  `"."` (node: fixture, matchers, `createTestToolmark`) and `"./page"` (browser: `installTestHook`).
+  `inertia` package `exports`: `"."`.
+- Every code entry has the condition order `{ "source": "./src/<entry>.ts", "types":
+  "./dist/<entry>.d.ts", "import": "./dist/<entry>.js" }` (e.g. core `"./bridge/echo"` →
+  `"source": "./src/bridge/echo.ts"`); `files`: `["dist", "src"]` so the `source` condition never
+  dangles in a packed tarball. The emitted JSON entry has no `source` condition.
 - `tsconfig.base.json`: `"strict": true`, `"exactOptionalPropertyTypes": true`,
   `"noUncheckedIndexedAccess": true`, `"verbatimModuleSyntax": true`, `"target": "ES2022"`,
-  `"module": "NodeNext"`, `"moduleResolution": "NodeNext"`, `"lib": ["ES2022","DOM","DOM.Iterable"]`.
+  `"module": "NodeNext"`, `"moduleResolution": "NodeNext"`, `"lib": ["ES2022","DOM","DOM.Iterable"]`,
+  `"customConditions": ["source"]`.
 - ESLint: `no-eval`, `no-new-func`, `no-implied-eval` = `error`; typescript-eslint
   `recommendedTypeChecked`.
-- Root `vitest.config.ts` uses `test.projects: ['packages/*']`. Core runs `environment: 'node'`;
-  react/inertia run browser mode: provider `playwright` (from `@vitest/browser-playwright`),
-  instances `[{ browser: 'chromium' }]`, headless.
-- `.changeset/config.json`: `"access": "public"`, `"baseBranch": "main"`.
+- Root `vitest.config.ts` lists projects **explicitly** (no nested project lists):
+  `test.projects: ['packages/core/vitest.node.config.ts', 'packages/react/vitest.config.ts',
+  'packages/inertia/vitest.config.ts', 'packages/testing/vitest.config.ts']`; later milestones append
+  their configs to this list. Project names: `core-node`, `react`, `inertia`, `testing`.
+- `core-node`: `environment: 'node'`, include `test/**/*.test.ts`, exclude
+  `test/{dom,browser}-*.test.ts` (browser-mode files arrive in M2). react/inertia run browser mode:
+  provider `playwright` (from `@vitest/browser-playwright`), instances `[{ browser: 'chromium' }]`,
+  headless. `testing`: `environment: 'node'`, include `['test/**/*.test.ts']` (so Playwright's
+  `*.spec.ts` files are never collected by Vitest).
+- Every project config sets `resolve.conditions: ['source', …defaults]` (and the SSR/node
+  equivalent for node projects — confirm the exact Vitest 5 option names with ctx7 at execution) so
+  workspace imports resolve to `src/*.ts` without a build.
+- Core gates run from the root with `pnpm exec vitest run --project core-node <files>`; other
+  packages keep `pnpm -F <pkg> exec vitest run <files>` (their single `vitest.config.ts`).
+- `.changeset/config.json`: `"access": "public"` (takes effect only at the M5 `1.0.0` publish),
+  `"baseBranch": "main"`. Pre mode `next` is used for **version numbers only**: no workflow or task
+  before M5 runs `changeset publish`; pre-1.0 builds leave as packed tarballs (Task 16).
+- `.gitignore` includes `dist/`, `node_modules/`, `dist-tarballs/`.
 
 **Behaviour:**
 - `pnpm install` succeeds from clean; `pnpm exec playwright install chromium` is documented in
@@ -180,7 +220,7 @@ Lane B exports its symbols from `packages/core/src/bridge/index.ts` only.
 **Tests (write first):**
 - `smoke_imports_core` — `import * as core from '../src/index.ts'` → module object is defined.
 
-**Task gate:** `pnpm install && pnpm build && pnpm typecheck && pnpm lint && pnpm -F @toolmark/core exec vitest run test/smoke.test.ts`
+**Task gate:** `pnpm install && pnpm build && pnpm typecheck && pnpm lint && pnpm exec vitest run --project core-node test/smoke.test.ts`
 
 ---
 
@@ -239,7 +279,7 @@ long-name rule: first 55 chars + `_` + 8 lowercase hex of 32-bit FNV-1a (offset 
 - `result_helpers_shapes` — each helper returns the exact spec §6 shape; `refuse('stale','x',{rev:3})` includes `rev: 3`.
 - `results_are_structured_cloneable` — `structuredClone(ok({a:1}))` deep-equals the original.
 
-**Task gate:** `pnpm -F @toolmark/core exec vitest run test/names.test.ts test/result.test.ts && pnpm -F @toolmark/core typecheck`
+**Task gate:** `pnpm exec vitest run --project core-node test/names.test.ts test/result.test.ts && pnpm -F @toolmark/core typecheck`
 
 ---
 
@@ -273,15 +313,15 @@ function stripRequired(schema: JsonSchema): JsonSchema
 - (The register-level failure tests `resolve_fails_dev_throws` / `resolve_fails_prod_event` live in Task 4's `test/registry-schema.test.ts`.)
 - `strip_required_recursive_and_pure` — nested required arrays removed; original unchanged.
 
-**Task gate:** `pnpm -F @toolmark/core exec vitest run test/schema.test.ts`
+**Task gate:** `pnpm exec vitest run --project core-node test/schema.test.ts`
 
 ---
 
 ### Task 4: Registry, scopes, manifest, events, revisions   (Lane A, risk: high)
 
-**Files:** Create `src/events.ts`, `src/scope.ts`, `src/manifest.ts`, `src/registry.ts`;
-Modify `src/index.ts`; Test `test/registry.test.ts`, `test/registry-schema.test.ts`,
-`test/manifest.test.ts`.
+**Files:** Create `src/events.ts`, `src/scope.ts`, `src/manifest.ts`, `src/registry.ts`,
+`packages/core/test/helpers/create-test-registry.ts`; Modify `src/index.ts`; Test
+`test/registry.test.ts`, `test/registry-schema.test.ts`, `test/manifest.test.ts`.
 
 **Interfaces — Produces:**
 ```ts
@@ -294,6 +334,8 @@ interface ToolmarkOptions {
   confirmExpiryMs?: number                                         // default 600000
   budget?: number                                                  // default 40 (dev warning only)
   onError?: (e: ToolmarkErrorEvent) => void
+  /** @internal undocumented test hook; overrides the isBrowser() check */
+  __environment?: 'browser' | 'server'
 }
 interface ConfirmRequest { confirmId: string; tool: string; title?: string; caller: Caller; input: unknown; hints: ToolHints; summary: string; changes?: FieldChange[] }
 interface Scope { readonly path: string; scope(name: string, opts?: { when?: boolean }): Scope; setWhen(v: boolean): void; dispose(): void; readonly disposed: boolean }
@@ -326,6 +368,8 @@ interface ToolmarkEventMap {
 interface ToolmarkErrorEvent { code: string; message: string; tool?: string; cause?: unknown }
 class ToolmarkError extends Error { code: string }
 function createToolmark(options?: ToolmarkOptions): Toolmark
+// packages/core/test/helpers/create-test-registry.ts (test-only, not exported from the package)
+function createTestRegistry(opts?: ToolmarkOptions): Toolmark   // createToolmark({ dev: true, ...opts, __environment: 'browser' })
 ```
 
 **Behaviour:**
@@ -336,8 +380,8 @@ function createToolmark(options?: ToolmarkOptions): Toolmark
 - `rev` starts at 0 and increments once per registry mutation batch; `subscribe` listeners and the `change` event fire once per microtask batch with the latest `rev`.
 - `manifest` is sorted by full name, includes only tools the caller is allowed to see (policy from Task 5 — until Task 5, all visible), and is JSON-safe.
 - `use(consumer)` calls `consumer(tm)` and returns its disposer (idempotent).
-- SSR (spec D24): when `typeof document === 'undefined'`, `register` and `use` are inert no-ops returning disposable handles, `manifest` returns `{ rev: 0, tools: [] }`, `call` returns `refused` `unknown_tool`. Controlled by an internal `isBrowser()` check that tests can override via `createToolmark({ __environment: 'browser' | 'server' })` (undocumented test hook).
-- Registering a consequential/destructive tool when no inline `confirm` handler exists and any caller allowed for that hint uses inline mode → `missing_confirm_handler`.
+- SSR (spec D24): when `typeof document === 'undefined'`, `register` and `use` are inert no-ops returning disposable handles, `manifest` returns `{ rev: 0, tools: [] }`, `call` returns `refused` `unknown_tool`. Controlled by an internal `isBrowser()` check that tests can override via `createToolmark({ __environment: 'browser' | 'server' })` (undocumented test hook). Every node-project test builds its registry with `createTestRegistry` (M1 constraints); only `ssr_is_inert` passes `'server'` directly.
+- Confirm rule (M1 constraints): registering a consequential/destructive tool fails with `missing_confirm_handler` (dev throw / prod event, tool not registered) **only** when no caller allowed for its hint class has a confirmation path (deferred mode, or inline mode with `options.confirm`). Otherwise it registers; callers in inline mode without a handler are filtered out of `manifest`/`describe` for that tool, and one dev-only `missing_confirm_handler` warning event is emitted per such tool.
 
 **Tests (write first):**
 - `register_and_manifest_sorted` — three tools in two scopes → manifest names sorted, `llmName` present.
@@ -349,7 +393,8 @@ function createToolmark(options?: ToolmarkOptions): Toolmark
 - `subscribe_batches_per_microtask` — 5 registrations in one tick → listener called once with final rev.
 - `ssr_is_inert` — `__environment: 'server'` → register returns handle, manifest empty, no throw.
 - `budget_exceeded_dev_event_only` — 41 tools with `dev: true` → one `tool_budget_exceeded` event; `dev: false` → none.
-- `missing_confirm_handler_on_consequential` — dev throws; with `policy` restricting consequential to `inapp` only (deferred) → no error.
+- `no_confirmation_path_dev_throws` — consequential tool, no `confirm` handler, `policy` restricting consequential to `webmcp` only (inline) → dev throws `missing_confirm_handler`; prod → not registered + `error` event.
+- `inline_callers_hidden_without_handler` — consequential tool, default policy, no `confirm` handler → registers (`inapp` is deferred); `manifest({ caller: 'webmcp' })` and `describe(name, { caller: 'mcp' })` omit it, `manifest({ caller: 'inapp' })` lists it; exactly one dev `missing_confirm_handler` event for the tool; `dev: false` → no event.
 - `registry-schema.test.ts`: `resolve_fails_dev_throws`, `resolve_fails_prod_event` (review focus 5; the prod variant also asserts a call with invalid input still returns `invalid`).
 - `manifest.test.ts`: `summary_omits_schema`, `full_includes_schema`, `describe_unknown_undefined`, `manifest_is_json_safe` (`JSON.parse(JSON.stringify(m))` deep-equals).
 
@@ -357,7 +402,7 @@ function createToolmark(options?: ToolmarkOptions): Toolmark
 node; visibility = entry alive ∧ every ancestor `when !== false`. Batch notifications with a
 `queueMicrotask` flag.
 
-**Task gate:** `pnpm -F @toolmark/core exec vitest run test/registry.test.ts test/registry-schema.test.ts test/manifest.test.ts`
+**Task gate:** `pnpm exec vitest run --project core-node test/registry.test.ts test/registry-schema.test.ts test/manifest.test.ts`
 
 ---
 
@@ -383,7 +428,7 @@ function createConfirmQueue(): ConfirmQueue
 
 **Behaviour (pipeline order for `tm.call`):**
 1. Resolve tool; missing/hidden → `refused` `unknown_tool` with current `rev`. If `opts.rev` is given, differs from current `rev`, **and** the tool is missing → `refused` `stale` with `rev` (a stale rev with an existing tool proceeds).
-2. Policy: caller not allowed for the tool's hint class → `refused` `not_allowed`. Hint class = `destructive` > `consequential` > `readOnly` > `default`.
+2. Policy: caller not allowed for the tool's hint class → `refused` `not_allowed`. Hint class = `destructive` > `consequential` > `readOnly` > `default`. A consequential/destructive tool called by a caller whose mode is `inline` while no inline `confirm` handler is configured → `refused` `not_allowed` (confirm rule).
 3. Validate input (Task 3) → `invalid` on failure.
 4. Confirmation for consequential/destructive unless caller is `human`:
    - **deferred** mode → store a pending confirmation, emit `confirm` `pending`, return `needs_confirmation` `{ confirmId, summary, changes? }` (summary = `tool.summary?.(input)` ?? `tool.title` ?? tool name). `confirmPending(id, {approved:true, input?})` re-validates any edited input, runs the tool as caller `human`, emits `confirm` `approved` with the result, and returns it; rejection → `cancelled` `operator` + `confirm` `rejected`; after `confirmExpiryMs` → dropped, `confirm` `expired`, later `confirmPending` → `refused` `confirmation_expired`. Pending entries are dropped when their tool's scope is disposed (emit `expired`).
@@ -405,6 +450,7 @@ function createConfirmQueue(): ConfirmQueue
 - `deferred_reject_cancelled_operator`; `deferred_expiry_then_confirm_refused` (fake timers).
 - `pending_dropped_on_scope_dispose`.
 - `inline_confirm_approve_and_reject`.
+- `inline_caller_without_handler_not_allowed` — no `confirm` handler, `webmcp` calls a consequential tool → `refused` `not_allowed`, tool not run.
 - `human_caller_skips_confirmation`.
 - `scope_calls_serialized` — two slow calls in one scope run sequentially; two scopes overlap.
 - `queue_limit_busy` — 33rd queued call → `busy`.
@@ -414,7 +460,7 @@ function createConfirmQueue(): ConfirmQueue
 - `undo_runs_once_then_unavailable`.
 - `confirm_queue_fifo_approve_reject`.
 
-**Task gate:** `pnpm -F @toolmark/core exec vitest run test/call.test.ts test/policy.test.ts test/confirm.test.ts test/confirm-queue.test.ts test/queue.test.ts test/undo.test.ts`
+**Task gate:** `pnpm exec vitest run --project core-node test/call.test.ts test/policy.test.ts test/confirm.test.ts test/confirm-queue.test.ts test/queue.test.ts test/undo.test.ts`
 
 ---
 
@@ -466,7 +512,7 @@ function setPath<T>(obj: T, path: string, value: unknown): T     // immutable
 - `submit_is_consequential_deferred_for_inapp` — returns `needs_confirmation`.
 - `paths_flatten_get_set_immutable`.
 
-**Task gate:** `pnpm -F @toolmark/core exec vitest run test/form-tools.test.ts test/paths.test.ts`
+**Task gate:** `pnpm exec vitest run --project core-node test/form-tools.test.ts test/paths.test.ts`
 
 ---
 
@@ -511,7 +557,7 @@ const PROTOCOL_VERSION = 1
 - `unsupported_protocol_reports_id`.
 - `emitted_schema_files_match_exports` — run the emitter to a temp dir → JSON equals `protocolSchemas`.
 
-**Task gate:** `pnpm -F @toolmark/core exec vitest run test/protocol.test.ts && pnpm -F @toolmark/core build`
+**Task gate:** `pnpm exec vitest run --project core-node test/protocol.test.ts && pnpm -F @toolmark/core build`
 
 ---
 
@@ -556,7 +602,7 @@ function bridge(options: BridgeOptions): (tm: Toolmark) => () => void
 - `result_sent_after_scope_disposed` — dispose the scope while the tool runs → `result` still sent (review focus 2).
 - `dispose_aborts_inflight_and_closes_transport`.
 
-**Task gate:** `pnpm -F @toolmark/core exec vitest run test/bridge.test.ts`
+**Task gate:** `pnpm exec vitest run --project core-node test/bridge.test.ts`
 
 ---
 
@@ -564,8 +610,8 @@ function bridge(options: BridgeOptions): (tm: Toolmark) => () => void
 
 **Files:** Create `src/bridge/echo.ts`, `src/bridge/websocket.ts`, `src/bridge/post-message.ts`,
 `src/bridge/in-page.ts`; Modify `src/bridge/index.ts`, `packages/core/tsdown.config.ts` (entries
-`bridge/echo`, `bridge/websocket`, `bridge/post-message`, `bridge/in-page`) — `tsdown.config.ts` is
-granted to Lane B for these entry lines only; Test `test/transport-echo.test.ts`,
+`bridge`, `bridge/echo`, `bridge/websocket`, `bridge/post-message`, `bridge/in-page`) —
+`tsdown.config.ts` is granted to Lane B for these entry lines only; Test `test/transport-echo.test.ts`,
 `test/transport-websocket.test.ts`, `test/transport-post-message.test.ts`,
 `test/transport-in-page.test.ts`.
 
@@ -573,7 +619,7 @@ granted to Lane B for these entry lines only; Test `test/transport-echo.test.ts`
 ```ts
 interface EchoLike { private(channel: string): { listen(event: string, cb: (payload: unknown) => void): unknown; stopListening(event: string): unknown } }
 function echoTransport(o: { echo: EchoLike; channel: string; event?: string; postUrl: string; headers?: () => Record<string, string> }): BridgeTransport
-function websocketTransport(o: { url: string; protocols?: string | string[]; maxDelayMs?: number }): BridgeTransport
+function websocketTransport(o: { url: string; protocols?: string | string[]; maxDelayMs?: number; onOpen?: (socket: WebSocket) => void | Promise<void> }): BridgeTransport
 function postMessageTransport(o: { target: Window; targetOrigin: string; allowedOrigins: string[] }): BridgeTransport
 function createInPageChannel(): { transport: BridgeTransport; agent: { send(m: AgentToPageMessage): void; onMessage(h: (m: PageToAgentMessage) => void): () => void } }
 ```
@@ -586,7 +632,7 @@ capped at `maxDelayMs` (default `30000`); send buffer max `100` messages (oldest
 
 **Behaviour:**
 - **echo**: subscribes to `echo.private(channel)` (private channel is mandatory — D20); payload may be the message or `{ message }`. `send` POSTs JSON; non-2xx → rejected promise.
-- **websocket**: JSON text frames; reconnects with backoff; buffered sends flush on open; `close()` stops reconnecting.
+- **websocket**: JSON text frames; reconnects with backoff; on every (re)connect `onOpen(socket)` runs (and is awaited) **before** buffered bridge messages flush; a rejecting `onOpen` stops the transport (no further reconnects) and surfaces `transport_failed`; `close()` stops reconnecting. Uses the global `WebSocket` (Node ≥ 22.12 and browsers); tests inject a fake class or `ws` where a Node server is needed.
 - **postMessage**: `targetOrigin` `'*'` → throws `TypeError('targetOrigin must be an exact origin')`; incoming events accepted only from `allowedOrigins` **and** `event.source === target`.
 - **in-page**: both directions delivered asynchronously via `queueMicrotask`; used by in-page agents and tests.
 
@@ -594,10 +640,11 @@ capped at `maxDelayMs` (default `30000`); send buffer max `100` messages (oldest
 - `echo_listens_on_private_channel_and_posts` — fake `EchoLike` + stubbed `fetch` → correct channel/event, POST body and headers; non-2xx rejects.
 - `echo_accepts_wrapped_payload`.
 - `websocket_reconnects_with_backoff_and_flushes` — fake WebSocket class, fake timers → delays 500, 1000, 2000…; buffered messages sent after open.
+- `websocket_on_open_runs_before_flush` — `onOpen` sends a frame and resolves later → that frame precedes every buffered message, on the first connect and after a reconnect; rejecting `onOpen` → no reconnect, `send` rejects.
 - `post_message_rejects_star_origin`; `post_message_filters_origin_and_source`.
 - `in_page_round_trip_with_bridge` — `createInPageChannel` + `bridge` + registry → agent `call` gets `result`.
 
-**Task gate:** `pnpm -F @toolmark/core exec vitest run test/transport-echo.test.ts test/transport-websocket.test.ts test/transport-post-message.test.ts test/transport-in-page.test.ts`
+**Task gate:** `pnpm exec vitest run --project core-node test/transport-echo.test.ts test/transport-websocket.test.ts test/transport-post-message.test.ts test/transport-in-page.test.ts`
 
 ---
 
@@ -729,6 +776,7 @@ interface InertiaFormLike<V> { data: V; setData(data: V): void; errors: Partial<
 **Files:** Create `packages/testing/src/index.ts`, `src/fixture.ts`, `src/matchers.ts`,
 `src/test-toolmark.ts`, `src/page/install-test-hook.ts`; Test `test/test-toolmark.test.ts`,
 `test/fixture.spec.ts`, `test/fixture-page/index.html`, `test/fixture-page/main.ts`,
+`test/fixture-page/vite.config.ts` (`resolve.conditions` includes `'source'`),
 `playwright.config.ts` (its `webServer` runs `vite test/fixture-page --port 5179`; the page registers
 two tools, one consequential, and calls `installTestHook`).
 
@@ -736,6 +784,14 @@ two tools, one consequential, and calls `installTestHook`).
 ```ts
 // browser entry "@toolmark/testing/page"
 function installTestHook(tm: Toolmark): () => void     // sets globalThis.__toolmark_test__
+// hook shape (all values JSON-safe, or promises of JSON-safe values):
+globalThis.__toolmark_test__ = {
+  manifest(opts?: { caller?: Caller; detail?: 'summary' | 'full' }): { rev: number; tools: ToolManifestSummary[] | ToolManifest[] }
+  describe(name: string): ToolManifest | undefined
+  call(name: string, input: unknown, opts?: { caller?: Caller }): Promise<ToolResult<unknown>>   // caller default 'test'
+  confirmPending(confirmId: string, outcome: ConfirmOutcome): Promise<ToolResult<unknown>>
+  pending(): PendingConfirmation[]
+}
 // node entry "@toolmark/testing"
 const test: TestType<{ tools: ToolsFixture }, {}>       // extends @playwright/test
 const expect: Expect<…with matchers…>
@@ -752,12 +808,13 @@ function createTestToolmark(opts?: ToolmarkOptions): Toolmark & { calls: Array<{
 
 **Exact values:** hook global `__toolmark_test__`; missing-hook error message
 `"Toolmark test hook not found: call installTestHook(toolmark) in your app's test build"`; hook
-wait timeout `5000` ms; package exports `"."` and `"./page"`.
+wait timeout `5000` ms; package exports `"."` and `"./page"` (declared in Task 1); Vitest include
+`['test/**/*.test.ts']` (Task 1) so `fixture.spec.ts` runs only under Playwright.
 
 **Behaviour:**
 - Fixture calls run with caller `test` (deferred confirmation); `autoConfirm(true)` approves any `needs_confirmation` by calling `confirm` automatically and returns the final result.
 - `toHaveTools` asserts a subset; `toHaveChanged` asserts an `ok` result's `changes` contains `{ path, after }`.
-- `createTestToolmark` sets every caller to deferred mode and records every `result` event.
+- `createTestToolmark` sets every caller to deferred mode, sets `__environment: 'browser'` (so it works in node-environment tests of any package), and records every `result` event.
 
 **Tests (write first):**
 - `test_toolmark_records_calls`; `approve_all_runs_pending`.
@@ -769,10 +826,11 @@ wait timeout `5000` ms; package exports `"."` and `"./page"`.
 
 ### Task 15: Example app `examples/react-vite` with end-to-end tests   (Lane F, risk: normal)
 
-**Files:** Create `examples/react-vite/package.json`, `vite.config.ts`, `index.html`,
+**Files:** Create `examples/react-vite/vite.config.ts` (`resolve.conditions` includes `'source'`), `index.html`,
 `src/main.tsx`, `src/app.tsx`, `src/challenge-form.tsx`, `src/in-page-agent.ts`,
 `playwright.config.ts`, `e2e/form.spec.ts`; Modify `packages/core/src/index.ts` (export bridge
-names from `./bridge/index.ts` — Lane F's one allowed core edit).
+names from `./bridge/index.ts` — Lane F's one allowed core edit). The example's `package.json` was
+created by Lane A in Task 1.
 
 **Behaviour:**
 - A react-hook-form + zod 4 challenge form (title `{ ar, en }`, type enum, startsAt date) registered via `useFormTool(rhfAdapter(form, …))` inside `<ToolScope name="challenges">`.
@@ -792,21 +850,27 @@ names from `./bridge/index.ts` — Lane F's one allowed core edit).
 ### Task 16: Docs, changeset, CI   (Lane F, risk: normal)
 
 **Files:** Create `docs/protocol-v1.md`, `docs/guides/laravel-reference.md`,
-`packages/*/README.md` (four), `.changeset/initial-release.md`, `.github/workflows/ci.yml`.
+`docs/release/next-tarballs.md`, `packages/*/README.md` (four), `.changeset/initial-release.md`,
+`.github/workflows/ci.yml`.
+
+**Prerequisites:** the private GitHub repo `adams100111/toolmark` exists (overview); the Innovation
+baseline `docs/release/innovation-baseline.md` exists before the M1 exit check is run.
 
 **Exact values:** CI on `push` and `pull_request`; Node `22`; jobs: `lint`, `typecheck`,
 `test` (matrix `inertia: ['2.3.28', '3.7.1']`, installs the matrix version into the inertia
-package for that job), `build`, `types-ts7` (installs `typescript@7.0.2` in a temp dir and runs
+package for that job; resolves sources via the `source` condition, so it does **not** depend on
+`build`), `build`, `types-ts7` (installs `typescript@7.0.2` in a temp dir and runs
 `tsc --noEmit` on a file importing every public entry), `e2e` (examples/react-vite).
 
 **Behaviour:**
-- `protocol-v1.md` documents every message, the §12.2 rules (including the security MUSTs), the LLM exposure pattern (`page_call`/`page_describe` descriptions to copy) and links the emitted JSON Schema files.
-- `laravel-reference.md` gives copyable PHP for `PageCallTool`, `PageDescribeTool`, a protocol-v1 `BrowserBridge` (private channel broadcast, authenticated POST endpoint validating user/conversation/clientId/call-id binding and deadline, Redis `BLPOP` hand-off with cache polling fallback), and the `confirmed` handler. It is marked "reference — copy into your app; not a package".
-- Changeset declares `minor` pre-release for all four packages (`-next` pre mode: `changeset pre enter next`).
+- `protocol-v1.md` documents every message, the §12.2 rules (including the security MUSTs), the LLM exposure pattern (`page_call`/`page_describe` descriptions to copy), the deferred-confirmation server behaviour (spec §12.3: on `confirmed`, append the outcome to the conversation as a tool-result message and start **one** follow-up agent turn limited to acknowledging it, with no page tools, so it cannot start new actions) and links the emitted JSON Schema files.
+- `laravel-reference.md` gives copyable PHP for `PageCallTool`, `PageDescribeTool`, a protocol-v1 `BrowserBridge` (private channel broadcast, authenticated POST endpoint validating user/conversation/clientId/call-id binding and deadline, Redis `BLPOP` hand-off with cache polling fallback), and the `confirmed` handler (appends the outcome as a tool-result message and dispatches one follow-up turn with `page_call`/`page_describe` withheld). It is marked "reference — copy into your app; not a package".
+- Changeset declares `minor` pre-release for all four packages (`-next` pre mode: `changeset pre enter next`) — **versions only; nothing is published before M5**.
+- **Tarball hand-off (last step of the milestone):** `pnpm changeset version` (pre mode `next`), commit the version bump, then `pnpm -r --filter "./packages/*" pack --pack-destination "$PWD/dist-tarballs"` (or per-package `pnpm pack`; verify the recursive flag at execution). `dist-tarballs/` is git-ignored. `docs/release/next-tarballs.md` records, per milestone, the version, each tarball's filename and SHA-256, and the hand-off: the Innovation adoption plan commits the tarballs under `innovation/vendor/toolmark/`, references them as `file:vendor/toolmark/<tgz>` (with `pnpm.overrides` mapping every `@toolmark/*` to its tarball so inter-package deps resolve), and uses `link:` for local development.
 
 **Tests:** none beyond CI running green on the branch; the reviewer checks the Laravel reference against §12.2 line by line.
 
-**Task gate:** `pnpm lint && pnpm typecheck && pnpm test && pnpm build` (lane gate), then CI green on push.
+**Task gate:** `pnpm lint && pnpm typecheck && pnpm test && pnpm build` (lane gate), then CI green on push, then the tarballs exist in `dist-tarballs/` and `docs/release/next-tarballs.md` lists them.
 
 ---
 
@@ -819,7 +883,8 @@ package for that job), `build`, `types-ts7` (installs `typescript@7.0.2` in a te
   §18 unit/DOM/contract/E2E → T3–T15. `useToolAnchor`, files, wizard, options, arrays → M2/M3.
 - **Placeholders:** none; every task has exact names, values and tests.
 - **Names:** `createFormTools`, `FormAdapter.setValues/dirtyPaths/submit/fields`, `ConfirmQueue`,
-  `PendingConfirmation`, `bridge`, `BridgeTransport`, `createInPageChannel` are used identically in
+  `PendingConfirmation`, `bridge`, `BridgeTransport`, `createInPageChannel`, `createTestRegistry` are used identically in
   every task that consumes them; overview registry updated accordingly.
-- **File ownership:** each file belongs to one lane; `tsdown.config.ts` entry lines for transports
-  granted to Lane B explicitly; `packages/core/src/index.ts` bridge export line granted to Lane F.
+- **File ownership:** each file belongs to one lane; `tsdown.config.ts` entry lines for `bridge` and
+  the transports granted to Lane B explicitly; `packages/core/src/index.ts` bridge export line
+  granted to Lane F; `examples/react-vite/package.json` and `packages/core/test/helpers/**` are Lane A's.

@@ -21,8 +21,22 @@ executors read both.
 | M5 | `2026-09-24-toolmark-m5-release.md` | release gates §21, security review, spec-watch, publish `1.0` | all gates green |
 
 **Innovation adoption (spec §19)** is app-side work in `~/projects/innovation`, a different repo
-with its own process (it uses Spec Kit under `.specify/`). It gets its own plan written in that repo
-following its conventions, consuming Toolmark `-next` builds. Toolmark plans never edit Innovation.
+with its own process (it uses Spec Kit under `.specify/`). It gets its own plan, written in that repo
+with its own Spec Kit flow **before M1 starts**, consuming Toolmark `-next` tarballs. Toolmark plans
+never edit Innovation.
+
+- **Baseline first (prerequisite for the M1 exit check):** the adoption plan's first step records
+  the current snapshot-and-script flow — 10 runs each of the simple-form task and the wizard task,
+  recording rounds, wall time, input tokens and success rate — saved to
+  `docs/release/innovation-baseline.md` in the Toolmark repo. The after-numbers go to
+  `docs/release/innovation-results.md`; M5 Task 7 verifies both.
+- **Pre-1.0 consumption is by tarball, not npm.** Changesets stay in pre mode `next` for version
+  numbers, but nothing is published before M5. The final lane of every milestone plan runs
+  `pnpm -r pack --pack-destination dist-tarballs` and writes the hand-off note; the Innovation
+  adoption plan commits the tarballs under `innovation/vendor/toolmark/` and references them as
+  `file:vendor/toolmark/<tgz>`. Local development uses `link:`. `dist-tarballs/` is git-ignored in
+  the Toolmark repo.
+- **Hosting:** the private GitHub repo `adams100111/toolmark` exists before M1 Task 16 (CI).
 
 ## Global constraints (apply to every milestone plan)
 
@@ -30,7 +44,8 @@ following its conventions, consuming Toolmark `-next` builds. Toolmark plans nev
   `@toolmark/tour`, `@toolmark/mcp`, `@toolmark/lint`, `@toolmark/judge-typesafe`. License MIT.
 - ESM only: `"type": "module"`, `exports` maps with `types` + `import`, `"sideEffects": false`
   (except `@toolmark/tour`'s CSS entry).
-- `engines.node`: `">=20.19"`. Browser code targets ES2022.
+- `engines.node`: `">=22.12"` (Node 22 has a global `WebSocket`; tests may inject `ws` where a Node
+  server is needed). Browser code targets ES2022.
 - **TypeScript 6.0.3 for the workspace** (ruling: `typescript-eslint` 8.70.1 peers
   `typescript >=4.8.4 <6.1.0`; TS 7.0.2 is latest). CI additionally runs `tsc --noEmit` against the
   published `.d.ts` with TypeScript 7.0.2.
@@ -48,6 +63,12 @@ following its conventions, consuming Toolmark `-next` builds. Toolmark plans nev
   of the full name.
 - Bridge protocol constant `protocol: 1`.
 - Deferred confirmation default expiry: `600000` ms.
+- Source-first resolution: every package entry's `exports` carries a `"source"` condition pointing
+  at its `src/*.ts` file; Vitest (`resolve.conditions: ['source']`) and `tsc`
+  (`customConditions: ["source"]`) resolve workspace sources without a build (M1 Task 1).
+- Node-environment tests build registries through `createTestRegistry` (core test helper, sets
+  `__environment: 'browser'`) or `createTestToolmark` from `@toolmark/testing` (M1 Task 4).
+- Spec rulings made in these plans are listed in spec §23.
 - Commits: Conventional Commits; no AI attribution lines of any kind.
 - Versions below were checked on npm 2026-09-24; re-verify with `npm view <pkg> version` at the start
   of each milestone and record bumps in that plan's ledger.
@@ -87,14 +108,15 @@ Names every milestone relies on. A later plan may add names; it never renames th
 | `defineTool`, `ToolDefinition`, `ToolHints`, `ToolContext`, `Caller` | core `src/tool.ts` | M1 |
 | `ToolResult`, `ok`, `invalid`, `refuse`, `cancelled`, `FieldChange` | core `src/result.ts` | M1 |
 | `ToolManifest`, `ToolManifestSummary` | core `src/manifest.ts` | M1 |
-| `FormAdapter`, `createFormTools`, `FormToolOptions` | core `src/forms/*.ts` | M1 |
+| `FormAdapter` (`getValues`, `setValues`, `dirtyPaths`, `submit`, `fields`, `onUserInteraction?`), `createFormTools`, `FormToolOptions` | core `src/forms/*.ts` | M1 |
 | `ProtocolMessage` + `validateMessage` | core `src/protocol/*` | M1 |
 | `bridge`, `BridgeTransport`, `echoTransport`, `websocketTransport`, `postMessageTransport`, `createInPageChannel` | core `src/bridge/*` | M1 |
 | `ToolmarkProvider`, `useToolmark`, `useTool`, `ToolScope`, `useFormTool`, `useConfirmQueue`, `usePendingConfirmations`, `useAgentActivity` | react | M1 |
 | `rhfAdapter` | react `/rhf` | M1 |
 | `inertiaAdapter` | inertia | M1 |
 | `createConfirmQueue`, `ConfirmQueue`, `PendingConfirmation`, `ToolmarkError` | core | M1 |
-| `installTestHook` | testing `/page` | M1 |
+| `installTestHook`, `globalThis.__toolmark_test__` hook shape | testing `/page` | M1 |
+| `createTestRegistry` (test helper, not exported) | core `test/helpers/create-test-registry.ts` | M1 |
 | `test`, `expect`, `createTestToolmark`, `ToolsFixture` | testing | M1 |
 | `createWizardTools`, `createStepwiseWizardTools`, `useWizardTool`, `FileRef`, `fromJsonSchema`, `scanDom`, `domFormAdapter`, `synthesizeFormSchema`, `navigationTool`, `propsTools`, `inertiaPages`, `inertiaFormComponentAdapter` | core / react / inertia | M2 |
 | `webmcp`, `otel`, `useToolAnchor`, `mcpPairing`, `tm.anchor`/`setAnchor`/`state`, `startMcpServer`, `createPairingServer` | core `/webmcp`, `/otel`, react, mcp | M3 |

@@ -29,6 +29,9 @@ localhost WebSocket carrying bridge protocol v1.
   `toolmark.tool`, `toolmark.caller`, `toolmark.status`, `toolmark.call_id`; counter
   `toolmark.calls`; histogram `toolmark.call.duration` (unit `ms`).
 - The WebMCP subpath's docs, JSDoc and `package.json` description say **experimental** (D28).
+- Node-project tests build registries with `createTestRegistry` (core) or `createTestToolmark`
+  (`@toolmark/testing`, other packages), never a bare `createToolmark` (M1 constraints).
+- Nothing is published to npm; the milestone ends with the `-next` tarball hand-off (Task 6).
 
 ## Rulings made while planning
 
@@ -71,19 +74,21 @@ packages/mcp/  package.json tsconfig.json tsdown.config.ts vitest.config.ts
   src/cli.ts  src/server/{era-router,legacy,modern,tool-mapping}.ts  src/pairing/{ws-server,code}.ts
   src/client/index.ts   (browser entry: mcpPairing)
   test/*.test.ts
+core/test/bridge-caller.test.ts               bridge honours options.caller
+vitest.config.ts                              (modify: append packages/mcp/vitest.config.ts)
 examples/react-vite/src/{pair-mcp.tsx}  e2e/{webmcp,mcp}.spec.ts
-docs/guides/{webmcp,mcp,otel,anchors}.md  .changeset/m3-reach.md
+docs/guides/{webmcp,mcp,otel,anchors}.md  docs/release/next-tarballs.md (append)  .changeset/m3-reach.md
 ```
 
 ## Lanes
 
 | Wave | Lane | Tasks | Owns files | Consumes |
 | --- | --- | --- | --- | --- |
-| 0 | A (high) | 1 | `core/src/anchors.ts`, `core/src/forms/**`, `core/src/dom/form-adapter.ts`, `core/src/bridge/bridge.ts`, `core/src/registry.ts`, `core/src/index.ts`, `react/src/rhf/**`, `react/src/use-tool-anchor.ts`, `react/src/index.ts`, all `package.json` files (adds `packages/mcp` skeleton + deps, core `./webmcp` `./otel` exports), `pnpm-lock.yaml`, `tsdown.config.ts` files | M1–M2 |
+| 0 | A (high) | 1 | `core/src/anchors.ts`, `core/src/forms/**`, `core/src/dom/form-adapter.ts`, `core/src/bridge/bridge.ts`, `core/src/registry.ts`, `core/src/index.ts`, `react/src/rhf/**`, `react/src/use-tool-anchor.ts`, `react/src/index.ts`, all `package.json` files incl. `examples/react-vite/package.json` (adds `packages/mcp` skeleton + deps, core `./webmcp` `./otel` exports, M3 devDeps), `pnpm-lock.yaml`, `tsdown.config.ts` files, root `vitest.config.ts`, Task 1 tests (incl. `core/test/bridge-caller.test.ts`) | M1–M2 |
 | 1 | B (high) | 2 | `core/src/webmcp/**`, `core/test/webmcp*.test.ts` | A |
 | 1 | C (high, security) | 3–4 | `packages/mcp/src/**`, `packages/mcp/test/**` | A |
 | 1 | D (normal) | 5 | `core/src/otel/**`, `core/test/otel.test.ts` | A |
-| 2 | E (normal) | 6 | `examples/**`, `docs/guides/**`, `.changeset/m3-reach.md` | A–D |
+| 2 | E (normal) | 6 | `examples/**` except `package.json`, `docs/guides/**`, `docs/release/next-tarballs.md`, `.changeset/m3-reach.md` | A–D |
 
 ---
 
@@ -94,8 +99,11 @@ docs/guides/{webmcp,mcp,otel,anchors}.md  .changeset/m3-reach.md
 `packages/mcp/src/index.ts` (empty); Modify `core/src/forms/types.ts`, `core/src/forms/form-tools.ts`,
 `core/src/dom/form-adapter.ts`, `core/src/registry.ts`, `core/src/index.ts`,
 `core/src/bridge/bridge.ts` (widen `BridgeOptions.caller` to `'inapp' | 'mcp'`),
-`react/src/rhf/index.ts`, `react/src/index.ts`, `core/package.json`, `core/tsdown.config.ts`;
-Test `core/test/anchors.test.ts`, `core/test/browser-interaction.test.ts`, `react/test/use-tool-anchor.test.tsx`.
+`react/src/rhf/index.ts`, `react/src/index.ts`, `core/package.json`, `core/tsdown.config.ts`,
+`examples/react-vite/package.json`, `pnpm-lock.yaml`, root `vitest.config.ts` (append
+`'packages/mcp/vitest.config.ts'`, project name `mcp`); Test `core/test/anchors.test.ts`,
+`core/test/browser-interaction.test.ts`, `core/test/bridge-caller.test.ts`,
+`react/test/use-tool-anchor.test.tsx`.
 
 **Interfaces — Produces:**
 ```ts
@@ -111,8 +119,13 @@ function useToolAnchor(tool: string, param?: string): (el: Element | null) => vo
 ```
 `packages/mcp/package.json`: name `@toolmark/mcp`, `bin: { "toolmark-mcp": "./dist/cli.js" }`,
 exports `"."` (node) and `"./client"` (browser), deps `@modelcontextprotocol/server` 2.1.0, `ws`
-8.21.3, `@toolmark/core` `workspace:*`; dev `@types/ws`. Core `package.json` adds exports
-`./webmcp`, `./otel`, optional peers `@opentelemetry/api ^1.9.0`, `@mcp-b/webmcp-polyfill ^5.0.0`.
+8.21.3, `@toolmark/core` `workspace:*`; dev `@types/ws`, `@toolmark/testing` `workspace:*`, and the
+MCP SDK client package `@modelcontextprotocol/client` (verify the v2 client package name with
+`npm view` at execution; ledger any change). Core `package.json` adds exports `./webmcp`, `./otel`
+(each with the `source` condition), optional peers `@opentelemetry/api ^1.9.0`,
+`@mcp-b/webmcp-polyfill ^5.0.0`, and devDeps `@opentelemetry/api` 1.9.1,
+`@opentelemetry/sdk-trace-base` 2.11.0, `@mcp-b/webmcp-polyfill` 5.1.0, `webmcp-types` 0.1.9.
+`examples/react-vite/package.json` adds dev `@modelcontextprotocol/client` (same verification note).
 
 **Behaviour:**
 - `tm.anchor` precedence: `setAnchor` override → tool `anchors` spec → form field `element` from `adapter.fields()` → `null`.
@@ -120,10 +133,11 @@ exports `"."` (node) and `"./client"` (browser), deps `@modelcontextprotocol/ser
 - `state().values` omits paths whose field element is `type="password"` or has `autocomplete` starting with `cc-` (spec §14 privacy); test `state_omits_password_and_cc`.
 - Form tools subscribe to `adapter.onUserInteraction` and emit `interaction` events `{ tool: '<name>.fill', param: path, kind, caller: 'human' }`; agent-originated `setValues` never emits them.
 - RHF: `form.watch((values, { name, type }) => …)` → `type === 'change'` → `input`; DOM: trusted `input`/`focusin`/`submit`.
+- Bridge: `options.caller` (default `'inapp'`) is used for **every** registry access — `manifest({ caller })` on attach and on each revision, `describe(tool, { caller })` and `call(…, { caller })` — so an `mcp` bridge never lists, describes or runs a tool the `mcp` caller may not use.
 
-**Tests (write first):** `anchor_precedence` · `state_for_form_and_wizard` · `state_omits_password_and_cc` · `interaction_only_for_user_changes` (DOM + RHF variants) · `use_tool_anchor_sets_and_clears`.
+**Tests (write first):** `anchor_precedence` · `state_for_form_and_wizard` · `state_omits_password_and_cc` · `interaction_only_for_user_changes` (DOM + RHF variants) · `use_tool_anchor_sets_and_clears` · `mcp_caller_does_not_see_destructive_tools` (`bridge-caller.test.ts`: bridge with `caller: 'mcp'` → the destructive tool is absent from the `manifest` message, `describe` → `refused` `unknown_tool`, `call` → `refused` `not_allowed`).
 
-**Task gate:** `pnpm install && pnpm -F @toolmark/core exec vitest run test/anchors.test.ts && pnpm -F @toolmark/core exec vitest run --project core-browser test/browser-interaction.test.ts && pnpm -F @toolmark/react exec vitest run test/use-tool-anchor.test.tsx`
+**Task gate:** `pnpm install && pnpm exec vitest run --project core-node test/anchors.test.ts test/bridge-caller.test.ts && pnpm exec vitest run --project core-browser test/browser-interaction.test.ts && pnpm -F @toolmark/react exec vitest run test/use-tool-anchor.test.tsx`
 
 ---
 
@@ -148,7 +162,7 @@ function webmcp(o?: { polyfill?: 'auto' | 'none'; filter?: (t: ToolManifest) => 
 **Tests (write first):** (fake `ModelContext` class recording calls; separate polyfill test in browser mode)
 - `registers_visible_tools_with_hints` · `destructive_not_exposed_by_default` · `execute_routes_through_call_with_caller_webmcp` · `execute_accepts_json_string_input` (review focus 4) · `resync_on_change_aborts_old` · `skips_native_form_duplicates` · `legacy_navigator_getter_supported` · `polyfill_auto_initializes` · `inactive_emits_unavailable_once`.
 
-**Task gate:** `pnpm -F @toolmark/core exec vitest run test/webmcp.test.ts && pnpm -F @toolmark/core exec vitest run --project core-browser test/browser-webmcp-polyfill.test.ts`
+**Task gate:** `pnpm exec vitest run --project core-node test/webmcp.test.ts && pnpm exec vitest run --project core-browser test/browser-webmcp-polyfill.test.ts`
 
 ---
 
@@ -200,12 +214,13 @@ function createPairingServer(o: { port: number; allowOrigins: string[]; stderr: 
 - Server binds `127.0.0.1:<port>`; rejects upgrades whose `Origin` is not in `allowOrigins` (HTTP 403), and whose remote address is not loopback.
 - First client message must be `{ "type": "pair", "code": "<code>" }` within 10 s; wrong code → close `4401`, attempt counted; 5 failures → code rotates and the new code is printed; correct → code consumed; a newer successful pairing replaces the previous connection (old closed `4409`).
 - After pairing the socket carries bridge protocol v1: the page side is `bridge({ transport: websocket })` with caller `mcp`; the CLI is the agent side implementing `PageLink` (manifest from `manifest` messages + `describe` for schemas, cached per `rev`; calls with 60 s deadline → timeout returns `error` "timed out").
-- `mcpPairing` opens `ws://127.0.0.1:<port>`, sends `pair`, then attaches `bridge` with a websocket transport and `caller: 'mcp'` (the option widened in Task 1).
+- `mcpPairing` builds `websocketTransport({ url: 'ws://127.0.0.1:<port>', onOpen })` (M1 Task 9) and attaches `bridge` with it and `caller: 'mcp'` (the option widened in Task 1). `onOpen` sends `{ type: 'pair', code }` and waits for `{ type: 'paired' }` before the transport flushes buffered bridge messages. On reconnect it re-pairs only if the code is still valid (unexpired, unused by another pairing); otherwise `onOpen` rejects, the transport stops and `transport_failed` is reported.
+- The server replies `{ type: 'paired' }` on a correct code.
 
 **Tests (write first):**
-- `rejects_bad_origin` · `rejects_non_loopback` · `rejects_wrong_code_and_rotates` (review focus 1) · `pair_timeout_closes` · `newer_pairing_replaces_old` · `manifest_change_notifies_client` (review focus 3) · `client_pairs_and_serves_calls` · `cli_e2e_stdio_to_page` (spawn the built CLI; a Node-side registry created with `createToolmark({ __environment: 'browser' })` plays the page and pairs over `ws`; call a tool over the legacy and modern eras).
+- `rejects_bad_origin` · `rejects_non_loopback` · `rejects_wrong_code_and_rotates` (review focus 1) · `pair_timeout_closes` · `newer_pairing_replaces_old` · `manifest_change_notifies_client` (review focus 3) · `client_pairs_and_serves_calls` · `client_waits_for_paired_before_flush` · `reconnect_with_expired_code_stops_transport` · `cli_e2e_stdio_to_page` (spawn the built CLI; a Node-side registry created with `createTestToolmark()` from `@toolmark/testing` plays the page and pairs over Node's global `WebSocket`; call a tool over the legacy and modern eras).
 
-**Task gate:** `pnpm -F @toolmark/mcp build && pnpm -F @toolmark/mcp exec vitest run test/pairing.test.ts test/client.test.ts test/cli.e2e.test.ts`
+**Task gate:** `pnpm -F @toolmark/mcp build && pnpm -F @toolmark/mcp exec vitest run test/pairing.test.ts test/client.test.ts test/cli.e2e.test.ts` (`test/cli.e2e.test.ts` matches the `test/**/*.test.ts` include)
 
 ---
 
@@ -225,14 +240,15 @@ function otel(o?: { tracer?: Tracer; meter?: Meter; recordPayloads?: boolean }):
 **Tests (write first):** (in-memory exporter from `@opentelemetry/sdk-trace-base`)
 `span_per_call_with_attributes` · `error_status_on_error_result` · `metrics_recorded` · `no_payload_attributes_by_default` (review focus 5) · `payloads_when_enabled_truncated`.
 
-**Task gate:** `pnpm -F @toolmark/core exec vitest run test/otel.test.ts`
+**Task gate:** `pnpm exec vitest run --project core-node test/otel.test.ts`
 
 ---
 
 ### Task 6: Examples, guides, changeset   (Lane E, risk: normal)
 
 **Files:** Create `examples/react-vite/src/pair-mcp.tsx`, `e2e/webmcp.spec.ts`, `e2e/mcp.spec.ts`;
-`docs/guides/webmcp.md`, `mcp.md`, `otel.md`, `anchors.md`; `.changeset/m3-reach.md`.
+`docs/guides/webmcp.md`, `mcp.md`, `otel.md`, `anchors.md`; `.changeset/m3-reach.md`; Modify
+`docs/release/next-tarballs.md` (append the M3 entry).
 
 **Behaviour:** the example adds `webmcp({ polyfill: 'auto' })`, `otel()` (console exporter in dev),
 and a "Pair with desktop MCP" panel that takes the code and calls `mcpPairing`. `mcp.md` shows the
@@ -240,12 +256,15 @@ Claude Desktop / Claude Code config snippet
 (`{ "command": "npx", "args": ["-y", "@toolmark/mcp", "--allow-origin", "http://localhost:5173"] }`)
 and the security model. `webmcp.md` states the experimental status and the Chrome flag
 `chrome://flags/#enable-webmcp-testing` for local testing.
+- **Tarball hand-off (last step):** `pnpm changeset version` (pre mode `next`, versions only — no
+  publish), commit, `pnpm -r --filter "./packages/*" pack --pack-destination "$PWD/dist-tarballs"`
+  (now including `@toolmark/mcp`), and append the M3 entry to `docs/release/next-tarballs.md`.
 
 **Tests (write first):** `e2e/webmcp.spec.ts`: `polyfill_exposes_tools_and_execute_fills_form`;
 `e2e/mcp.spec.ts`: `desktop_client_lists_and_calls_after_pairing` (spawn CLI, drive pairing in the
 page, call via an MCP SDK client).
 
-**Task gate:** `pnpm -F @toolmark-examples/react-vite exec playwright test` then lane gate.
+**Task gate:** `pnpm -F @toolmark-examples/react-vite exec playwright test` then lane gate, then the M3 tarballs exist and are listed in `docs/release/next-tarballs.md`.
 
 ---
 
