@@ -378,7 +378,7 @@ Modify `docs/release/next-tarballs.md` (append the M2 entry).
 - Wizard page mirrors a real pattern: three steps, one `useForm` per step, parent `useState` data, one step mounted at a time; `useWizardTool` with `currentAdapter`.
 - DOM page: `public/plain-form.html`, a plain HTML form with native attributes + a `data-tool` table + button, scanned by `scanDom` (loaded from `src/dom-page.tsx`).
 - Guides document every public name added in M2 with a runnable snippet, the JSON-Schema-subset keyword list, the files security model, and the `data-tool-*` attribute reference.
-- **Tarball hand-off (last step):** `pnpm changeset version` (pre mode `next`, versions only — no publish), commit, `pnpm -r --filter "./packages/*" pack --pack-destination "$PWD/dist-tarballs"`, and append the M2 entry (version, filenames, SHA-256) to `docs/release/next-tarballs.md`; Innovation vendors them under `innovation/vendor/toolmark/` as in M1 Task 16.
+- **Tarball hand-off (last step):** `pnpm changeset version` (pre mode `next`, versions only — no publish), commit, `pnpm -r --filter "./packages/*" pack --pack-destination "$PWD/dist-tarballs"`, and append the M2 entry (version, filenames, SHA-256) to `docs/release/next-tarballs.md`; Innovation vendors them under `innovation/resources/js/vendor-packages/toolmark/` as in M1 Task 16.
 
 **Tests (write first):** `e2e/wizard.spec.ts`: `wizard_fill_all_steps_one_call`, `wizard_submit_confirmation`; `e2e/dom.spec.ts`: `plain_form_filled_and_skips_user_field`, `table_query_returns_rows`.
 

@@ -520,7 +520,7 @@ The adoption plan is written in the Innovation repo with its own Spec Kit flow b
    check.
 1. Put `browser_script` behind a config flag defaulting to off (independent security fix).
 2. Depend on `@toolmark/*` `-next` versioned tarballs: each milestone's `pnpm pack` output is
-   committed under `innovation/vendor/toolmark/` and referenced as `file:vendor/toolmark/<tgz>`
+   committed under `innovation/resources/js/vendor-packages/toolmark/` and referenced as `file:resources/js/vendor-packages/toolmark/<tgz>`
    (`link:` for local development). Nothing is published to npm before M5.
 3. `SimpleChallengeForm`: `useFormTool(rhfAdapter(form), …)` with a global `zod-to-json-schema`
    converter; localized fields via an app-side adapter; lookups via async `options`.
@@ -589,5 +589,5 @@ Where one amends a section above, that section has been updated to match.
 | `tm.manifest` has no `scope` option and `tm.scope` has no `parent` option; nesting is via `scope.scope()` (§5 amended). | M1 T4 |
 | **MCP era routing** is Toolmark's own front door: the first stdio message picks the legacy handler (`initialize`) or the SDK's modern server. | M3 rulings, T3 |
 | **Node floor `>=22.12`** (global `WebSocket`); CI matrix Node 22.x and 24.x. | Overview constraints; M1 T1; M5 constraints |
-| **Tarball consumption**: pre-1.0 Innovation consumes `-next` versioned tarballs from `pnpm pack`, vendored under `innovation/vendor/toolmark/`; nothing is published before M5 (header, D32, §19, §20 amended). | Overview; final lane of M1–M4 |
+| **Tarball consumption**: pre-1.0 Innovation consumes `-next` versioned tarballs from `pnpm pack`, vendored under `innovation/resources/js/vendor-packages/toolmark/`; nothing is published before M5 (header, D32, §19, §20 amended). | Overview; final lane of M1–M4 |
 | **Confirm rule**: `missing_confirm_handler` only when no allowed caller has a confirmation path; inline callers without a handler don't see the tool (§7, D7 amended). | M1 constraints, T4, T5 |

@@ -33,8 +33,8 @@ never edit Innovation.
 - **Pre-1.0 consumption is by tarball, not npm.** Changesets stay in pre mode `next` for version
   numbers, but nothing is published before M5. The final lane of every milestone plan runs
   `pnpm -r pack --pack-destination dist-tarballs` and writes the hand-off note; the Innovation
-  adoption plan commits the tarballs under `innovation/vendor/toolmark/` and references them as
-  `file:vendor/toolmark/<tgz>`. Local development uses `link:`. `dist-tarballs/` is git-ignored in
+  adoption plan commits the tarballs under `innovation/resources/js/vendor-packages/toolmark/` and references them as
+  `file:resources/js/vendor-packages/toolmark/<tgz>`. Local development uses `link:`. `dist-tarballs/` is git-ignored in
   the Toolmark repo.
 - **Hosting:** the private GitHub repo `adams100111/toolmark` exists before M1 Task 16 (CI).
 
