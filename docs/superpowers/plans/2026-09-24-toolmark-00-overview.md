@@ -99,7 +99,9 @@ never edit Innovation and no Toolmark exit check or gate waits on it.
   (`customConditions: ["@toolmark/source"]`) resolve workspace sources without a build (M1 Task 1).
   Packages ship `files: ["dist", "src"]` so the condition's targets exist (publint-clean); the
   condition is internal and outside semver. Anything that spawns built output (CLI e2e, Next.js,
-  tarball smoke) builds the needed packages first (`pnpm --filter "<pkg>..." build`).
+  tarball smoke) builds the needed packages first (`pnpm --filter "<pkg>..." build`). Playwright spec
+  files run in Node and do not see `@toolmark/source`; any Playwright run that imports
+  `@toolmark/testing` builds `@toolmark/testing...` first (gates and the CI `e2e` job).
 - Root scripts `build`, `typecheck`, `lint` cover `packages/*` only (`pnpm -r --filter
   "./packages/*" …`); each example runs its own scripts in a dedicated CI job. ESLint ignores
   `**/dist/**`, `**/.next/**`, `examples/inertia-laravel/{vendor,public/build,storage}/**`,
@@ -201,7 +203,9 @@ Files an earlier milestone creates and a later one extends. Each later edit has 
 | root `package.json` scripts / devDeps | `build`, `typecheck`, `lint`, `test`, `format:check`; tooling devDeps (T1, A) | — | — | + `docs:api`, `docs:api:strict`, `docs:dev`, `docs:build`, `docs:preview`; docs devDeps (T0, A) | + `quality`, `size`, `test:all` (T1–T2, A), `docs:check` (controller); devDeps `publint`, `@arethetypeswrong/cli`, `size-limit`, `@size-limit/preset-small-lib`, `yaml` (T2, A) |
 | `packages/core/package.json` exports + `tsdown.config.ts` entries | `.`, `./protocol`, `./protocol/v1/*.json`, `./bridge*` (T1, A; bridge entry lines Lane B) | + `./dom` (T1, A) | + `./webmcp`, `./otel`; optional peers (T1, A) | — | metadata fields only (T2, A) |
 | `packages/core/src/index.ts` | Lane A (never re-exports the bridge) | Lane A | Lane A (T1) | — | Lane E only for security fixes |
-| `eslint.config.js` ignores | the full overview list (T1, A) | — | — | verify, append missing only (T0, A) | — |
+| `eslint.config.js` ignores + `parserOptions.project` | the full overview list; `project: ['./packages/*/tsconfig.test.json']` (T1, A) | — | — | verify, append missing ignores only (T0, A) | — |
+| `packages/*/tsconfig.test.json` (ESLint project + `typecheck`) | core, react, inertia, testing; react/inertia `tsconfig.json` `jsx: react-jsx`; example bundler-mode tsconfig (T1, A) | — | + `mcp` (T1, A) | + `tour` (`jsx: react-jsx`), `lint`, `judge-typesafe` (T0, A) | — |
+| `packages/core/src/registry.ts` internal `emitEvent` | — | creates (T1, A); used by T4 (A), T5–T6 (B) | used by T2 (B), no edit | — | — |
 | `.gitignore` | T1, A | — | — | append missing (T0, A) | + `.quality/` (T2, A) |
 | `.github/workflows/ci.yml` jobs | `lint`, `typecheck`, `build`, `test` (4-cell matrix, Chromium), `types-ts7` (= tarball smoke), `e2e` (react-vite, Chromium, round-budget artifact) (T16, F) | — | — (Playwright `globalSetup` builds `@toolmark/mcp...`) | + `docs`, `example-nextjs`, `example-laravel`; `e2e` builds packages and installs 3 browsers, keeping M1's steps (T7, F) | full matrix, browser axis, `zod3`, `quality`, hardening + SHA pins, triggers (T1–T2, A) |
 | other workflows | — | — | — | `docs-deploy.yml` (T7, F) | hardens `docs-deploy.yml` (T3b, B); + `release.yml` (T7a, F), `spec-watch.yml` (T6, D), `dependabot.yml` (T1, A) |

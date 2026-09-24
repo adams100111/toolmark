@@ -73,7 +73,7 @@ its exit check passes. Task numbers refer to the unit's plan.
 
 ### T-M4 Tours & tooling (toolmark)
 - [ ] W0 · A (T0) skeletons + deps
-- [ ] W1 · B (T1–T2) tours · C (T3–T4) lint + judge · D (T5, high, **security**) Laravel example · E (T6) Next.js example
+- [ ] W1 · B (T1–T2) tours · C (T3–T4) lint + judge · D (T5, high, **security**) Laravel example (PHP/Composer via Docker when not on PATH) · E (T6) Next.js example
 - [ ] W2 · F (T7–T8) docs site, CI, cross-cutting e2e + same-tools + planned tour, tarballs + smoke
 - [ ] Unit exit: tours (3 browsers) + Laravel authored tour + same-tools + example suites + `docs:build` + lint clean + smoke
 

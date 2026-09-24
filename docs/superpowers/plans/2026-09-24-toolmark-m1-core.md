@@ -73,8 +73,10 @@ scope, TSDoc-with-every-export and the CI matrix).
   `__environment: 'browser'`), or through `createTestToolmark` from `@toolmark/testing/vitest` where a
   package outside core needs one; only the SSR test passes `__environment: 'server'` directly.
 - **Source-first resolution:** every package entry's `exports` has an `"@toolmark/source"` condition
-  pointing at `src/*.ts`; Vitest/Vite and `tsc` resolve it, so tests and typecheck never need a prior
-  build. The condition is internal and outside semver (overview).
+  pointing at `src/*.ts`; Vitest/Vite and `tsc` resolve it, so Vitest tests and typecheck never need
+  a prior build. Playwright spec files load in Node, which ignores the condition, so a Playwright run
+  that imports `@toolmark/testing` builds `@toolmark/testing...` first (pass-4 ruling). The condition
+  is internal and outside semver (overview).
 - **Test imports:** tests import package code by the package's own name (`@toolmark/core`, resolved
   to source by the condition) or by relative `.js` specifiers; never `.ts` specifiers.
 - **TSDoc (R5):** every task that adds a public export writes its TSDoc comment (one line minimum,
@@ -131,6 +133,21 @@ scope, TSDoc-with-every-export and the CI matrix).
   edit `inertia-adapter.ts`.
 - Converter-specific tests carry `zod3` in their names so the M5 zod 3 axis selects them with
   `-t zod3`.
+
+## Rulings made while fixing (pass 4, pre-execution verification)
+
+- Ruling (P4): ESLint type-checks against `parserOptions.project: ['./packages/*/tsconfig.test.json']`
+  (`tsconfigRootDir: import.meta.dirname`), not `projectService` — with no root `tsconfig.json` and
+  `src`-only package `tsconfig.json`s, tests and `*.config.ts` belonged to no project, so `pnpm lint`
+  could not pass; every package in every milestone ships a `tsconfig.test.json` from the lane that
+  owns its configs — cost if wrong: slower lint than the project service.
+- Ruling (P4): Lane A's Task 1 writes the JSX/Vite settings (`"jsx": "react-jsx"` in react/inertia;
+  the example's bundler-mode tsconfig with `vite/client` types) — Lanes C, D and F own no tsconfig
+  and would have stalled on the controller — cost if wrong: none.
+- Ruling (P4): any Playwright run that imports `@toolmark/testing` first runs
+  `pnpm --filter "@toolmark/testing..." build` (T15 gate, CI `e2e` job) — spec files load in Node,
+  which ignores `@toolmark/source`, so the import resolves to `dist` — cost if wrong: a few seconds of
+  build per e2e run.
 
 ## Review focus
 
@@ -308,9 +325,19 @@ by Lanes C and E afterwards); `examples/react-vite/package.json`, `examples/reac
   `src` (used by tsdown's dts); `tsconfig.test.json` extends it with `"noEmit": true`, includes
   `src`, `test`, `scripts` (core) and `*.config.ts`, and sets `"types": ["node"]` for core and
   testing; react/inertia add the Vitest 5 browser-mode types (confirm the type entry name with ctx7
-  at execution).
+  at execution). Every package, in every milestone, has a `tsconfig.test.json` of this shape (it is
+  the project ESLint type-checks against, B1).
+- `packages/react/tsconfig.json` and `packages/inertia/tsconfig.json` set `"jsx": "react-jsx"` (their
+  `tsconfig.test.json` inherits it). `examples/react-vite/tsconfig.json` extends
+  `../../tsconfig.base.json` (keeping `customConditions`) and sets `"module": "ESNext"`,
+  `"moduleResolution": "bundler"`, `"jsx": "react-jsx"`, `"noEmit": true`,
+  `"types": ["vite/client", "node"]` and `"include": ["src", "e2e", "*.config.ts"]`. Lane A writes
+  these settings in Task 1 so Lanes C, D and F never need to edit a tsconfig (B2).
 - ESLint (`eslint.config.js`, flat): `@eslint/js` recommended + typescript-eslint
-  `recommendedTypeChecked` with `parserOptions.projectService: true`; `no-eval`, `no-new-func`,
+  `recommendedTypeChecked` with `parserOptions: { project: ['./packages/*/tsconfig.test.json'],
+  tsconfigRootDir: import.meta.dirname }` (not `projectService`: there is no root `tsconfig.json`, and
+  each `tsconfig.json` covers `src` only, so tests and `*.config.ts` would belong to no project; the
+  glob picks up every later package's `tsconfig.test.json` without edits); `no-eval`, `no-new-func`,
   `no-implied-eval` = `error`; `**/*.{js,mjs,cjs}` files use `tseslint.configs.disableTypeChecked`;
   `ignores` exactly the overview list (`**/dist/**`, `**/.next/**`,
   `examples/inertia-laravel/{vendor,public/build,storage}/**`, `docs/api/**`,
@@ -1067,7 +1094,7 @@ reuseExistingServer: !process.env.CI }`, `projects: [{ name: 'chromium', use: de
 - `e2e/round-budget.spec.ts` › `simple_form_within_3_rounds` — starting from the attach `manifest` only: round 1 `describe` `challenges.create.fill`; round 2 `call` fill with complete valid values → `ok`; round 3 `call` submit → `needs_confirmation`; the test clicks Approve on the confirm card (not a round) → a `confirmed` message with `ok` arrives. Asserts rounds ≤ 3 and zero `invalid`/`refused` results; writes the report entry `task: 'simple_form'`.
 - `example_prod_build_has_no_test_hook` (gate step) — `pnpm -F @toolmark-examples/react-vite build`, then no file in `examples/react-vite/dist` contains `__toolmark_test__` or `__toolmark_agent__`.
 
-**Task gate:** `pnpm -F @toolmark-examples/react-vite typecheck && pnpm -F @toolmark-examples/react-vite exec playwright test && pnpm -F @toolmark-examples/react-vite build && ! grep -rqE "__toolmark_(test|agent)__" examples/react-vite/dist`
+**Task gate:** `pnpm --filter "@toolmark/testing..." build && pnpm -F @toolmark-examples/react-vite typecheck && pnpm -F @toolmark-examples/react-vite exec playwright test && pnpm -F @toolmark-examples/react-vite build && ! grep -rqE "__toolmark_(test|agent)__" examples/react-vite/dist`
 
 ---
 
@@ -1103,7 +1130,8 @@ required.
     Firefox/WebKit are added in M5.
   - `types-ts7` — runs `pnpm build`, the pack command below and `node scripts/tarball-smoke.mjs dist-tarballs`
     (which includes the TypeScript 7.0.2 check of the packed types), plus `node --test scripts/`.
-  - `e2e` — `examples/react-vite`: install chromium, `typecheck`, `playwright test` with
+  - `e2e` — `examples/react-vite`: install chromium, `pnpm --filter "@toolmark/testing..." build`
+    (the specs import `@toolmark/testing`, which Node resolves to `dist`), `typecheck`, `playwright test` with
     `ROUND_BUDGET_REPORT=round-budget.json`, prod `build` + the no-test-hook grep; uploads
     `round-budget.json` as an artifact.
 - **Changeset:** `pnpm changeset pre enter next` (creates `.changeset/pre.json`);

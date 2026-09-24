@@ -148,6 +148,16 @@ app-supplied loader", "`tm.info`", "Anchors return `Element | null`", "Confirm m
 - The Playwright `globalSetup` file is `examples/react-vite/e2e/global-setup.ts`, created here and
   extended by M4 T8; M3 makes no CI change.
 
+## Rulings made while fixing (pass 4, pre-execution verification)
+
+- Ruling (P4): Task 1 adds `packages/mcp/tsconfig.test.json` and the `build`/`typecheck`/`lint`
+  scripts (M1 pass-4 ESLint ruling) — cost if wrong: none.
+- Ruling (P4): Task 2 emits `interaction` events through M2 T1's internal `emitEvent`; Lane B never
+  edits `registry.ts` — cost if wrong: none.
+- Ruling (P4): the T7 gate and exit check build `@toolmark/testing...` alongside `@toolmark/mcp...`
+  before Playwright (the example's `globalSetup` builds only `@toolmark/mcp...`, and spec files load
+  before it) — cost if wrong: none.
+
 ## Review focus
 
 1. **Unpaired, wrong-origin, missing-origin or wrong-code connection** → rejected, nothing executed
@@ -181,7 +191,7 @@ packages/core/src/otel/index.ts
 packages/react/src/rhf/index.ts                   (modify, M1 T12 file: root, onUserInteraction)
 packages/react/src/use-tool-anchor.ts · index.ts
 packages/inertia/src/form-component.ts            (modify, M2 T9 file: forward onUserInteraction)
-packages/mcp/  package.json tsconfig.json tsdown.config.ts vitest.config.ts
+packages/mcp/  package.json tsconfig.json tsconfig.test.json tsdown.config.ts vitest.config.ts
   src/index.ts  src/cli.ts  src/args.ts
   src/server/{server,tool-mapping,pairing-tool}.ts
   src/pairing/{code,token,upgrade,ws-server,page-link}.ts
@@ -196,7 +206,7 @@ docs/guides/{webmcp,mcp,otel,anchors}.md  docs/release/next-tarballs.md (append)
 
 | Wave | Lane | Tasks | Owns files | Consumes |
 | --- | --- | --- | --- | --- |
-| 0 | A (high, security) | 1 | `packages/mcp/{package.json,tsconfig.json,tsdown.config.ts,vitest.config.ts}`, `packages/mcp/test/global-setup.ts` + the stub files `packages/mcp/src/{index,cli}.ts`, `packages/mcp/src/client/index.ts` (handed to Lane D after wave 0); `packages/core/package.json`, `packages/core/tsdown.config.ts`, stubs `core/src/webmcp/index.ts` (→ Lane C), `core/src/otel/index.ts` (→ Lane E); `core/src/tool.ts`, `core/src/registry.ts`, `core/src/anchors.ts`; **earlier-milestone files:** `core/src/bridge/bridge.ts` (M1 T8); `examples/react-vite/package.json`, `pnpm-workspace.yaml`, `pnpm-lock.yaml`, root `vitest.config.ts`; tests `core/test/{anchors,bridge-caller,tool-info}.test.ts` | M1–M2 |
+| 0 | A (high, security) | 1 | `packages/mcp/{package.json,tsconfig.json,tsconfig.test.json,tsdown.config.ts,vitest.config.ts}`, `packages/mcp/test/global-setup.ts` + the stub files `packages/mcp/src/{index,cli}.ts`, `packages/mcp/src/client/index.ts` (handed to Lane D after wave 0); `packages/core/package.json`, `packages/core/tsdown.config.ts`, stubs `core/src/webmcp/index.ts` (→ Lane C), `core/src/otel/index.ts` (→ Lane E); `core/src/tool.ts`, `core/src/registry.ts`, `core/src/anchors.ts`; **earlier-milestone files:** `core/src/bridge/bridge.ts` (M1 T8); `examples/react-vite/package.json`, `pnpm-workspace.yaml`, `pnpm-lock.yaml`, root `vitest.config.ts`; tests `core/test/{anchors,bridge-caller,tool-info}.test.ts` | M1–M2 |
 | 1 | B (high, security) | 2 | `core/src/forms/**` (M1 T6), `core/src/wizard/wizard-tools.ts` (M2 T4), `core/src/dom/{form-adapter,scan,button-tools,table-tools}.ts` (M2 T5/T6), `react/src/rhf/**` (M1 T12), `react/src/use-tool-anchor.ts`, `react/src/index.ts`, `inertia/src/form-component.ts` (M2 T9); tests `core/test/{form-state,wizard-hooks}.test.ts`, `core/test/browser-interaction.test.ts`, `core/test/dom-anchors.test.ts`, `react/test/{use-tool-anchor,rhf-interaction}.test.tsx`, `inertia/test/form-component-interaction.test.tsx` | A |
 | 1 | C (high) | 3 | `core/src/webmcp/**`, `core/test/webmcp*.test.ts`, `core/test/browser-webmcp*.test.ts` | A |
 | 1 | D (high, security) | 4–5 | `packages/mcp/src/**`, `packages/mcp/test/**` | A |
@@ -212,7 +222,7 @@ milestone gate is the exit check below.
 
 ### Task 1: Packaging, registry hooks and bridge caller   (Lane A, risk: high, security)
 
-**Files:** Create `packages/mcp/package.json`, `tsconfig.json`, `tsdown.config.ts`,
+**Files:** Create `packages/mcp/package.json`, `tsconfig.json`, `tsconfig.test.json`, `tsdown.config.ts`,
 `vitest.config.ts`, `test/global-setup.ts`, stubs `src/index.ts`, `src/cli.ts`,
 `src/client/index.ts` (`export {}`); Create stubs `packages/core/src/webmcp/index.ts`,
 `packages/core/src/otel/index.ts` (`export {}`), `core/src/anchors.ts`; Modify
@@ -254,9 +264,12 @@ interface BridgeOptions { transport: BridgeTransport; onChange?: 'manifest' | 'c
   `"./package.json"`. `dependencies`: `@modelcontextprotocol/server` `2.1.0`, `ws` `8.21.3`,
   `@toolmark/core` `workspace:*`. `devDependencies`: `@modelcontextprotocol/client` `catalog:`
   (2.1.0), `@types/ws` `8.18.1`, `@types/node` `catalog:` (22.x), `@toolmark/testing` `workspace:*`.
-  No `postinstall`/lifecycle scripts.
+  Scripts `build` (`tsdown`), `typecheck` (`tsc -p tsconfig.test.json`), `lint` (`eslint .`); no
+  `postinstall`/lifecycle scripts.
 - `packages/mcp/tsconfig.json`: extends the base; `"types": ["node"]` (SDK README requirement under
-  TS ≥ 6).
+  TS ≥ 6). `packages/mcp/tsconfig.test.json` extends `tsconfig.json` with `"noEmit": true`, includes
+  `src`, `test` and `*.config.ts`, and sets `"types": ["node"]` (ESLint's project glob picks it up,
+  M1 T1).
 - `packages/mcp/tsdown.config.ts` (array of configs, overview settings): `{ entry: { cli: 'src/cli.ts' }, platform: 'node' }`
   with the banner `#!/usr/bin/env node` (confirm the tsdown 0.23 option name — `banner` or
   `outputOptions.banner` — with ctx7; ledger), `{ entry: { index: 'src/index.ts' }, platform: 'node' }`,
@@ -321,7 +334,8 @@ interface BridgeOptions { transport: BridgeTransport; onChange?: 'manifest' | 'c
 `inertia/test/form-component-interaction.test.tsx`.
 
 **Interfaces — Consumes:** Task 1 (`AnchorSpec.resolve`, `sensitivePaths`, `tm.anchor`/`state`);
-M1 `FieldInfo.sensitive?` and `FormToolOptions.sensitive?` (M1 Task 6).
+M1 `FieldInfo.sensitive?` and `FormToolOptions.sensitive?` (M1 Task 6); the internal `emitEvent`
+(M2 T1, `core/src/registry.ts`) for every `interaction` event — Lane B never edits `registry.ts`.
 
 **Interfaces — Produces:**
 ```ts
@@ -726,7 +740,7 @@ repo root; M4 T8 extends it), `docs/guides/webmcp.md`, `mcp.md`, `otel.md`, `anc
 - `e2e/mcp.spec.ts`: `legacy_client_lists_and_calls_after_pairing`,
   `modern_client_lists_and_calls_after_pairing`, `reload_resumes_without_new_code`.
 
-**Task gate:** `pnpm --filter "@toolmark/mcp..." build && pnpm -F @toolmark-examples/react-vite exec playwright test`, then the lane gate, then the milestone exit check.
+**Task gate:** `pnpm --filter "@toolmark/mcp..." --filter "@toolmark/testing..." build && pnpm -F @toolmark-examples/react-vite exec playwright test`, then the lane gate, then the milestone exit check.
 
 ---
 
@@ -734,7 +748,7 @@ repo root; M4 T8 extends it), `docs/guides/webmcp.md`, `mcp.md`, `otel.md`, `anc
 
 All of the following, on a clean checkout of the milestone commit:
 
-1. `pnpm --filter "@toolmark/mcp..." build && pnpm -F @toolmark-examples/react-vite exec playwright test e2e/reach.spec.ts`
+1. `pnpm --filter "@toolmark/mcp..." --filter "@toolmark/testing..." build && pnpm -F @toolmark-examples/react-vite exec playwright test e2e/reach.spec.ts`
    passes. `same_declaration_webmcp_mcp_fixture`: one page load of the challenge form with
    `?mcpPort=<free port>`; `startMcpClient({ port, era: 'modern' })`; the test types the code from
    `toolmark_pairing` into the pairing panel and waits for `challenges__create__fill`. Using the fill

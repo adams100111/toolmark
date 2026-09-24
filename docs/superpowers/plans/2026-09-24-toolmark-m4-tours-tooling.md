@@ -33,7 +33,7 @@ M4 is done when all of these pass on a clean checkout (no other repository invol
    axe violations) (Task 8).
 2. `examples/react-vite` `e2e/same-tools.spec.ts` › `same_declaration_all_surfaces` green (bridge,
    WebMCP, MCP, a `do` tour step, Playwright fixture; one registration; Chromium) (Task 8).
-3. `examples/inertia-laravel`: `php artisan test` and its Playwright suite green, including
+3. `examples/inertia-laravel`: `scripts/php.sh php artisan test` and its Playwright suite green, including
    `tour_authored_on_inertia_page` (Task 5).
 4. `examples/nextjs` Playwright suite green (Task 6).
 5. `pnpm docs:build` passes (TypeDoc non-strict per R5, VitePress build) (Task 7).
@@ -139,6 +139,23 @@ M4 is done when all of these pass on a clean checkout (no other repository invol
   round-budget artifact and no-test-hook steps.
 - Every catalog version M4 needs is already in the M1 catalog; Task 0 only re-verifies and bumps.
 
+## Rulings made while fixing (pass 4, pre-execution verification)
+
+- Ruling (P4): the Laravel example's local gates run PHP and Composer through Docker when `php` is
+  not on PATH — `examples/inertia-laravel/scripts/php.sh` uses host `php`/`composer` if present,
+  else `docker run --rm -v "$PWD":/app -w /app …` on a small image built from
+  `examples/inertia-laravel/docker/Dockerfile` (`FROM php:8.4-cli` + `pdo_sqlite`, `mbstring`,
+  `pcntl`, Composer copied from `composer:2`), publishing the `artisan serve`/`reverb:start` ports on
+  host `127.0.0.1` for the Playwright `webServer`; CI keeps `shivammathur/setup-php` (host path).
+  Both files are Lane D's. No owner action (no O8) — the execution machine has Docker 29.5.2 and no
+  host PHP/Composer, and host installs need the owner — cost if wrong: Docker-mode e2e may need the
+  single-container fallback (T5), ledgered by the lane.
+- Ruling (P4): every new package (`tour`, `lint`, `judge-typesafe`) gets a `tsconfig.test.json` and
+  the `build`/`typecheck`/`lint` scripts from Lane A in Task 0, and `tour`'s `tsconfig.json` sets
+  `"jsx": "react-jsx"` — M1's ESLint uses a `parserOptions.project` glob over
+  `packages/*/tsconfig.test.json`, and wave-1 lanes may not edit Lane A's config files — cost if
+  wrong: none.
+
 ## Review focus
 
 1. **Tour step whose anchor is missing** (element not rendered) → the step is skipped with an event,
@@ -162,15 +179,15 @@ M4 is done when all of these pass on a clean checkout (no other repository invol
 ## File structure
 
 ```
-packages/tour/  package.json tsconfig.json tsdown.config.ts vitest.config.ts
+packages/tour/  package.json tsconfig.json tsconfig.test.json tsdown.config.ts vitest.config.ts
   src/index.ts engine.ts planner.ts param-schema.ts types.ts
   src/overlay/{index,position,focus,render}.ts  src/styles.css
   src/react/index.ts   (useTour)
   test/{engine,planner,overlay,styles}.test.ts  test/react.test.tsx
-packages/lint/  package.json tsconfig.json tsdown.config.ts vitest.config.ts
+packages/lint/  package.json tsconfig.json tsconfig.test.json tsdown.config.ts vitest.config.ts
   src/{index,cli,run,collect,format,judge,manifest-file}.ts  src/rules/*.ts  src/manifest.schema.json
   test/{rules,cli,collect,manifest-file}.test.ts  test/fixtures/**
-packages/judge-typesafe/  package.json tsconfig.json tsdown.config.ts vitest.config.ts
+packages/judge-typesafe/  package.json tsconfig.json tsconfig.test.json tsdown.config.ts vitest.config.ts
   src/index.ts  test/judge.test.ts  test/judge.live.test.ts
 docs/.vitepress/config.ts  docs/index.md  docs/getting-started.md
 docs/concepts/{registry,scopes,callers,policy,confirmation,results}.md
@@ -182,6 +199,7 @@ scripts/check-laravel-reference.mjs  scripts/check-laravel-reference.test.mjs
 scripts/tarball-smoke.mjs   (modify only if it misses non-JS exports, Task 8)
 vitest.config.ts   (modify: append tour, lint, judge-typesafe projects)
 examples/inertia-laravel/  (Laravel 13 app incl. package.json, composer.lock)  e2e/*.spec.ts
+  docker/Dockerfile  scripts/php.sh   (PHP/Composer through Docker when `php` is not on PATH)
 examples/nextjs/  (Next 16 App Router app)  e2e/*.spec.ts
 examples/react-vite/src/{tour-panel.tsx,routes.tsx,relay-planner.ts}
 examples/react-vite/e2e/{tour,same-tools,multi-client,navigation,lint-clean}.spec.ts  e2e/support/relay-server.ts
@@ -193,7 +211,7 @@ examples/react-vite/e2e/{tour,same-tools,multi-client,navigation,lint-clean}.spe
 
 | Wave | Lane | Tasks | Owns files | Consumes |
 | --- | --- | --- | --- | --- |
-| 0 | A (normal) | 0 | new `package.json` files except `examples/inertia-laravel/package.json`; `examples/react-vite/package.json` (adds deps); root `package.json`; `pnpm-lock.yaml` (wave 0); `pnpm-workspace.yaml`; root `vitest.config.ts`; `.gitignore`; `eslint.config.js` (ignores only); each new package's `tsconfig.json`/`tsdown.config.ts`/`vitest.config.ts`/stub `src/index.ts` | M3 |
+| 0 | A (normal) | 0 | new `package.json` files except `examples/inertia-laravel/package.json`; `examples/react-vite/package.json` (adds deps); root `package.json`; `pnpm-lock.yaml` (wave 0); `pnpm-workspace.yaml`; root `vitest.config.ts`; `.gitignore`; `eslint.config.js` (ignores only); each new package's `tsconfig.json`/`tsconfig.test.json`/`tsdown.config.ts`/`vitest.config.ts`/stub `src/index.ts` | M3 |
 | 1 | B (normal) | 1–2 | `packages/tour/**` except `package.json` and Lane A's config files | A |
 | 1 | C (normal) | 3–4 | `packages/lint/**`, `packages/judge-typesafe/**` except `package.json` and Lane A's config files | A |
 | 1 | D (high, security) | 5 | `examples/inertia-laravel/**` (whole directory incl. `package.json`, `composer.lock`), plus that example's entries in `pnpm-lock.yaml` at the end of its lane | A |
@@ -214,7 +232,7 @@ Shared-file rules:
 ### Task 0: Package skeletons and dependencies   (Lane A, risk: normal)
 
 **Files:** Create for each of `tour`, `lint`, `judge-typesafe`: `packages/<p>/package.json`,
-`tsconfig.json`, `tsdown.config.ts`, `vitest.config.ts`, stub `src/index.ts` (`export {}`); create
+`tsconfig.json`, `tsconfig.test.json`, `tsdown.config.ts`, `vitest.config.ts`, stub `src/index.ts` (`export {}`); create
 `examples/nextjs/package.json`; Modify `pnpm-workspace.yaml` (catalog), root `package.json`
 (scripts, devDeps), root `vitest.config.ts`, `examples/react-vite/package.json`, `.gitignore`,
 `eslint.config.js` (append only ignores missing from M1's list), `pnpm-lock.yaml`.
@@ -247,6 +265,7 @@ Shared-file rules:
   `{ index: 'src/index.ts', overlay: 'src/overlay/index.ts', react: 'src/react/index.ts' }`,
   `platform: 'neutral'`, `copy: [{ from: 'src/styles.css', to: 'dist' }]` (tsdown 0.23 `copy`,
   verified with ctx7), overview output settings. Lane A writes an empty `src/styles.css`.
+  `tsconfig.json` sets `"jsx": "react-jsx"` (for `src/react/index.ts` and `test/react.test.tsx`).
 - `@toolmark/lint`: `version` `0.0.0`; `bin: { "toolmark": "./dist/cli.js" }`; exports `"."`
   (`src/index.ts`: `lint`, `Judge`, `Finding`, `ManifestFile`), `"./manifest.schema.json":
   "./dist/manifest.schema.json"`, `"./package.json"`; deps `@toolmark/core` `workspace:*` (types
@@ -259,7 +278,12 @@ Shared-file rules:
   `"./package.json"`; dep `@typesafe-ai/sdk` 0.6.0; peer `@toolmark/lint` `workspace:^`; dev
   `@toolmark/lint` `workspace:*`, `@toolmark/core` `workspace:*`, `@types/node`. tsdown
   `platform: 'node'`. tsconfig `"types": ["node"]`.
-- Every new package: `engines.node` `">=22.12"`, `type: module`, metadata per Global constraints.
+- Every new package: `engines.node` `">=22.12"`, `type: module`, metadata per Global constraints;
+  scripts `build` (`tsdown`), `typecheck` (`tsc -p tsconfig.test.json`), `lint` (`eslint .`);
+  `tsconfig.test.json` extends `tsconfig.json` with `"noEmit": true`, includes `src`, `test` and
+  `*.config.ts`, and sets `"types": ["node"]` (`tour` adds the Vitest 5 browser-mode types, as
+  M1's react package). M1's ESLint `parserOptions.project` glob (`./packages/*/tsconfig.test.json`)
+  picks these up; `eslint.config.js` is not edited for them.
 - Vitest projects (append to root `test.projects`): `packages/tour/vitest.config.ts` → project
   `tour`, browser mode (provider `playwright()` from `@vitest/browser-playwright`, instances
   `[{ browser: 'chromium' }]`, headless), include `test/**/*.test.{ts,tsx}`;
@@ -534,20 +558,47 @@ Defaults: `qualityThreshold` `1.5`, `hintThreshold` `0.85`, `overlapThreshold` `
 
 ### Task 5: Example — Inertia + Laravel 13   (Lane D, risk: high, security)
 
-**Prerequisites:** `php -v` ≥ 8.4 with `pdo_sqlite`, `sqlite3`, `mbstring`, `pcntl`; `composer -V`
-2.x. Missing → the lane stops and reports to the controller (no system installs without the owner).
+**Prerequisites:** either host `php -v` ≥ 8.4 with `pdo_sqlite`, `sqlite3`, `mbstring`, `pcntl`
+plus `composer -V` 2.x, or (when `php` is not on PATH, as on the execution machine) a running Docker
+(`docker info`). Nothing is installed on the host. The lane ledgers `scripts/php.sh php -v` and
+`scripts/php.sh composer -V`; it stops only if neither host PHP nor Docker is available (pass-4
+ruling).
+
+**PHP through Docker (pass-4 ruling):** every local `php`/`composer` invocation in this task goes
+through `examples/inertia-laravel/scripts/php.sh <php|composer> <args…>` (mode 755, Lane D):
+- Host `php` on PATH → `exec "$@"` (CI takes this path via `shivammathur/setup-php`).
+- Otherwise → `docker run --rm --init -i -v "$PWD":/app -w /app --user "$(id -u):$(id -g)"
+  -e COMPOSER_HOME=/tmp/composer` plus `-e` pass-through of `APP_ENV`, `CACHE_STORE`,
+  `REDIS_HOST`, `PHP_CLI_SERVER_WORKERS` when set, `--add-host=host.docker.internal:host-gateway
+  -e REVERB_HOST=host.docker.internal` (the app container reaches the Reverb container through the
+  host; the browser still uses the `VITE_REVERB_*` values), and for each port in `PHP_PORTS`
+  (space-separated) `-p 127.0.0.1:<port>:<port>` with `--name toolmark-php-<first port>` after a
+  `docker rm -f` of a stale container of that name; image `toolmark-php:8.4`, built on first use
+  (`docker build -t toolmark-php:8.4 docker/` when `docker image inspect` fails).
+- `docker/Dockerfile`: `FROM php:8.4-cli`; `apt-get install` `libsqlite3-dev`, `libonig-dev`,
+  `unzip`, `git`; `docker-php-ext-install pdo_sqlite mbstring pcntl`; `COPY --from=composer:2
+  /usr/bin/composer /usr/bin/composer`. `sqlite3` ships enabled in the official image (verify with
+  `php -m`, ledger).
+- Bootstrap (the directory must be empty for `create-project`): with no host `composer`, run
+  `docker run --rm -v "$PWD/examples":/app -w /app --user "$(id -u):$(id -g)" -e COMPOSER_HOME=/tmp/composer composer:2 create-project --no-scripts laravel/laravel:13.10.1 inertia-laravel`,
+  then add `docker/Dockerfile` and `scripts/php.sh`, then `scripts/php.sh composer run-script
+  post-root-package-install` and `scripts/php.sh composer run-script post-create-project-cmd`; all
+  later `composer require` / `php artisan` steps use `scripts/php.sh`.
+- If SQLite WAL misbehaves across the two containers on the bind mount, the lane runs `artisan
+  serve` and `reverb:start` in one container (`scripts/php.sh sh -c '… & …'` with both ports in
+  `PHP_PORTS`) and ledgers it; no owner action.
 
 **Files:** Create `examples/inertia-laravel/**`: the app via
-`composer create-project laravel/laravel:13.10.1 examples/inertia-laravel`, then
-`composer require inertiajs/inertia-laravel:3.3.4 laravel/wayfinder:0.1.21 laravel/reverb:1.12.0`,
-`php artisan install:broadcasting --reverb --no-interaction` (committed); `package.json` (replaces
+`composer create-project laravel/laravel:13.10.1 examples/inertia-laravel` (the Docker bootstrap above
+when host Composer is absent), then `scripts/php.sh composer require inertiajs/inertia-laravel:3.3.4 laravel/wayfinder:0.1.21 laravel/reverb:1.12.0`,
+`scripts/php.sh php artisan install:broadcasting --reverb --no-interaction` (committed); `package.json` (replaces
 the skeleton's wholesale), `vite.config.ts`, `tsconfig.json`, `resources/js/**` (React pages),
 `app/Toolmark/{PageCallTool,PageDescribeTool,BrowserBridge,ConfirmedHandler,PropsBuilder}.php`,
 `app/Http/Controllers/Testing/{LoginController,ScriptedAgentController}.php`,
 `app/Http/Controllers/TourPlanController.php`, `database/seeders/ToolmarkDemoSeeder.php`,
 migrations (`conversations`, `agent_turns`, `challenges`), `routes/{web,channels}.php`,
 `.env.example`, `composer.json` scripts, `composer.lock`, `tests/Feature/*Test.php`,
-`playwright.config.ts`, `e2e/*.spec.ts`; Modify `pnpm-lock.yaml` (this example's entries only, at
+`playwright.config.ts`, `e2e/*.spec.ts`, `docker/Dockerfile`, `scripts/php.sh`; Modify `pnpm-lock.yaml` (this example's entries only, at
 the end of the lane, via `pnpm install`).
 
 **Exact values (frontend):** `package.json` private, name `@toolmark-examples/inertia-laravel`,
@@ -588,9 +639,11 @@ scripts `"build": "vite build"`, `"dev": "vite"`, `"typecheck": "tsc --noEmit"`;
 - Wayfinder output (`resources/js/{actions,routes,wayfinder}/`) is generated by the Vite plugin at
   build and git-ignored. The skeleton's `.gitignore` already covers `vendor/`, `.env`,
   `public/build`, `database/*.sqlite*`.
-- `playwright.config.ts`: `use.baseURL` `http://127.0.0.1:8010`; `webServer`:
-  `[{ command: 'php artisan serve --host=127.0.0.1 --port=8010', env: { PHP_CLI_SERVER_WORKERS: '4' }, url: 'http://127.0.0.1:8010/up', reuseExistingServer: !process.env.CI },
-    { command: 'php artisan reverb:start --host=127.0.0.1 --port=8081', port: 8081, reuseExistingServer: !process.env.CI }]`
+- `playwright.config.ts`: `use.baseURL` `http://127.0.0.1:8010`; `bind` is `'127.0.0.1'` when host
+  `php` is on PATH, else `'0.0.0.0'` (inside the container; `php.sh` publishes only on host
+  `127.0.0.1`); `webServer`:
+  `[{ command: 'scripts/php.sh php artisan serve --host=' + bind + ' --port=8010', env: { PHP_CLI_SERVER_WORKERS: '4', PHP_PORTS: '8010' }, url: 'http://127.0.0.1:8010/up', reuseExistingServer: !process.env.CI },
+    { command: 'scripts/php.sh php artisan reverb:start --host=' + bind + ' --port=8081', env: { PHP_PORTS: '8081' }, port: 8081, reuseExistingServer: !process.env.CI }]`
   (`CACHE_STORE`/`REDIS_HOST` pass through from the environment); project `chromium` only;
   `globalSetup` logs in as alice and saves `test-results/alice.json` storage state.
 
@@ -631,7 +684,7 @@ scripts `"build": "vite build"`, `"dev": "vite"`, `"typecheck": "tsc --noEmit"`;
   `lint_clean` (spawns `node <@toolmark/lint dir>/dist/cli.js lint --url <each page>
   --storage-state test-results/alice.json` → exit 0).
 
-**Task gate:** `pnpm -r --filter "./packages/*" build && cd examples/inertia-laravel && composer install --no-interaction && composer run toolmark:setup && php artisan test && pnpm exec playwright install chromium && pnpm build && pnpm exec playwright test`
+**Task gate:** `pnpm -r --filter "./packages/*" build && cd examples/inertia-laravel && scripts/php.sh composer install --no-interaction && scripts/php.sh composer run toolmark:setup && scripts/php.sh php artisan test && pnpm exec playwright install chromium && pnpm build && pnpm exec playwright test`
 
 ---
 

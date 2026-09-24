@@ -116,6 +116,19 @@ catalog) for its browser-mode project.
   to `packages/core/package.json` only and does not edit `pnpm-workspace.yaml`.
 - Round-budget report task names are `simple_form` and `wizard` (the `task` values the specs write).
 
+## Rulings made while fixing (pass 4, pre-execution verification)
+
+- Ruling (P4): Task 1 exports an internal `emitEvent(tm, type, payload)` from `src/registry.ts` (not
+  from any package entry); the wizard (T4), DOM (T5–T6) and M3 T2 interaction events use it and no
+  later lane edits `registry.ts` to emit — `Toolmark` exposes only `events.on`, so Lane B would have
+  edited a Lane A file — cost if wrong: none (internal, outside semver).
+- Ruling (P4): Lane A owns M1's `test/ctx.test.ts` for the T3 change only; `ctx_files_not_configured`
+  becomes `ctx_files_ref_without_resolver_rejected` (rejects `file_rejected` + one dev
+  `files_not_configured` event) — the stale M1 assertion had no M2 owner and would turn `pnpm test`
+  red — cost if wrong: none.
+- Ruling (P4): the T10 gate and the T12 round-budget run build `@toolmark/testing...` before
+  Playwright (M1 pass-4 ruling) — cost if wrong: none.
+
 ## Review focus
 
 1. **Wizard fill while the user has typed on the current step** → the mounted step form shows the
@@ -187,14 +200,16 @@ docs/release/{next-tarballs,round-budget}.md (modify, M1 files)
 
 | Wave | Lane | Tasks | Owns files | Consumes |
 | --- | --- | --- | --- | --- |
-| 0 | A (high, security) | 1–4 | `packages/core/src/{forms,json-schema,wizard}/**`, `src/files.ts`, `src/scope.ts`, `src/registry.ts`, `src/tool.ts`, `src/manifest.ts`, `src/index.ts`, and for M2 changes only the M1 files `src/schema.ts`, `src/call.ts`, `src/undo.ts`; `src/dom/index.ts` (T1 stub only); `packages/core/package.json`, `packages/core/tsdown.config.ts`, `pnpm-lock.yaml`, `packages/core/vitest.browser.config.ts`, root `vitest.config.ts`, core tests `test/{form-arrays,scope-transparent,registry-info,browser-smoke,json-schema,form-options,files,form-files,call-files,wizard}.test.ts` | M1 |
+| 0 | A (high, security) | 1–4 | `packages/core/src/{forms,json-schema,wizard}/**`, `src/files.ts`, `src/scope.ts`, `src/registry.ts`, `src/tool.ts`, `src/manifest.ts`, `src/index.ts`, and for M2 changes only the M1 files `src/schema.ts`, `src/call.ts`, `src/undo.ts`; `src/dom/index.ts` (T1 stub only); `packages/core/package.json`, `packages/core/tsdown.config.ts`, `pnpm-lock.yaml`, `packages/core/vitest.browser.config.ts`, root `vitest.config.ts`, core tests `test/{form-arrays,scope-transparent,registry-info,browser-smoke,json-schema,form-options,files,form-files,call-files,wizard}.test.ts`, and M1's `test/ctx.test.ts` (M2 change only, T3) | M1 |
 | 1 | B (high, security) | 5–6 | `packages/core/src/dom/**` (incl. `index.ts` after T1), `packages/core/test/dom-*.test.ts`, `packages/core/test/ssr-dom-entry.test.ts`, `packages/core/test/fixtures/dom/**` | A |
 | 1 | C (normal) | 7 | `packages/react/src/use-wizard-tool.ts`; M1 files `packages/react/src/use-form-tool.ts`, `src/rhf/index.ts`, `src/index.ts`; `packages/react/test/{use-wizard-tool,use-form-tool-options,rhf-arrays}.test.tsx` | A |
 | 1 | D (high, security) | 8 | `packages/inertia/src/{router-like,pages,props-tools,navigation}.ts`; M1 file `packages/inertia/src/index.ts` (except Lane E's one line); `packages/inertia/test/{pages,props-tools,navigation}.test.ts` (M1's `visit-outcome.ts` and `inertia-adapter.ts` are consumed read-only) | A |
 | 2 | E (normal; T11 high, security) | 9–12 | `packages/inertia/src/form-component.ts` (+ its export line in `index.ts`), `packages/inertia/test/form-component.test.tsx`, `examples/**` except `package.json` (incl. M1's `src/app.tsx`, `src/main.tsx`, `src/in-page-agent.ts`, `vite.config.ts`, `e2e/round-budget.spec.ts`, `e2e/support/round-recorder.ts`), `docs/guides/**` (incl. M1's `laravel-reference.md`), M1's `docs/release/{next-tarballs,round-budget}.md`, `.changeset/m2-forms.md`, M1's `scripts/tarball-smoke.mjs` (only if Task 12 finds the `./dom` entry unhandled) | A–D |
 
 Dependencies are declared in Wave 0 only (Task 1): Wave-1/2 lanes must not add dependencies
-(report to the controller instead). No example dependency is added in M2 (the example already has
+(report to the controller instead). Events raised outside the registry (`wizard_current_step_unsynced`
+in T4; `invalid_name` and `options_url_rejected` from `src/dom/**` in T5–T6) go through the internal
+`emitEvent` that Task 1 exports from `src/registry.ts`; Lane B never edits `registry.ts`. No example dependency is added in M2 (the example already has
 `react-hook-form`, `zod`, and the workspace packages).
 
 Core tests for DOM run in Vitest **browser mode**: Task 1 adds `packages/core/vitest.browser.config.ts`
@@ -223,9 +238,17 @@ type ToolOrigin = 'code' | 'native-form' | 'dom' | 'server'
 interface ToolDefinition { mode?: 'stepwise'; origin?: ToolOrigin; nativeName?: string }   // origin default 'code'
 interface ToolManifestSummary { mode?: 'stepwise' }                                        // origin/nativeName NOT in any manifest
 interface Toolmark { info(name: string): { origin: ToolOrigin; nativeName?: string } | undefined }
+// internal (not exported from any package entry), exported from src/registry.ts:
+function emitEvent<K extends keyof ToolmarkEventMap>(tm: Toolmark, type: K, payload: ToolmarkEventMap[K]): void
 function flatten(obj: unknown, opts?: { arraysAsLeaves?: boolean }): Record<string, unknown>  // default true
 type ArrayOp = { $append: unknown[] } | { $remove: number[] }
 ```
+
+`emitEvent` applies the same `onError`/listener-isolation rules as registry-internal emission
+(M1 T4). The wizard (T4), DOM (T5–T6) and M3 T2 form/wizard/DOM interaction events emit through it;
+no later lane edits `registry.ts` to emit an event. If it reads per-instance state (e.g. a module
+`WeakMap`), the `dom` entry must stay in core's single neutral tsdown config so `registry.ts` lands in
+one shared chunk rather than being duplicated into `dist/dom.js`.
 
 **Exact values:**
 - `packages/core/package.json` `exports` adds
@@ -318,7 +341,11 @@ interface FormToolOptions<V> { options?: Record<string, OptionsProvider> }   // 
 imports it), `src/registry.ts` (options `files`, `ctx.files.resolve`), `src/call.ts` (M1 file:
 `file_rejected` mapping), `src/schema.ts` (M1 file: optional `libraryOptions` pass-through),
 `src/forms/types.ts`, `src/forms/form-tools.ts`, `src/index.ts` (exports `FileRef` once); Test
-`test/files.test.ts`, `test/form-files.test.ts`, `test/call-files.test.ts`.
+`test/files.test.ts`, `test/form-files.test.ts`, `test/call-files.test.ts`; Modify (M1 file)
+`test/ctx.test.ts`: `ctx_files_not_configured` becomes `ctx_files_ref_without_resolver_rejected` —
+with no `files.resolve`, `ctx.files.resolve({ ref: 'x' })` rejects with a `ToolmarkError` code
+`file_rejected` and emits one dev `files_not_configured` event; a tool that lets it propagate returns
+`refused` `file_rejected`.
 
 **Interfaces — Produces:**
 ```ts
@@ -728,7 +755,7 @@ test), `e2e/support/round-recorder.ts` (only if the wizard script needs a helper
 `e2e/dom.spec.ts`: `plain_form_filled_and_skips_user_field`, `table_query_returns_rows`,
 `hidden_token_not_in_schema`.
 
-**Task gate:** `pnpm -F @toolmark-examples/react-vite exec playwright test`
+**Task gate:** `pnpm --filter "@toolmark/testing..." build && pnpm -F @toolmark-examples/react-vite exec playwright test`
 
 ---
 
@@ -777,7 +804,7 @@ new `./dom` entry (it must import it under Node, per the Global constraints).
 - Run the lane gate, then `pnpm changeset version`, commit, then
   `pnpm -r --filter "./packages/*" pack --pack-destination "$PWD/dist-tarballs"` and
   `node scripts/tarball-smoke.mjs dist-tarballs`.
-- Run `ROUND_BUDGET_REPORT=<file> pnpm -F @toolmark-examples/react-vite exec playwright test e2e/round-budget.spec.ts`
+- Run `pnpm --filter "@toolmark/testing..." build && ROUND_BUDGET_REPORT=<file> pnpm -F @toolmark-examples/react-vite exec playwright test e2e/round-budget.spec.ts`
   and render `docs/release/round-budget.md` with `node scripts/render-round-budget.mjs <file>` as in
   M1 (one row per task: `simple_form`, `wizard`).
 - Append the M2 entry (version, each tarball's filename and SHA-256, smoke result) to
