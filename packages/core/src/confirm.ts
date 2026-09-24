@@ -1,3 +1,4 @@
+import { snapshotValue } from './forms/paths.js'
 import type { FieldChange } from './result.js'
 import type { Caller } from './tool.js'
 
@@ -35,13 +36,13 @@ export interface StoredPending<Owner> {
 /** @internal Maximum pending deferred confirmations (oldest evicted). */
 export const PENDING_LIMIT = 100
 
-/** @internal Deep copy where possible (inputs are JSON-like); falls back to the reference. */
+/**
+ * @internal Copies plain objects/arrays deeply and keeps every other value (class instances such as
+ * a transformed `Money`, `File`, `Date`) by reference, so the approved run sees the same types as an
+ * inline run while callers cannot mutate the stored containers (N2).
+ */
 export function cloneValue<T>(v: T): T {
-  try {
-    return structuredClone(v)
-  } catch {
-    return v
-  }
+  return snapshotValue(v)
 }
 
 /** @internal Deferred confirmation store: single-use, expiring, bounded, dropped with the tool. */
