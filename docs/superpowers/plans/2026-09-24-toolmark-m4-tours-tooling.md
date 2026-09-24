@@ -130,6 +130,15 @@ M4 is done when all of these pass on a clean checkout (no other repository invol
 - **Not applied:** round-budget tests in the Laravel example (m4 audit M16) — pass-1 ruling keeps the
   round budget in `examples/react-vite` only.
 
+## Rulings made while fixing (pass 3, cross-plan consistency)
+
+- `round-budget.spec.ts` runs on Chromium only (like `reach`, `same-tools`, `webmcp`, `mcp`,
+  `lint-clean`), so `ROUND_BUDGET_REPORT` holds one entry per task; the remaining react-vite specs
+  (incl. M2's `wizard`/`dom`) run on all three browsers.
+- New CI jobs use M1's job template (Node default `24.x`); the modified `e2e` job keeps M1's
+  round-budget artifact and no-test-hook steps.
+- Every catalog version M4 needs is already in the M1 catalog; Task 0 only re-verifies and bumps.
+
 ## Review focus
 
 1. **Tour step whose anchor is missing** (element not rendered) → the step is skipped with an event,
@@ -212,11 +221,12 @@ Shared-file rules:
 `examples/inertia-laravel/` is **not** created here — Lane D owns that whole directory.
 
 **Exact values:**
-- Catalog additions (`pnpm-workspace.yaml`): `vitepress` 1.6.4, `typedoc` 0.28.20,
-  `typedoc-plugin-markdown` 4.13.1, `typedoc-vitepress-theme` 1.1.4, `@typesafe-ai/sdk` 0.6.0,
-  `axe-core` 4.13.0, `@axe-core/playwright` 4.13.0, `next` 16.3.6, `laravel-vite-plugin` 3.2.0,
-  `@laravel/vite-plugin-wayfinder` 0.1.10 (plus any overview entries not yet present, e.g. `ws`
-  8.21.3, `@types/ws` 8.18.1). Re-verify each with `npm view <pkg> version` first; ledger bumps.
+- Catalog (`pnpm-workspace.yaml`): M1 seeded it from the overview table, so `vitepress` 1.6.4,
+  `typedoc` 0.28.20, `typedoc-plugin-markdown` 4.13.1, `typedoc-vitepress-theme` 1.1.4,
+  `@typesafe-ai/sdk` 0.6.0, `axe-core` 4.13.0, `@axe-core/playwright` 4.13.0, `next` 16.3.6,
+  `laravel-vite-plugin` 3.2.0, `@laravel/vite-plugin-wayfinder` 0.1.10, `ws` 8.21.3 and `@types/ws`
+  8.18.1 are already present. Re-verify each with `npm view <pkg> version`; a bump edits the catalog
+  entry and the ledger; add an entry only if one is genuinely missing.
 - Root devDeps: `vitepress`, `typedoc`, `typedoc-plugin-markdown`, `typedoc-vitepress-theme`
   (catalog). Root scripts: `"docs:api": "typedoc --options typedoc.config.mjs"`,
   `"docs:api:strict": "TYPEDOC_STRICT=1 typedoc --options typedoc.config.mjs"`,
@@ -231,8 +241,9 @@ Shared-file rules:
   `"./styles.css": "./dist/styles.css"` (no source condition), `"./package.json"`;
   `"sideEffects": ["**/*.css"]`; `files: ["dist","src"]`; dep `@toolmark/core` `workspace:*`; peer
   `react >=18.3.0 <20` (optional via `peerDependenciesMeta`); dev: `react`, `react-dom`,
-  `@types/react`, `@types/react-dom`, `@testing-library/react`, `@vitest/browser`,
-  `@vitest/browser-playwright`, `axe-core` (catalog). `tsdown.config.ts`: entry
+  `@types/react`, `@types/react-dom`, `@testing-library/react`, `@testing-library/dom`,
+  `@vitest/browser`, `@vitest/browser-playwright`, `playwright` (explicit provider peer, as in M1/M2),
+  `axe-core` (catalog). `tsdown.config.ts`: entry
   `{ index: 'src/index.ts', overlay: 'src/overlay/index.ts', react: 'src/react/index.ts' }`,
   `platform: 'neutral'`, `copy: [{ from: 'src/styles.css', to: 'dist' }]` (tsdown 0.23 `copy`,
   verified with ctx7), overview output settings. Lane A writes an empty `src/styles.css`.
@@ -286,7 +297,7 @@ Shared-file rules:
 **Interfaces — Consumes (M1–M3):** `tm.anchor(tool, param?)`, `tm.state(tool)`,
 `tm.events.on('interaction' | 'change', …)`, `tm.subscribe`, `tm.manifest({ caller: 'tour' })`,
 `tm.describe(name, { caller: 'tour' })`, `tm.call(…, { caller: 'tour' })`. Wizard anchors and
-interaction params use `<step>.<path>` (M3 T1).
+interaction params use `<step>.<path>` (M3 T2).
 
 **Interfaces — Produces:**
 ```ts
@@ -704,11 +715,13 @@ TSDoc-comment-only edits in `packages/*/src/**` where TypeDoc warns.
 - `scripts/check-laravel-reference.mjs`: each fenced `php` block in `laravel-reference.md` whose
   first line is `// file: app/Toolmark/<Name>.php` equals that example file after normalising line
   endings; exit 1 on any mismatch or missing file.
-- CI (`ci.yml`): every job sets up Node 22 + pnpm and runs `pnpm install --frozen-lockfile`.
+- CI (`ci.yml`): new jobs follow M1's job template (`node-version` default `24.x`, pnpm from
+  `packageManager`, `pnpm install --frozen-lockfile`); M1's jobs keep their steps.
   - `docs`: `pnpm docs:build` and `node scripts/check-laravel-reference.mjs`.
-  - `e2e` (react-vite, modified): `pnpm -r --filter "./packages/*" build`,
-    `pnpm exec playwright install --with-deps chromium firefox webkit`, then the example's Playwright
-    run (projects per Global constraints).
+  - `e2e` (react-vite, modified): adds `pnpm -r --filter "./packages/*" build` first and installs
+    `chromium firefox webkit` (`--with-deps`); keeps M1's steps (`typecheck`, Playwright with
+    `ROUND_BUDGET_REPORT=round-budget.json` + artifact upload, prod `build` + no-test-hook grep); the
+    Playwright run covers every project (Global constraints).
   - `example-nextjs`: the Task 6 gate commands; env `NEXT_TELEMETRY_DISABLED=1`.
   - `example-laravel`: matrix `bridge-cache: [database, redis]`; `services.redis` (`redis:7`, port
     6379) on the redis leg; `shivammathur/setup-php@v2` with `php-version: '8.4'`,
@@ -761,14 +774,16 @@ listed in the lane table; `scripts/tarball-smoke.mjs` only if it misses non-JS e
 - `global-setup.ts`: builds `pnpm --filter "@toolmark/mcp..." --filter "@toolmark/lint..." build`
   once (extends M3's build step), then starts the relay.
 - `playwright.config.ts`: projects `chromium`, `firefox`, `webkit` for `tour`, `navigation`,
-  `multi-client`, `form`, `round-budget` specs; `webmcp`, `mcp`, `same-tools`, `lint-clean` on
-  `chromium` only (`testMatch`/`testIgnore` per project).
+  `multi-client`, `form`, `wizard`, `dom` specs; `webmcp`, `mcp`, `reach`, `same-tools`,
+  `lint-clean` and `round-budget` on `chromium` only (`testMatch`/`testIgnore` per project;
+  round-budget stays single-browser so its report has one row per task, pass-3 ruling).
 - **Tarball hand-off (last step of the milestone):** `pnpm changeset version` (pre mode `next`,
   versions only — no publish), commit, `pnpm -r --filter "./packages/*" pack --pack-destination
   "$PWD/dist-tarballs"` (all eight packages), `node scripts/tarball-smoke.mjs dist-tarballs`
   (extend the script first if it does not check that non-JS export targets such as
   `./styles.css` and `./manifest.schema.json` exist in the tarball), re-render
-  `docs/release/round-budget.md` from `ROUND_BUDGET_REPORT`, and append the M4 entry (version,
+  `docs/release/round-budget.md` with `node scripts/render-round-budget.mjs` from the Chromium
+  `ROUND_BUDGET_REPORT`, and append the M4 entry (version,
   filenames, SHA-256, smoke result) to `docs/release/next-tarballs.md`.
 
 **Tests (write first):**
@@ -816,11 +831,13 @@ milestone exit check (every item above), CI green on push, and the M4 tarballs l
   stays internal. `TourState` gains `mode` and status `'confirming'`, `TourEvent` gains
   `step_entered`/`done`, `TourStrings` gains `confirming` (M4 introduces these types, so nothing is
   renamed).
-- **Consumed interfaces:** `tm.anchor`/`state`/`events.on('interaction')` (M1 T4, M3 T1),
+- **Consumed interfaces:** `tm.anchor`/`state`/`events.on('interaction')` (M1 T4, M3 T1–T2),
   `createInPageChannel`, `websocketTransport`, `echoTransport` via `bridge({ transport })` (M1 T9),
   test hook shape and missing-hook message (M1 T14), `@toolmark/source` condition and packages-only
-  root scripts (overview), `webmcp({ polyfill: loader })`, `mcpPairing({ code, port? })` and session
-  resume (M3 T2/T4), `.options` description suffix (M2 T2), `tarball-smoke.mjs` (M1 T16).
+  root scripts (overview), `webmcp({ polyfill: loader })` (M3 T3), `mcpPairing({ code?, port?,
+  onStatus? })` and session resume (M3 T5), `e2e/support/mcp-client.ts` and `e2e/global-setup.ts`
+  (M3 T7), `.options` description suffix (M2 T2), `tarball-smoke.mjs` and `render-round-budget.mjs`
+  (M1 T16).
 - **Ownership:** new `package.json` files and root configs are Lane A's (Task 0) except
   `examples/inertia-laravel/`, which Lane D owns whole (plus its lockfile entries at lane end);
   `ci.yml`, `docs-deploy.yml`, docs, TypeDoc config, the Laravel reference check, and react-vite
