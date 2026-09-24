@@ -1,2 +1,13 @@
-.DS_Store
 .superpowers/
+.DS_Store
+dist/
+node_modules/
+dist-tarballs/
+.next/
+docs/api/
+docs/.vitepress/cache/
+docs/.vitepress/dist/
+test-results/
+playwright-report/
+*.tsbuildinfo
+round-budget.json

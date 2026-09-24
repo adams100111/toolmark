@@ -1,0 +1,75 @@
+packages:
+  - 'packages/*'
+  - 'examples/*'
+
+# Dependency build scripts (pnpm >= 11 fails the install on unlisted ones).
+allowBuilds:
+  esbuild: true
+
+# Every dev-tool version from docs/superpowers/plans/2026-09-24-toolmark-00-overview.md
+# (the M5-only zod 3 axis is installed inside its CI job, not here).
+catalog:
+  typescript: 6.0.3
+  tsdown: 0.23.0
+  vitest: 5.0.1
+  '@vitest/browser': 5.0.1
+  '@vitest/browser-playwright': 5.0.1
+  '@playwright/test': 1.63.0
+  playwright: 1.63.0
+  '@testing-library/dom': 10.4.2
+  '@eslint/js': 10.0.1
+  vite: 8.3.1
+  '@vitejs/plugin-react': 6.1.1
+  eslint: 10.11.0
+  typescript-eslint: 8.70.1
+  prettier: 3.9.9
+  '@changesets/cli': 3.0.3
+  '@changesets/changelog-github': 1.0.1
+  publint: 0.3.24
+  '@arethetypeswrong/cli': 0.18.5
+  size-limit: 14.0.0
+  '@size-limit/preset-small-lib': 14.0.0
+  react: 19.3.0
+  react-dom: 19.3.0
+  '@types/react': 19.3.0
+  '@types/react-dom': 19.3.0
+  '@testing-library/react': 16.3.3
+  react-hook-form: 7.88.0
+  '@inertiajs/react': 3.7.1
+  '@inertiajs/core': 3.7.1
+  zod: 4.6.5
+  zod-to-json-schema: 3.25.2
+  laravel-echo: 2.5.0
+  pusher-js: 8.6.0
+  ws: 8.21.3
+  '@types/ws': 8.18.1
+  '@modelcontextprotocol/server': 2.1.0
+  '@modelcontextprotocol/client': 2.1.0
+  '@opentelemetry/api': 1.9.1
+  '@opentelemetry/sdk-trace-base': 2.11.0
+  '@opentelemetry/sdk-metrics': 2.11.0
+  '@mcp-b/webmcp-polyfill': 5.1.0
+  webmcp-types: 0.1.9
+  vitepress: 1.6.4
+  typedoc: 0.28.20
+  typedoc-plugin-markdown: 4.13.1
+  typedoc-vitepress-theme: 1.1.4
+  ajv: 8.20.0
+  ajv-formats: 3.0.1
+  '@typesafe-ai/sdk': 0.6.0
+  axe-core: 4.13.0
+  '@axe-core/playwright': 4.13.0
+  laravel-vite-plugin: 3.2.0
+  '@laravel/vite-plugin-wayfinder': 0.1.10
+  yaml: 2.9.1
+  tsx: 4.23.15
+  '@types/node': 22.20.4
+  next: 16.3.6
+
+# TypeScript 7 runs only in the CI types check / tarball smoke test (never through typescript-eslint).
+catalogs:
+  ts7:
+    typescript: 7.0.2
+
+minimumReleaseAgeExclude:
+  - vite@8.3.1
