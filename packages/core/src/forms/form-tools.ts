@@ -166,56 +166,129 @@ function redact(changes: FieldChange[], sensitive: string[]): FieldChange[] {
   )
 }
 
-/** Keeps only the keys the JSON Schema declares (arrays via `items`); used when no validated
- * value is available. Unknown schemas (`{}`) keep the value. */
-function sanitize(value: unknown, node: unknown, root: JsonSchema, depth = 0): unknown {
-  if (depth > 64 || !isRecord(node)) return value
-  let schema: Record<string, unknown> = node
-  if (typeof schema.$ref === 'string') {
-    const m = /^#\/(\$defs|definitions)\/(.+)$/.exec(schema.$ref)
-    const defs = m ? root[m[1]!] : undefined
-    const target = m && isRecord(defs) ? defs[m[2]!] : undefined
-    if (isRecord(target)) schema = target
+interface ResolvedNode {
+  properties: Record<string, unknown> | undefined
+  items: unknown
+  open: boolean
+}
+
+/** Follows a local `$ref` (`#/$defs/…`, `#/definitions/…`); unresolvable refs → `undefined`. */
+function deref(node: unknown, root: JsonSchema, depth = 0): Record<string, unknown> | undefined {
+  if (!isRecord(node) || depth > 32) return undefined
+  if (typeof node.$ref !== 'string') return node
+  const m = /^#\/(\$defs|definitions)\/([^/]+)$/.exec(node.$ref)
+  const defs = m ? root[m[1]!] : undefined
+  const target =
+    m && isRecord(defs) && Object.prototype.hasOwnProperty.call(defs, m[2]!)
+      ? defs[m[2]!]
+      : undefined
+  return deref(target, root, depth + 1)
+}
+
+const typeIncludes = (n: Record<string, unknown>, t: string): boolean =>
+  n.type === t || (Array.isArray(n.type) && n.type.includes(t))
+
+/**
+ * Resolves a schema node for `value` (N1): follows `$ref`, merges `allOf`, and from
+ * `anyOf`/`oneOf` keeps the branches whose shape matches the value (object or array), unioning
+ * their properties. `undefined` when the node cannot be resolved.
+ */
+function resolveNode(
+  raw: unknown,
+  root: JsonSchema,
+  value: unknown,
+  depth = 0,
+): ResolvedNode | undefined {
+  const node = deref(raw, root)
+  if (!node || depth > 32) return undefined
+  const out: ResolvedNode = { properties: undefined, items: undefined, open: false }
+  const merge = (r: ResolvedNode): void => {
+    if (r.properties) out.properties = { ...(out.properties ?? {}), ...r.properties }
+    if (out.items === undefined && r.items !== undefined) out.items = r.items
+    if (r.open) out.open = true
   }
-  const props: Record<string, unknown> = {}
-  let hasProps = false
-  let open = schema.additionalProperties !== undefined && schema.additionalProperties !== false
-  let items: unknown = schema.items
-  const collect = (n: Record<string, unknown>): void => {
-    if (isRecord(n.properties)) {
-      hasProps = true
-      Object.assign(props, n.properties)
+  if (isRecord(node.properties)) out.properties = { ...node.properties }
+  if (node.items !== undefined) out.items = node.items
+  if (node.additionalProperties !== undefined && node.additionalProperties !== false)
+    out.open = true
+  if (Array.isArray(node.allOf)) {
+    for (const b of node.allOf) {
+      const r = resolveNode(b, root, value, depth + 1)
+      if (r) merge(r)
     }
-    if (n.additionalProperties !== undefined && n.additionalProperties !== false) open = true
-    if (items === undefined && n.items !== undefined) items = n.items
   }
-  collect(schema)
-  for (const key of ['anyOf', 'oneOf', 'allOf'] as const) {
-    const branches = schema[key]
-    if (Array.isArray(branches)) for (const b of branches) if (isRecord(b)) collect(b)
-  }
-  if (Array.isArray(value)) return value.map((v) => sanitize(v, items, root, depth + 1))
-  if (!isPlainObject(value) || !hasProps) return value
-  const out: Record<string, unknown> = {}
-  for (const key of Object.keys(value)) {
-    if (Object.prototype.hasOwnProperty.call(props, key)) {
-      out[key] = sanitize(value[key], props[key], root, depth + 1)
-    } else if (open) {
-      out[key] = value[key]
+  for (const key of ['anyOf', 'oneOf'] as const) {
+    const branches = node[key]
+    if (!Array.isArray(branches)) continue
+    for (const b of branches) {
+      const target = deref(b, root)
+      const r = resolveNode(b, root, value, depth + 1)
+      if (!target || !r) continue
+      const matches = Array.isArray(value)
+        ? r.items !== undefined || typeIncludes(target, 'array')
+        : isPlainObject(value)
+          ? r.properties !== undefined || r.open || typeIncludes(target, 'object')
+          : true
+      if (matches) merge(r)
     }
   }
   return out
 }
 
-/** The JSON Schema node declaring `path` (walking `properties`), or `undefined`. */
+/** The raw JSON Schema node declaring `path` (through `$ref`, `allOf`, `anyOf`, `oneOf`). */
 function schemaAt(root: JsonSchema, path: string): unknown {
   let node: unknown = root
   for (const seg of path.split('.')) {
-    if (!isRecord(node)) return undefined
-    const props = isRecord(node.properties) ? node.properties : undefined
-    node = props && Object.prototype.hasOwnProperty.call(props, seg) ? props[seg] : undefined
+    const r = resolveNode(node, root, {})
+    const props = r?.properties
+    if (!props || !Object.prototype.hasOwnProperty.call(props, seg)) return undefined
+    node = props[seg]
   }
   return node
+}
+
+/**
+ * Keeps only what the JSON Schema declares (C2b fallback when no validated value exists). Fails
+ * closed (N1): an object/array whose schema node cannot be resolved is reported in `undeclared`.
+ */
+function sanitize(
+  value: unknown,
+  node: unknown,
+  root: JsonSchema,
+  path: string,
+  undeclared: string[],
+  depth = 0,
+): unknown {
+  const structured = Array.isArray(value) || isPlainObject(value)
+  if (!structured) return value
+  const r = node === undefined ? undefined : resolveNode(node, root, value)
+  if (!r || depth > 64) {
+    undeclared.push(path)
+    return undefined
+  }
+  if (Array.isArray(value)) {
+    if (r.items === undefined) return value
+    return value.map((v, i) => sanitize(v, r.items, root, `${path}.${i}`, undeclared, depth + 1))
+  }
+  const obj = value
+  // A resolved node without declared properties (e.g. `{}` or a bare object type) is open.
+  if (!r.properties) return value
+  const out: Record<string, unknown> = {}
+  for (const key of Object.keys(obj)) {
+    if (Object.prototype.hasOwnProperty.call(r.properties, key)) {
+      out[key] = sanitize(
+        obj[key],
+        r.properties[key],
+        root,
+        `${path}.${key}`,
+        undeclared,
+        depth + 1,
+      )
+    } else if (r.open) {
+      out[key] = obj[key]
+    }
+  }
+  return out
 }
 
 const byPath = (a: { path: string }, b: { path: string }): number =>
@@ -326,15 +399,21 @@ export function createFormTools<V extends Record<string, unknown>>(
 
     const before = new Map(touched.map((p) => [p, getPath(current, p)] as const))
     // C2: write the validated value (schema-stripped); without one, the schema-sanitized value.
-    const safeValue = (path: string): unknown => {
+    const undeclared: string[] = []
+    const safe = new Map<string, unknown>()
+    for (const path of touched) {
       const raw = flat[path]
-      if (raw === null) return null
-      if (checked.ok) {
-        const v = getPath(checked.value, path)
-        if (v !== undefined) return v
+      let v: unknown = raw === null ? null : undefined
+      if (raw !== null && checked.ok) v = getPath(checked.value, path)
+      if (raw !== null && v === undefined) {
+        v = sanitize(raw, schemaAt(inputSchema, path), inputSchema, path, undeclared)
       }
-      return sanitize(raw, schemaAt(inputSchema, path), inputSchema)
+      safe.set(path, v)
     }
+    if (undeclared.length > 0) {
+      return invalid(undeclared.sort().map((path) => ({ path, message: 'Undeclared field' })))
+    }
+    const safeValue = (path: string): unknown => safe.get(path)
     const toWrite: Record<string, unknown> = {}
     for (const path of touched) {
       const next = safeValue(path)
@@ -348,6 +427,7 @@ export function createFormTools<V extends Record<string, unknown>>(
     const stored = new Map<string, unknown>()
     for (const path of touched) {
       const value = getPath(after, path)
+      for (const p of [...agentSet.keys()]) if (p.startsWith(`${path}.`)) agentSet.delete(p)
       agentSet.set(path, value)
       stored.set(path, value)
       if (!deepEqual(before.get(path), value)) {
