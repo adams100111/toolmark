@@ -247,9 +247,108 @@ function schemaAt(root: JsonSchema, path: string): unknown {
   return node
 }
 
+const STRUCTURAL = [
+  'type',
+  'properties',
+  'items',
+  'prefixItems',
+  'additionalProperties',
+  'anyOf',
+  'oneOf',
+  'allOf',
+  '$ref',
+] as const
+
+/** Effective shape of a schema node for one value kind (fix round 3). */
+interface Shape {
+  props: Record<string, unknown> | undefined
+  items: unknown
+  prefix: unknown[] | undefined
+  /** `undefined` = absent. */
+  addl: unknown
+}
+
 /**
- * Keeps only what the JSON Schema declares (C2b fallback when no validated value exists). Fails
- * closed (N1): an object/array whose schema node cannot be resolved is reported in `undeclared`.
+ * Collects the shape a node declares for a value of `kind`. Returns `'open'` for `true`, `{}` or a
+ * node without structural keywords; `undefined` (unresolved) for unresolvable `$ref`s, a `type`
+ * that excludes `kind`, a failing `allOf` branch, or `anyOf`/`oneOf` with no branch of that kind
+ * and no own shape.
+ */
+function collect(
+  raw: unknown,
+  kind: 'array' | 'object',
+  root: JsonSchema,
+  depth = 0,
+): Shape | 'open' | undefined {
+  if (raw === true) return 'open'
+  if (!isRecord(raw) || depth > 32) return undefined
+  let node: Record<string, unknown> = raw
+  if (typeof node.$ref === 'string') {
+    const target = deref(node, root)
+    if (!target) return undefined
+    const rest = { ...node }
+    delete rest.$ref
+    node = STRUCTURAL.some((k) => k in rest)
+      ? {
+          ...rest,
+          allOf: [...(Array.isArray(rest.allOf) ? (rest.allOf as unknown[]) : []), target],
+        }
+      : target
+  }
+  if (!STRUCTURAL.some((k) => k in node)) return 'open'
+  if (node.type !== undefined && !typeIncludes(node, kind)) return undefined
+
+  const shape: Shape = {
+    props: isRecord(node.properties) ? { ...node.properties } : undefined,
+    items: node.items,
+    prefix: Array.isArray(node.prefixItems) ? node.prefixItems : undefined,
+    addl: node.additionalProperties,
+  }
+  const merge = (b: Shape): void => {
+    if (b.props) shape.props = { ...(shape.props ?? {}), ...b.props }
+    if (shape.items === undefined) shape.items = b.items
+    if (shape.prefix === undefined) shape.prefix = b.prefix
+    if (shape.addl === undefined || (!isRecord(shape.addl) && isRecord(b.addl))) {
+      if (b.addl !== undefined) shape.addl = b.addl
+    }
+  }
+  const hasShape = (): boolean =>
+    shape.props !== undefined ||
+    shape.items !== undefined ||
+    shape.prefix !== undefined ||
+    shape.addl !== undefined
+  let allOpen = false
+  if (Array.isArray(node.allOf)) {
+    for (const b of node.allOf) {
+      const c = collect(b, kind, root, depth + 1)
+      if (c === undefined) return undefined
+      if (c === 'open') allOpen = true
+      else merge(c)
+    }
+  }
+  for (const key of ['anyOf', 'oneOf'] as const) {
+    const branches = node[key]
+    if (!Array.isArray(branches)) continue
+    const matches = branches
+      .map((b) => collect(b, kind, root, depth + 1))
+      .filter((c) => c !== undefined)
+    if (matches.length === 0) {
+      if (!hasShape()) return undefined
+      continue
+    }
+    if (matches.includes('open') && !hasShape()) return 'open'
+    for (const c of matches) if (c !== 'open') merge(c)
+  }
+  if (!hasShape() && allOpen) return 'open'
+  return shape
+}
+
+const isStructured = (v: unknown): boolean => Array.isArray(v) || isPlainObject(v)
+
+/**
+ * Keeps only what the JSON Schema declares (C2b fallback when no validated value exists), per the
+ * fix-round-3 ruling. Fails closed: any object/array whose node is unresolved is reported in
+ * `undeclared` and the fill is refused.
  */
 function sanitize(
   value: unknown,
@@ -259,34 +358,41 @@ function sanitize(
   undeclared: string[],
   depth = 0,
 ): unknown {
-  const structured = Array.isArray(value) || isPlainObject(value)
-  if (!structured) return value
-  const r = node === undefined ? undefined : resolveNode(node, root, value)
-  if (!r || depth > 64) {
+  if (!isStructured(value)) return value
+  const kind = Array.isArray(value) ? 'array' : 'object'
+  const shape = depth > 64 || node === undefined ? undefined : collect(node, kind, root)
+  if (shape === undefined) {
     undeclared.push(path)
     return undefined
   }
+  if (shape === 'open') return value
   if (Array.isArray(value)) {
-    if (r.items === undefined) return value
-    return value.map((v, i) => sanitize(v, r.items, root, `${path}.${i}`, undeclared, depth + 1))
+    return (value as unknown[]).map((item, i) => {
+      const itemNode = shape.prefix && i < shape.prefix.length ? shape.prefix[i] : shape.items
+      if (itemNode === undefined) {
+        if (!isStructured(item)) return item
+        undeclared.push(`${path}.${i}`)
+        return undefined
+      }
+      return sanitize(item, itemNode, root, `${path}.${i}`, undeclared, depth + 1)
+    })
   }
-  const obj = value
-  // A resolved node without declared properties (e.g. `{}` or a bare object type) is open.
-  if (!r.properties) return value
+  const obj = value as Record<string, unknown>
   const out: Record<string, unknown> = {}
   for (const key of Object.keys(obj)) {
-    if (Object.prototype.hasOwnProperty.call(r.properties, key)) {
-      out[key] = sanitize(
-        obj[key],
-        r.properties[key],
-        root,
-        `${path}.${key}`,
-        undeclared,
-        depth + 1,
-      )
-    } else if (r.open) {
+    const child = `${path}.${key}`
+    if (shape.props && Object.prototype.hasOwnProperty.call(shape.props, key)) {
+      out[key] = sanitize(obj[key], shape.props[key], root, child, undeclared, depth + 1)
+    } else if (isRecord(shape.addl) && Object.keys(shape.addl).length > 0) {
+      out[key] = sanitize(obj[key], shape.addl, root, child, undeclared, depth + 1)
+    } else if (
+      shape.addl === true ||
+      (isRecord(shape.addl) && Object.keys(shape.addl).length === 0) ||
+      (shape.addl === undefined && shape.props === undefined)
+    ) {
       out[key] = obj[key]
     }
+    // `additionalProperties: false`, or absent on a node with `properties` → dropped.
   }
   return out
 }
