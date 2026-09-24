@@ -27,7 +27,10 @@ export interface FormAdapter<V extends Record<string, unknown> = Record<string, 
    * @param opts - Who writes: the agent (`fill`) or an undo.
    */
   setValues(values: Record<string, unknown>, opts: { source: 'agent' | 'undo' }): void
-  /** Dot paths the user (or the agent) has changed since load. */
+  /**
+   * Dot paths the user (or the agent) has changed since load. Returns LEAF paths only (never a
+   * parent object path): adapters must flatten nested dirty state.
+   */
   dirtyPaths(): string[]
   /** Submits the form. */
   submit(): Promise<ToolResult<unknown>>
