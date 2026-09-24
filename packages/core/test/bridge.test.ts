@@ -289,6 +289,73 @@ describe('bridge', () => {
     ])
   })
 
+  it('confirmation_settled_synchronously_is_forwarded_after_result', async () => {
+    const tm = createTestRegistry()
+    tm.register(tool('del', { consequential: true }))
+    // The app's listener runs before the bridge's listeners and rejects synchronously.
+    tm.events.on('confirm', (e) => {
+      if (e.stage === 'pending') void tm.confirmPending(e.confirmId, { approved: false })
+    })
+    const t = fakeTransport()
+    tm.use(bridge({ transport: t.transport }))
+    t.deliver(call(tm, 'c1', 'del'))
+    await settle()
+    const sent = t.sent.filter((m) => m.type === 'result' || m.type === 'confirmed')
+    expect(sent.map((m) => `${m.type}:${m.result.status}`)).toEqual([
+      'result:needs_confirmation',
+      'confirmed:cancelled',
+    ])
+    const r = sent[0]!.result
+    if (r.status !== 'needs_confirmation') throw new Error('expected needs_confirmation')
+    expect(sent[1]).toMatchObject({ confirmId: r.confirmId, result: { by: 'operator' } })
+  })
+
+  it('confirmed_never_precedes_its_result', async () => {
+    const tm = createTestRegistry()
+    tm.register(tool('save', { consequential: true }, { run: () => ok('saved') }))
+    const t = fakeTransport()
+    tm.use(bridge({ transport: t.transport }))
+    // Rejected from a registry `result` listener, i.e. before the bridge sends the result message.
+    tm.events.on('result', (e) => {
+      if (e.result.status === 'needs_confirmation') {
+        void tm.confirmPending(e.result.confirmId, { approved: false })
+      }
+    })
+    t.deliver(call(tm, 'c1', 'save'))
+    await settle()
+    expect(
+      t.sent.filter((m) => m.type === 'result' || m.type === 'confirmed').map((m) => m.type),
+    ).toEqual(['result', 'confirmed'])
+  })
+
+  it('sparse_array_rejected_quickly', async () => {
+    const tm = createTestRegistry()
+    const errors = errorsOf(tm)
+    const t = fakeTransport()
+    tm.use(bridge({ transport: t.transport }))
+    const started = performance.now()
+    t.deliver(call(tm, 'c1', 'a', { items: new Array(2 ** 31) }))
+    t.deliver(new Array(2 ** 32 - 1))
+    expect(performance.now() - started).toBeLessThan(100)
+    await settle()
+    expect(t.results()).toEqual([])
+    expect(errors.map((e) => e.code)).toEqual(['invalid_message', 'invalid_message'])
+  })
+
+  it('size_bound_is_a_lower_bound', async () => {
+    const tm = createTestRegistry()
+    tm.register(tool('a'))
+    const errors = errorsOf(tm)
+    const t = fakeTransport()
+    const message = call(tm, 'c1', 'a', { list: [1, 2, 3], o: { k: 'v', gone: undefined } })
+    const exact = new TextEncoder().encode(JSON.stringify(message)).length
+    tm.use(bridge({ transport: t.transport, maxMessageBytes: exact }))
+    t.deliver(message)
+    await settle()
+    expect(errors).toEqual([])
+    expect(t.results('c1')).toHaveLength(1)
+  })
+
   it('unsupported_protocol_replies_error', async () => {
     const tm = createTestRegistry()
     const t = fakeTransport()

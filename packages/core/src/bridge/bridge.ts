@@ -25,6 +25,8 @@ export interface BridgeOptions {
 const DEFAULT_MAX_MESSAGE_BYTES = 1048576
 const MAX_DEPTH = 64
 const REMEMBERED_IDS = 1000
+/** Terminal confirmation outcomes kept for confirmIds the bridge has not yet seen. */
+const RECENT_TERMINAL = 100
 
 type Obj = Record<string, unknown>
 const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null
@@ -32,31 +34,43 @@ const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null
 /**
  * Bounds an untrusted inbound value before it is serialized: rejects nesting deeper than
  * {@link MAX_DEPTH} (which also catches cycles) and stops as soon as a lower bound of its
- * serialized size exceeds `maxBytes`, so shared sub-trees (structured clone) cannot blow up the
- * traversal. Returns a problem description or `null`.
+ * serialized size exceeds `maxBytes`. Array lengths are charged before their slots are visited, so
+ * sparse arrays and shared sub-trees (structured clone) cannot blow up the traversal: the work is
+ * bounded by `maxBytes`. Returns a problem description or `null`.
  */
 function boundsProblem(root: unknown, maxBytes: number): string | null {
+  const tooLarge = 'message too large'
   let budget = 0
   const stack: [unknown, number][] = [[root, 1]]
   while (stack.length > 0) {
     const [value, depth] = stack.pop()!
     if (typeof value === 'string') {
       budget += value.length + 2
+    } else if (typeof value === 'number' || typeof value === 'boolean' || value === null) {
+      budget += 1
     } else if (isObj(value)) {
       if (depth > MAX_DEPTH) return `message nested deeper than ${MAX_DEPTH}`
       budget += 2
       if (Array.isArray(value)) {
-        for (const item of value as unknown[]) stack.push([item, depth + 1])
+        const length = (value as unknown[]).length
+        // Every slot serializes to at least one byte (holes become `null`), plus the commas.
+        budget += Math.max(0, 2 * length - 1)
+        if (budget > maxBytes) return tooLarge
+        budget -= length // each slot charges itself again when visited
+        for (let i = 0; i < length; i++) stack.push([(value as unknown[])[i], depth + 1])
       } else {
+        let first = true
         for (const key of Object.keys(value)) {
-          budget += key.length + 3
-          stack.push([value[key], depth + 1])
+          const item = value[key]
+          if (item === undefined || typeof item === 'function' || typeof item === 'symbol') continue
+          budget += key.length + 3 + (first ? 0 : 1) // quotes, colon, comma
+          first = false
+          if (budget > maxBytes) return tooLarge
+          stack.push([item, depth + 1])
         }
       }
-    } else {
-      budget += 1
     }
-    if (budget > maxBytes) return 'message too large'
+    if (budget > maxBytes) return tooLarge
   }
   return null
 }
@@ -155,8 +169,17 @@ export function bridge(options: BridgeOptions): (tm: Toolmark) => () => void {
     const answered = new Set<string>()
     /** Registry call ids of calls this bridge started (captured from the `call` event). */
     const ownCalls = new Set<string>()
-    /** Deferred confirmations created by this bridge's calls, awaiting a terminal stage. */
-    const ownConfirms = new Set<string>()
+    /**
+     * Deferred confirmations created by this bridge's calls. `resultSent` turns true once the
+     * call's `needs_confirmation` result went out; a terminal outcome that arrives earlier is held
+     * in `early` so `confirmed` never precedes its `result`.
+     */
+    const ownConfirms = new Map<string, { resultSent: boolean; early?: ToolResult<unknown> }>()
+    /**
+     * Terminal outcomes of confirmations not (yet) known as ours — e.g. settled synchronously by an
+     * app listener before the bridge saw the `needs_confirmation` result. Bounded.
+     */
+    const recentTerminal = new Map<string, ToolResult<unknown>>()
     let capture: { tool: string; input: unknown } | null = null
     let disposed = false
 
@@ -200,6 +223,11 @@ export function bridge(options: BridgeOptions): (tm: Toolmark) => () => void {
       send({ protocol: 1, type: 'result', clientId, id, result: safeResult(result) })
     }
 
+    const sendConfirmed = (confirmId: string, result: ToolResult<unknown>): void => {
+      ownConfirms.delete(confirmId)
+      send({ protocol: 1, type: 'confirmed', clientId, confirmId, result: safeResult(result) })
+    }
+
     const sendManifest = (): void => {
       const m = tm.manifest({ caller })
       send({ protocol: 1, type: 'manifest', clientId, rev: m.rev, tools: m.tools })
@@ -228,7 +256,14 @@ export function bridge(options: BridgeOptions): (tm: Toolmark) => () => void {
       }
       pending.then(
         (result) => {
-          if (!disposed) respond(id, result)
+          if (disposed) return
+          respond(id, result)
+          if (result.status === 'needs_confirmation') {
+            const own = ownConfirms.get(result.confirmId)
+            if (!own) return
+            own.resultSent = true
+            if (own.early) sendConfirmed(result.confirmId, own.early)
+          }
         },
         (cause: unknown) => {
           if (disposed) return
@@ -320,22 +355,30 @@ export function bridge(options: BridgeOptions): (tm: Toolmark) => () => void {
     })
     const offResult = tm.events.on('result', (e) => {
       if (!ownCalls.delete(e.callId)) return
-      if (e.result.status === 'needs_confirmation') ownConfirms.add(e.result.confirmId)
+      if (e.result.status !== 'needs_confirmation') return
+      const confirmId = e.result.confirmId
+      const early = recentTerminal.get(confirmId)
+      recentTerminal.delete(confirmId)
+      ownConfirms.set(confirmId, { resultSent: false, ...(early ? { early } : {}) })
     })
     const offConfirm = tm.events.on('confirm', (e) => {
-      if (e.stage === 'pending' || !ownConfirms.delete(e.confirmId)) return
+      if (e.stage === 'pending') return
       const result =
         e.result ??
         (e.stage === 'expired'
           ? refuse('confirmation_expired', 'The confirmation expired or was already used')
           : errorResult('Tool failed'))
-      send({
-        protocol: 1,
-        type: 'confirmed',
-        clientId,
-        confirmId: e.confirmId,
-        result: safeResult(result),
-      })
+      const own = ownConfirms.get(e.confirmId)
+      if (!own) {
+        recentTerminal.set(e.confirmId, result)
+        if (recentTerminal.size > RECENT_TERMINAL) {
+          const oldest = recentTerminal.keys().next()
+          if (!oldest.done) recentTerminal.delete(oldest.value)
+        }
+        return
+      }
+      if (own.resultSent) sendConfirmed(e.confirmId, result)
+      else own.early = result
     })
     const offRev = tm.subscribe((rev) => {
       if (onChange === 'changed') send({ protocol: 1, type: 'changed', clientId, rev })
@@ -357,6 +400,7 @@ export function bridge(options: BridgeOptions): (tm: Toolmark) => () => void {
       inflight.clear()
       ownCalls.clear()
       ownConfirms.clear()
+      recentTerminal.clear()
       for (const c of controllers) c.abort()
       try {
         transport.close?.()

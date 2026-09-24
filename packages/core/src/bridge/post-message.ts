@@ -7,7 +7,11 @@ export interface PostMessageTransportOptions {
   target: Window
   /** Exact origin messages are posted to; `'*'` is rejected. */
   targetOrigin: string
-  /** Exact origins accepted for inbound messages; must be non-empty, without `'*'` or `'null'`. */
+  /**
+   * Origins accepted for inbound messages, compared by exact string match with `event.origin`:
+   * each entry must be a serialized origin (`scheme://host[:port]`, no path or trailing slash).
+   * Must be non-empty, without `'*'` or `'null'`.
+   */
   allowedOrigins: string[]
 }
 

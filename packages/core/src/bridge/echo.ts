@@ -20,7 +20,10 @@ export interface EchoTransportOptions {
   event?: string
   /** URL the page POSTs its messages to (same origin; cookies sent). */
   postUrl: string
-  /** Extra request headers, read on every send (e.g. a CSRF token). */
+  /**
+   * Extra request headers, read on every send (e.g. a CSRF token). The fixed `Content-Type`,
+   * `Accept` and `X-Requested-With` headers override anything this returns.
+   */
   headers?: () => Record<string, string>
 }
 
