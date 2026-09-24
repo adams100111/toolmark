@@ -69,6 +69,11 @@ export class ScopeNode implements Scope {
     return this.when && (this.parent?.isShown() ?? true)
   }
 
+  /** The root scope of this node's registry. */
+  root(): ScopeNode {
+    return this.parent ? this.parent.root() : this
+  }
+
   /** Whether `this` is `node` or one of its descendants. */
   isWithin(node: ScopeNode): boolean {
     return this === node || (this.parent?.isWithin(node) ?? false)
