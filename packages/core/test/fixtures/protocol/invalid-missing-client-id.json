@@ -1,0 +1,10 @@
+{
+  "direction": "toPage",
+  "message": {
+    "protocol": 1,
+    "type": "call",
+    "id": "c1",
+    "tool": "x",
+    "input": {}
+  }
+}

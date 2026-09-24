@@ -1,0 +1,10 @@
+{
+  "direction": "toPage",
+  "message": {
+    "protocol": 1,
+    "type": "cancel",
+    "clientId": "k7c1e0de-0000-4000-8000-000000000001",
+    "id": "c1",
+    "extra": true
+  }
+}

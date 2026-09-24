@@ -1,0 +1,15 @@
+{
+  "direction": "toAgent",
+  "message": {
+    "protocol": 1,
+    "type": "result",
+    "clientId": "k7c1e0de-0000-4000-8000-000000000001",
+    "id": "c3",
+    "result": {
+      "status": "refused",
+      "code": "stale",
+      "message": "Stale",
+      "rev": 9
+    }
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "direction": "toPage",
+  "message": {
+    "protocol": 1,
+    "type": "call",
+    "clientId": "k7c1e0de-0000-4000-8000-000000000001",
+    "id": "c1",
+    "rev": 7,
+    "tool": "challenges.create.fill",
+    "input": {
+      "values": {
+        "title": "x"
+      }
+    }
+  }
+}
