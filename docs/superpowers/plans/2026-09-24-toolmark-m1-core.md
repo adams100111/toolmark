@@ -105,21 +105,32 @@ scope, TSDoc-with-every-export and the CI matrix).
 
 - `policy[c].allow` is optional (omitted → caller keeps its default hint classes, `tools` still
   applies); a `policy.human` entry → `invalid_policy` (dev throw / prod event, entry ignored).
-- `websocketTransport` gains `terminalCloseCodes` and a `receive()` helper for `onOpen` in M1 Task 9
-  (M3 pairing consumes them) instead of M3 editing an M1 transport.
+- `websocketTransport` gains `terminalCloseCodes`, a `receive(timeoutMs?)` helper for `onOpen` and an
+  `onStatus` callback in M1 Task 9 (M3 pairing consumes them) instead of M3 editing an M1 transport.
 - The CI job `types-ts7` is the tarball smoke run (TS 6.0.3 and 7.0.2 over the packed types, `nodenext`
   and `bundler`, no custom conditions); there is no separate workspace-resolved TS 7 check.
 - `docs/release/round-budget.md` is rendered by `scripts/render-round-budget.mjs` from the
   `ROUND_BUDGET_REPORT` JSON (one array entry per task), so M2 and M5 regenerate it the same way.
 - The M1 code list is published as a section of `docs/protocol-v1.md`; M4 consolidates every code in
   `docs/reference/codes.md` (spec §6).
-- `inertiaAdapter` settles on per-visit callbacks; a visit that finishes with no outcome callback is
-  an `error` (`"Visit did not complete"`), never `ok`.
+- `inertiaAdapter` settles on per-visit callbacks through the internal `visit-outcome.ts` mapping
+  (both Inertia majors' callback names); a visit that finishes with no outcome callback is an `error`
+  (`"Visit did not complete"`), never `ok`. M2's props tools reuse the mapping unchanged.
 - App-declared sensitive paths are `FormToolOptions.sensitive?: string[]` (the name M3's `state()`
   redaction uses), and `FieldInfo` gains `sensitive?: boolean`; `FieldInfo.element` widens to
   `Element | null` (spec §13 anchors).
 - An inline `ctx.confirm` that is aborted or expires resolves `{ approved: false, reason: 'signal' }`
   or `{ approved: false, reason: 'expired' }` (never throws, spec §5).
+
+## Rulings made while fixing (pass 3, cross-plan consistency)
+
+- The WebSocket transport hooks M3 needs (`receive(timeoutMs?)`, `onStatus`) are specified here in
+  Task 9 as well as `terminalCloseCodes`; M3 never edits `websocket.ts`.
+- The Inertia visit-outcome mapping lives in `packages/inertia/src/visit-outcome.ts` (Task 13) with
+  both majors' callback names and abort support; M2 Lane D consumes it for props tools and does not
+  edit `inertia-adapter.ts`.
+- Converter-specific tests carry `zod3` in their names so the M5 zod 3 axis selects them with
+  `-t zod3`.
 
 ## Review focus
 
@@ -186,7 +197,7 @@ packages/react/     package.json tsconfig.json tsconfig.test.json tsdown.config.
   src/rhf/index.ts
   test/*.test.tsx
 packages/inertia/   package.json tsconfig.json tsconfig.test.json tsdown.config.ts vitest.config.ts README.md
-  src/index.ts inertia-adapter.ts   test/inertia-adapter.test.tsx
+  src/index.ts inertia-adapter.ts visit-outcome.ts (internal)   test/inertia-adapter.test.tsx test/visit-outcome.test.ts
 packages/testing/   package.json tsconfig.json tsconfig.test.json tsdown.config.ts vitest.config.ts README.md
   src/index.ts vitest.ts fixture.ts matchers.ts test-toolmark.ts page/install-test-hook.ts
   test/*.test.ts · test/fixture.spec.ts · test/fixture-page/* · playwright.config.ts
@@ -244,7 +255,8 @@ by Lanes C and E afterwards); `examples/react-vite/package.json`, `examples/reac
 **Exact values:**
 - Root `packageManager`: `"pnpm@12.6.0"`; `engines.node`: `">=22.12"` (root and every package).
 - `pnpm-workspace.yaml`: `packages: ['packages/*', 'examples/*']` and a `catalog:` with every
-  version in the overview's dev-tool table, plus `playwright` 1.63.0, `@testing-library/dom`,
+  version in the overview's dev-tool table (except the M5-only zod 3 axis row; later milestones only
+  verify or bump catalog entries, overview "Shared files across milestones"), plus `playwright` 1.63.0, `@testing-library/dom`,
   `@eslint/js` and `tsx` (the last three pinned with `npm view <pkg> version` at M1 start and recorded
   in the milestone ledger).
 - Root devDeps (all `catalog:`): `typescript`, `vitest`, `@vitest/browser`,
@@ -433,7 +445,7 @@ function stripRequired(schema: JsonSchema): JsonSchema
 - `validates_zod4_ok_and_issues` — zod 4 object; valid → ok with parsed value; invalid nested field → issue path `title.en`.
 - `resolve_prefers_tool_json_schema` — tool.jsonSchema wins over zod 4 Standard JSON Schema.
 - `resolve_uses_standard_json_schema` — zod 4 schema → output has `type: 'object'` and the property names.
-- `resolve_uses_global_converter_for_zod3` — zod 3 schema (`zod/v3` import of the dev zod package) + `zodToJsonSchema` converter → ok. (Converter-specific: this is one of the tests the M5 zod 3 axis runs.)
+- `resolve_uses_global_converter_for_zod3` — zod 3 schema (`zod/v3` import of the dev zod package) + `zodToJsonSchema` converter → ok. (Converter-specific: every converter-specific test has `zod3` in its name and imports only `zod/v3` + `zod-to-json-schema`; the M5 zod 3 axis runs `pnpm exec vitest run --project core-node -t zod3`.)
 - (The register-level failure tests `resolve_fails_dev_throws` / `resolve_fails_prod_event` live in Task 4's `test/registry-schema.test.ts`.)
 - `strip_required_recursive_and_pure` — nested required arrays removed; original unchanged.
 
@@ -781,7 +793,8 @@ function echoTransport(o: { echo: EchoLike; channel: string; event?: string; pos
 function websocketTransport(o: {
   url: string; protocols?: string | string[]; maxDelayMs?: number
   terminalCloseCodes?: number[]                                            // default []
-  onOpen?: (socket: WebSocket, io: { receive(): Promise<unknown> }) => void | Promise<void>
+  onOpen?: (socket: WebSocket, io: { receive(timeoutMs?: number): Promise<unknown> }) => void | Promise<void>
+  onStatus?: (s: { state: 'connecting' | 'open' | 'closed' | 'stopped'; closeCode?: number; firstConnectFailed?: boolean }) => void
 }): BridgeTransport
 function postMessageTransport(o: { target: Window; targetOrigin: string; allowedOrigins: string[] }): BridgeTransport
 function createInPageChannel(): { transport: BridgeTransport; agent: { send(m: AgentToPageMessage): void; onMessage(h: (m: PageToAgentMessage) => void): () => void } }
@@ -795,7 +808,7 @@ capped at `maxDelayMs` (default `30000`); send buffer max `100` messages. postMe
 
 **Behaviour:**
 - **echo**: subscribes to `echo.private(channel)` (private channel is mandatory — D20); payload may be the message or `{ message }`. `send` POSTs JSON; non-2xx → rejected promise. `close()` calls `stopListening(event)` on the channel.
-- **websocket**: JSON text frames; frames that are not valid JSON are ignored. Reconnects with backoff; on every (re)connect `onOpen(socket, io)` runs (and is awaited) **before** buffered bridge messages flush; frames arriving while `onOpen` is pending are delivered to `io.receive()` (FIFO), never to the bridge handler. A rejecting `onOpen` stops the transport (no further reconnects) and surfaces `transport_failed`. A close whose code is in `terminalCloseCodes` stops the transport (no reconnect) and rejects pending sends with `Error('transport stopped')`. `send` returns a promise that resolves when the frame is written to an open socket, and rejects with `Error('buffer overflow')` when that message is evicted from the 100-message buffer (oldest first), or `Error('transport stopped')` after `close()`/terminal stop. `close()` stops reconnecting. Uses the global `WebSocket` (Node ≥ 22.12 and browsers); tests inject a fake class.
+- **websocket**: JSON text frames; frames that are not valid JSON are ignored. Reconnects with backoff; on every (re)connect `onOpen(socket, io)` runs (and is awaited) **before** buffered bridge messages flush; frames arriving while `onOpen` is pending are delivered to `io.receive(timeoutMs?)` (FIFO; rejects with `Error('receive timeout')` after `timeoutMs`, or `Error('socket closed')` when the socket closes), never to the bridge handler; after `onOpen` resolves, frames go to the bridge. A rejecting `onOpen` stops the transport (no further reconnects) and surfaces `transport_failed`. A close whose code is in `terminalCloseCodes` stops the transport (no reconnect) and rejects pending sends with `Error('transport stopped')`. `onStatus` reports `connecting` (each attempt), `open` (after `onOpen` resolves), `closed` (with `closeCode`; `firstConnectFailed: true` when the very first connection never opened) and `stopped` (terminal code, rejecting `onOpen` or `close()`). `send` returns a promise that resolves when the frame is written to an open socket, and rejects with `Error('buffer overflow')` when that message is evicted from the 100-message buffer (oldest first), or `Error('transport stopped')` after `close()`/terminal stop. `close()` stops reconnecting. Uses the global `WebSocket` (Node ≥ 22.12 and browsers); tests inject a fake class.
 - **postMessage**: `targetOrigin` `'*'` → throws `TypeError('targetOrigin must be an exact origin')`; `allowedOrigins` must be non-empty and must not contain `'*'` or `'null'` → `TypeError`. Outgoing messages are wrapped in the envelope; incoming events are accepted only when `data.toolmark === 1`, the origin is in `allowedOrigins` **and** `event.source === target`; anything else is ignored silently (no event).
 - **in-page**: both directions delivered asynchronously via `queueMicrotask`; used by in-page agents and tests.
 
@@ -805,7 +818,10 @@ capped at `maxDelayMs` (default `30000`); send buffer max `100` messages. postMe
 - `websocket_reconnects_with_backoff_and_flushes` — fake WebSocket class, fake timers → delays 500, 1000, 2000…; buffered messages sent after open.
 - `websocket_on_open_runs_before_flush` — `onOpen` sends a frame and resolves later → that frame precedes every buffered message, on the first connect and after a reconnect; rejecting `onOpen` → no reconnect, `send` rejects.
 - `websocket_frames_during_on_open_go_to_receive` — a frame received while `onOpen` awaits `io.receive()` resolves it and never reaches the bridge handler.
-- `websocket_terminal_close_code_stops_reconnect` — `terminalCloseCodes: [4409]`, server closes 4409 → no reconnect timer, pending `send` rejects `transport stopped`.
+- `websocket_terminal_close_code_stops_reconnect` — `terminalCloseCodes: [4409]`, server closes 4409 → no reconnect timer, pending `send` rejects `transport stopped`, `onStatus` ends with `stopped`.
+- `websocket_non_terminal_close_reconnects` — close 1001 with `terminalCloseCodes: [4409]` → reconnect scheduled.
+- `websocket_receive_times_out` — `onOpen` awaits `receive(100)` with no frame → rejects `receive timeout` (fake timers).
+- `websocket_on_status_reports_first_connect_failure` — first socket errors before open → `closed` with `firstConnectFailed: true`; later states `connecting` → `open` after a successful reconnect.
 - `websocket_buffer_overflow_rejects_oldest` — 101 sends while closed → first rejects `buffer overflow`.
 - `post_message_rejects_star_origin`; `post_message_rejects_null_origin`; `post_message_filters_origin_and_source`; `post_message_ignores_foreign_messages` (no envelope → ignored, no event).
 - `in_page_round_trip_with_bridge` — `createInPageChannel` + `bridge` + registry → agent `call` gets `result`.
@@ -917,8 +933,9 @@ function rhfAdapter<V extends FieldValues>(form: UseFormReturn<V>, opts: {
 
 ### Task 13: Inertia `useForm` adapter   (Lane D, risk: normal)
 
-**Files:** Create `packages/inertia/src/inertia-adapter.ts`, `src/index.ts`; Test
-`test/inertia-adapter.test.tsx`.
+**Files:** Create `packages/inertia/src/inertia-adapter.ts`, `src/visit-outcome.ts` (internal, not
+exported from the package), `src/index.ts`; Test `test/inertia-adapter.test.tsx`,
+`test/visit-outcome.test.ts`.
 
 **Interfaces — Produces:**
 ```ts
@@ -928,9 +945,13 @@ function inertiaAdapter<V extends Record<string, unknown>>(form: InertiaFormLike
 }): FormAdapter<V>
 interface InertiaVisitCallbacks {
   onSuccess?: () => void; onError?: (errors: Record<string, string>) => void
-  onHttpException?: (response: unknown) => void; onNetworkError?: (error: unknown) => void   // Inertia 3
-  onCancel?: () => void; onFinish?: (visit?: { cancelled?: boolean; interrupted?: boolean }) => void
+  onHttpException?: (response: unknown) => void; onNetworkError?: (error: unknown) => void   // Inertia 3 names
+  onInvalid?: (response: unknown) => void; onException?: (error: unknown) => void            // Inertia 2 names (verify per major)
+  onCancel?: () => void; onCancelToken?: (token: { cancel(): void }) => void
+  onFinish?: (visit?: { cancelled?: boolean; interrupted?: boolean }) => void
 }
+// internal, src/visit-outcome.ts (M2 props tools reuse it unchanged)
+function visitOutcome(o?: { signal?: AbortSignal }): { callbacks: InertiaVisitCallbacks; result: Promise<ToolResult<unknown>> }
 interface InertiaFormLike<V> {
   data: V; setData(data: V): void; errors: Partial<Record<string, string>>
   transform(callback: (data: V) => Record<string, unknown>): void
@@ -942,7 +963,8 @@ interface InertiaFormLike<V> {
 - **Stale-state safety:** `setData` is React state, so `form.data` stays old until the next render. The adapter keeps a local `current` copy: `setValues` applies all paths to a clone of `current` with `setPath`, updates `current` synchronously and calls `setData(clone)` once; `getValues()` returns `current`; `current` re-syncs from `form.data` when a newer render's `form.data` differs from the last value the adapter wrote. `submit` calls `form.transform(() => current)` before `form.submit(…)` so the visit sends the latest values.
 - **Adapter state across renders:** apps call `inertiaAdapter(form, …)` every render and `useFormTool` keeps the latest object, so per-form state (`current`, the initial snapshot) lives in a module-level `WeakMap` keyed by a render-stable identity of the form (`form.setData`; verify it is referentially stable in 2.3.28 and 3.7.1 at execution — if neither version offers a stable key, stop and ask the controller for a ruling).
 - `dirtyPaths` = leaf paths whose value differs from the snapshot of `form.data` taken when the adapter state is first created (Inertia has no per-field dirty state).
-- `submit` settles on per-visit callbacks: `onSuccess` → `ok({})`; `onError(errors)` → `invalid` with each key as `path`; `onHttpException` → `error` `"Request failed"`; `onNetworkError` → `error` `"Network error"`; `onCancel` or `onFinish` with `visit.cancelled`/`visit.interrupted` → `cancelled` `signal`; `onFinish` with no earlier outcome (Inertia 2 HTTP/network failures) → `error` `"Visit did not complete"`. Never hangs; never reports a failed visit as `ok`.
+- `visitOutcome(o)` builds one visit's callbacks and a promise that settles **once**: `onSuccess` → `ok({})`; `onError(errors)` → `invalid` with each key as `path`; `onHttpException`/`onInvalid` → `error` `"Request failed"`; `onNetworkError`/`onException` → `error` `"Network error"`; `onCancel` or `onFinish` with `visit.cancelled`/`visit.interrupted` → `cancelled` `signal`; `onFinish` with no earlier outcome (Inertia 2 HTTP/network failures) → `error` `"Visit did not complete"`. `o.signal` abort cancels the visit through the `onCancelToken` token. Both majors' callback names are passed (structural; unknown ones are ignored by Inertia). Never hangs; never reports a failed visit as `ok`.
+- `submit` = `form.submit(method, url, visitOutcome().callbacks)` and returns its `result`.
 - Works with `@inertiajs/react` 2.x and 3.x (`InertiaFormLike` is structural; the Inertia 3-only callbacks are simply never called on 2.x).
 
 **Tests (write first):** (one test file; renders a component using the real `useForm` from the installed `@inertiajs/react` — 3.7.1 locally; CI runs it again with 2.3.28, Task 16. Visits are observed with `vi.spyOn(router, 'visit')` on the `router` exported by `@inertiajs/react` — verify the export in both majors; the spy invokes the callbacks it receives.)
@@ -952,8 +974,9 @@ interface InertiaFormLike<V> {
 - `submit_success_ok` / `submit_errors_invalid`.
 - `submit_finish_without_outcome_is_error`; `submit_cancelled_visit_is_cancelled`.
 - `submit_http_exception_is_error` — runs only when the installed major is ≥ 3 (read `@inertiajs/react/package.json`).
+- `test/visit-outcome.test.ts` (pure, no Inertia): `visit_outcome_maps_every_callback` (each callback → the exact result above), `visit_outcome_settles_once` (a later callback after the first outcome is ignored), `visit_outcome_signal_cancels_token`.
 
-**Task gate:** `pnpm -F @toolmark/inertia exec vitest run test/inertia-adapter.test.tsx`
+**Task gate:** `pnpm -F @toolmark/inertia exec vitest run test/inertia-adapter.test.tsx test/visit-outcome.test.ts`
 
 ---
 

@@ -12,8 +12,8 @@ page scopes, props-declared server tools and navigation. M2 is done when the wiz
 validator (so JSON-Schema-only tools — DOM-synthesized and server-declared — are validated too), the
 wizard engine and the DOM layer (`@toolmark/core/dom`). React and Inertia add thin bindings.
 
-**Tech Stack:** as M1 (overview versions), plus `playwright` (dev, same version as
-`@playwright/test`) for core's browser-mode project.
+**Tech Stack:** as M1 (overview versions); core adds `playwright` (dev, 1.63.0, already in the M1
+catalog) for its browser-mode project.
 
 **Spec:** §4 (`/dom`), §5 (`tm.info`), §6 (codes), §8 (all), §9 (`useWizardTool`), §10 (all), §12.4,
 §12.5 (props builder), §14 (files, prompt injection, privacy), §18, §20 (M2 row), §23. Overview:
@@ -22,7 +22,7 @@ wizard engine and the DOM layer (`@toolmark/core/dom`). React and Inertia add th
 ## Global constraints (M2 additions)
 
 - **Stack currency:** before Wave 0, re-run `npm view <pkg> version` for every overview version this
-  plan uses (plus `playwright`) and record bumps in the M2 ledger.
+  plan uses and record bumps in the M2 ledger (a bump edits the M1 catalog entry).
 - **Files:** default `maxBytes` `10485760` (10 MiB); default URL fetch timeout `30000` ms
   (`files.timeoutMs`). URL fetching is disabled unless `files.allowOrigins` is non-empty; every
   entry must equal `new URL(entry).origin` (`'*'`, a trailing slash or a path is a
@@ -43,8 +43,9 @@ wizard engine and the DOM layer (`@toolmark/core/dom`). React and Inertia add th
 - **New `error` event codes:** `wizard_misconfigured`, `files_misconfigured` (dev → throw
   `ToolmarkError(code)`; prod → event, tools not registered / URL fetching disabled);
   `invalid_props_tool`, `options_url_rejected`, `wizard_current_step_unsynced` (event only, dev and
-  prod, never thrown). Reused from M1: `files_not_configured` (dev event), `duplicate_name` (for
-  props tools: event only, never thrown). `docs/guides/forms.md` lists them under "Codes added in
+  prod, never thrown). Changed from M1: `files_not_configured` (M1: a thrown `ToolmarkError` code;
+  M2: a dev-only event emitted alongside `refused` `file_rejected`). Reused from M1: `duplicate_name`
+  (for props tools: event only, never thrown). `docs/guides/forms.md` lists them under "Codes added in
   M2"; M4 T7 collects every code into `docs/reference/codes.md`.
 - **Security-tagged tasks** (`risk: high, security`, most capable model for implementation and
   review): T3 (file fetching), T5 and T6 (DOM scanning of page content), T8 (server-declared tools,
@@ -97,13 +98,23 @@ wizard engine and the DOM layer (`@toolmark/core/dom`). React and Inertia add th
   dev event `wizard_current_step_unsynced` fires once.
 - **Stepwise wizards** expose `refresh()`; `useWizardTool` calls it when `current` changes so
   `<name>.step.fill` always carries the current step's schema.
-- **Inertia visits settle through per-visit callbacks** (`visit-outcome.ts`); `finish` alone is an
-  `error`, never `ok`. M1's `inertiaAdapter.submit` adopts the same mapping (Lane D owns that change).
+- **Inertia visits settle through per-visit callbacks** using M1's internal `visit-outcome.ts`
+  (`visitOutcome({ signal })`, M1 Task 13); `finish` alone is an `error`, never `ok`. M2 does not
+  modify `inertia-adapter.ts` or `visit-outcome.ts` (pass 3: the mapping is owned by M1).
 - **Disabled or hidden DOM buttons** → `refused` `not_allowed` (`"Button is disabled or hidden"`).
 - **Table `limit`** has no schema maximum; values above 500 are clamped (never `invalid`).
 - **Wizard per-step lenses** are declined for 1.0 (pass-1 ruling); wizard data stays keyed by step.
 - **Round-budget wizard script** uses 4 rounds (describe, options, fill, submit); the test asserts
   `≤ 5`.
+
+## Rulings made while fixing (pass 3, cross-plan consistency)
+
+- Lane D no longer edits M1's `inertia-adapter.ts`: the per-visit mapping moved to M1 Task 13
+  (`visit-outcome.ts`, both majors' callback names, abort via `onCancelToken`), and props tools
+  consume it. The M2-local `VisitCallbacks` type is dropped in favour of M1's `InertiaVisitCallbacks`.
+- `playwright` and every other M2 dev dependency are already in the M1 catalog; M2 Wave 0 adds them
+  to `packages/core/package.json` only and does not edit `pnpm-workspace.yaml`.
+- Round-budget report task names are `simple_form` and `wizard` (the `task` values the specs write).
 
 ## Review focus
 
@@ -136,7 +147,7 @@ M2 is done when, on `main` with every lane merged:
    `simple_form_within_3_rounds` (M1) stays green.
 3. `node scripts/tarball-smoke.mjs dist-tarballs` exits 0 on the M2 tarballs (incl. `@toolmark/core/dom`).
 4. `docs/release/next-tarballs.md` has the M2 entry and `docs/release/round-budget.md` shows the
-   `simple-form` and `wizard` rows from the M2 run.
+   `simple_form` and `wizard` rows from the M2 run.
 
 ## File structure
 
@@ -160,11 +171,10 @@ packages/core/src/dom/index.ts            (stub created by Lane A in T1, then La
 packages/core/package.json · tsdown.config.ts   (modify: ./dom export + entry, devDeps)
 packages/core/vitest.browser.config.ts    core-browser Vitest project
 vitest.config.ts                          (modify: append the core-browser project)
-pnpm-workspace.yaml                       (modify: catalog entry `playwright`)
 packages/react/src/use-wizard-tool.ts
 packages/react/src/use-form-tool.ts · rhf/index.ts · index.ts   (modify, M1 files)
-packages/inertia/src/router-like.ts · visit-outcome.ts · pages.ts · props-tools.ts · navigation.ts · form-component.ts
-packages/inertia/src/inertia-adapter.ts · index.ts               (modify, M1 files)
+packages/inertia/src/router-like.ts · pages.ts · props-tools.ts · navigation.ts · form-component.ts
+packages/inertia/src/index.ts                                    (modify, M1 file; visit-outcome.ts is M1's, read-only)
 examples/react-vite/src/{wizard.tsx,dom-page.ts}  examples/react-vite/plain-form.html
 examples/react-vite/src/{app.tsx,in-page-agent.ts} · vite.config.ts   (modify, M1 files)
 examples/react-vite/e2e/{wizard,dom}.spec.ts  e2e/round-budget.spec.ts (modify, M1 file)
@@ -177,10 +187,10 @@ docs/release/{next-tarballs,round-budget}.md (modify, M1 files)
 
 | Wave | Lane | Tasks | Owns files | Consumes |
 | --- | --- | --- | --- | --- |
-| 0 | A (high, security) | 1–4 | `packages/core/src/{forms,json-schema,wizard}/**`, `src/files.ts`, `src/scope.ts`, `src/registry.ts`, `src/tool.ts`, `src/manifest.ts`, `src/index.ts`, and for M2 changes only the M1 files `src/schema.ts`, `src/call.ts`, `src/undo.ts`; `src/dom/index.ts` (T1 stub only); `packages/core/package.json`, `packages/core/tsdown.config.ts`, `pnpm-workspace.yaml` (catalog line), `pnpm-lock.yaml`, `packages/core/vitest.browser.config.ts`, root `vitest.config.ts`, core tests `test/{form-arrays,scope-transparent,registry-info,browser-smoke,json-schema,form-options,files,form-files,call-files,wizard}.test.ts` | M1 |
+| 0 | A (high, security) | 1–4 | `packages/core/src/{forms,json-schema,wizard}/**`, `src/files.ts`, `src/scope.ts`, `src/registry.ts`, `src/tool.ts`, `src/manifest.ts`, `src/index.ts`, and for M2 changes only the M1 files `src/schema.ts`, `src/call.ts`, `src/undo.ts`; `src/dom/index.ts` (T1 stub only); `packages/core/package.json`, `packages/core/tsdown.config.ts`, `pnpm-lock.yaml`, `packages/core/vitest.browser.config.ts`, root `vitest.config.ts`, core tests `test/{form-arrays,scope-transparent,registry-info,browser-smoke,json-schema,form-options,files,form-files,call-files,wizard}.test.ts` | M1 |
 | 1 | B (high, security) | 5–6 | `packages/core/src/dom/**` (incl. `index.ts` after T1), `packages/core/test/dom-*.test.ts`, `packages/core/test/ssr-dom-entry.test.ts`, `packages/core/test/fixtures/dom/**` | A |
 | 1 | C (normal) | 7 | `packages/react/src/use-wizard-tool.ts`; M1 files `packages/react/src/use-form-tool.ts`, `src/rhf/index.ts`, `src/index.ts`; `packages/react/test/{use-wizard-tool,use-form-tool-options,rhf-arrays}.test.tsx` | A |
-| 1 | D (high, security) | 8 | `packages/inertia/src/{router-like,visit-outcome,pages,props-tools,navigation}.ts`; M1 files `packages/inertia/src/inertia-adapter.ts`, `src/index.ts` (except Lane E's one line); `packages/inertia/test/{pages,props-tools,navigation}.test.ts`, `test/inertia-adapter-outcome.test.tsx` | A |
+| 1 | D (high, security) | 8 | `packages/inertia/src/{router-like,pages,props-tools,navigation}.ts`; M1 file `packages/inertia/src/index.ts` (except Lane E's one line); `packages/inertia/test/{pages,props-tools,navigation}.test.ts` (M1's `visit-outcome.ts` and `inertia-adapter.ts` are consumed read-only) | A |
 | 2 | E (normal; T11 high, security) | 9–12 | `packages/inertia/src/form-component.ts` (+ its export line in `index.ts`), `packages/inertia/test/form-component.test.tsx`, `examples/**` except `package.json` (incl. M1's `src/app.tsx`, `src/main.tsx`, `src/in-page-agent.ts`, `vite.config.ts`, `e2e/round-budget.spec.ts`, `e2e/support/round-recorder.ts`), `docs/guides/**` (incl. M1's `laravel-reference.md`), M1's `docs/release/{next-tarballs,round-budget}.md`, `.changeset/m2-forms.md`, M1's `scripts/tarball-smoke.mjs` (only if Task 12 finds the `./dom` entry unhandled) | A–D |
 
 Dependencies are declared in Wave 0 only (Task 1): Wave-1/2 lanes must not add dependencies
@@ -200,7 +210,7 @@ core's tsconfig needs no `jsx` setting. Core gates run from the root:
 
 **Files:** Modify `src/forms/paths.ts`, `src/forms/form-tools.ts`, `src/scope.ts`,
 `src/registry.ts`, `src/tool.ts`, `src/manifest.ts`, `src/index.ts`, `packages/core/package.json`,
-`packages/core/tsdown.config.ts`, `pnpm-workspace.yaml`, `pnpm-lock.yaml`, root `vitest.config.ts`
+`packages/core/tsdown.config.ts`, `pnpm-lock.yaml`, root `vitest.config.ts`
 (append `'packages/core/vitest.browser.config.ts'`); Create `packages/core/vitest.browser.config.ts`,
 `src/dom/index.ts` (stub `export {}`, handed to Lane B); Test `test/form-arrays.test.ts`,
 `test/scope-transparent.test.ts`, `test/registry-info.test.ts`, `test/browser-smoke.test.ts`.
@@ -223,7 +233,7 @@ type ArrayOp = { $append: unknown[] } | { $remove: number[] }
   `tsdown.config.ts` entry map adds `dom: 'src/dom/index.ts'` (`platform: 'neutral'`).
 - `packages/core/package.json` devDependencies (catalog versions): `@vitest/browser`,
   `@vitest/browser-playwright`, `playwright` (same version as `@playwright/test`, 1.63.0), `react`,
-  `react-dom`, `@types/react`, `@types/react-dom`. `pnpm-workspace.yaml` catalog adds `playwright`.
+  `react-dom`, `@types/react`, `@types/react-dom` (all already in the M1 catalog).
   Core keeps zero runtime dependencies.
 - `packages/core/vitest.browser.config.ts`: project name `core-browser`, include
   `test/{dom,browser}-*.test.ts`, `browser: { enabled: true, provider: playwright() /* from
@@ -318,7 +328,7 @@ interface ToolmarkOptions { files?: FilesOptions }
 interface FileFieldSpec { accept?: string[]; maxBytes?: number; multiple?: boolean }
 interface FormToolOptions<V> { files?: Record<string, FileFieldSpec> }   // key = field path; `[]` = any array index
 function fileFieldSchema(spec: FileFieldSpec): JsonSchema
-// M1 schema.ts: resolveJsonSchema(schema, opts?: { libraryOptions?: Record<string, unknown> }) — optional arg added
+// M1 schema.ts: resolveJsonSchema(tool, converter, opts?: { libraryOptions?: Record<string, unknown> }) — optional third arg added
 // internal (not exported): resolveFileRef(ref: FileRef, spec: FileFieldSpec, files: FilesOptions, signal: AbortSignal): Promise<File>
 ```
 
@@ -600,20 +610,19 @@ function useWizardTool(opts: {
 
 ### Task 8: Inertia pages, props-declared tools, navigation   (Lane D, risk: high, security)
 
-**Files:** Create `packages/inertia/src/router-like.ts`, `src/visit-outcome.ts`, `src/pages.ts`,
-`src/props-tools.ts`, `src/navigation.ts`; Modify (M1 files) `src/index.ts`,
-`src/inertia-adapter.ts` (`submit` settles through `visit-outcome`); Test `test/pages.test.ts`,
-`test/props-tools.test.ts`, `test/navigation.test.ts`, `test/inertia-adapter-outcome.test.tsx`.
+**Files:** Create `packages/inertia/src/router-like.ts`, `src/pages.ts`, `src/props-tools.ts`,
+`src/navigation.ts`; Modify (M1 file) `src/index.ts`; Test `test/pages.test.ts`,
+`test/props-tools.test.ts`, `test/navigation.test.ts`.
+
+**Interfaces — Consumes:** `visitOutcome({ signal })` and `InertiaVisitCallbacks` from M1's
+`src/visit-outcome.ts` / `src/inertia-adapter.ts` (M1 Task 13), unchanged. If the mapping needs a
+change, stop and report to the controller (it is an M1 contract, spec §23 "Inertia adapter
+outcomes").
 
 **Interfaces — Produces:**
 ```ts
 type InertiaEventName = 'start' | 'navigate' | 'success' | 'error' | 'finish' | 'httpException' | 'networkError' | 'invalid' | 'exception'
-interface VisitCallbacks {
-  onSuccess?(): void; onError?(errors: Record<string, string>): void
-  onHttpException?(): void; onInvalid?(): void; onNetworkError?(): void; onException?(): void
-  onCancel?(): void; onFinish?(): void; onCancelToken?(token: { cancel(): void }): void
-}
-interface RouterLike { on(event: InertiaEventName, cb: (e: CustomEvent) => void): () => void; visit(url: string, opts?: { method?: string; data?: unknown; preserveState?: boolean } & VisitCallbacks): void }
+interface RouterLike { on(event: InertiaEventName, cb: (e: CustomEvent) => void): () => void; visit(url: string, opts?: { method?: string; data?: unknown; preserveState?: boolean } & InertiaVisitCallbacks): void }   // InertiaVisitCallbacks from M1 T13
 function inertiaPages(o: { router: RouterLike; initialPage: { props: Record<string, unknown> }; propsKey?: string }): (tm: Toolmark) => () => void
 interface PropsToolEntry { name: string; title?: string; description: string; inputSchema: JsonSchema; hints?: ToolHints; visit: { url: string; method: 'get' | 'post' | 'put' | 'patch' | 'delete' } }
 function propsTools(tm: Toolmark, entries: unknown[], scope: Scope): void    // entries are untrusted and validated
@@ -639,13 +648,12 @@ message `"Only GET routes can be navigated; declare a server tool for mutations"
 - Props tools carry `origin: 'server'`; input is validated with `fromJsonSchema(inputSchema)`.
   An entry whose `visit.method` is not `get` is at least `consequential` (`destructive` kept,
   `readOnly` dropped); `get` entries keep the server's hints.
-- A props tool's run calls `router.visit(url, { method, data: input, preserveState: true, …callbacks })`
-  and settles once, via `visit-outcome.ts`: `onSuccess` → `ok({})`; `onError(errors)` → `invalid`
-  (keys → paths); `onHttpException`/`onInvalid` → `error` `"Request failed"`;
-  `onNetworkError`/`onException` → `error` `"Network error"`; `onCancel` → `cancelled` `signal`;
-  `onFinish` with none of these → `error` `"Visit did not complete"`. `ctx.signal` abort cancels the
-  visit through the `onCancelToken` token. v2 and v3 callback names are both passed (structural).
-- M1's `inertiaAdapter.submit` uses the same mapping (replacing "`onFinish` alone → `ok`").
+- A props tool's run builds `const { callbacks, result } = visitOutcome({ signal: ctx.signal })`, calls
+  `router.visit(url, { method, data: input, preserveState: true, ...callbacks })` and returns
+  `result` — M1's mapping (`onSuccess` → `ok({})`; `onError` → `invalid`; `onHttpException`/
+  `onInvalid` → `error` `"Request failed"`; `onNetworkError`/`onException` → `error`
+  `"Network error"`; cancel → `cancelled` `signal`; `onFinish` alone → `error`
+  `"Visit did not complete"`; `ctx.signal` abort cancels through `onCancelToken`).
 - `navigationTool`: input `route` is an enum of the route keys; run → `route(params)`; a throwing
   `RouteFn` → `refused` `navigation_failed`; a method other than `get` (case-insensitive) → `refused`
   `navigation_failed` with the exact message; otherwise `visit(url, { method: 'get' })` and `ok({ url })`
@@ -657,9 +665,8 @@ message `"Only GET routes can be navigated; declare a server tool for mutations"
 - `props_tools_registered_with_server_names` · `props_tool_success_and_error_mapping` · `props_tool_http_exception_is_error` · `props_tool_network_error_is_error` · `props_tool_finish_only_is_error` · `props_tool_abort_cancels_visit` · `props_non_get_forced_consequential`.
 - `invalid_props_entry_skipped_with_event` · `props_collision_does_not_throw` · `dispose_resolves_inflight_props_call` · `initial_navigate_does_not_duplicate`.
 - `navigation_ok_then_old_props_tools_gone` (review focus 5) · `navigation_route_enum_and_failure` · `navigation_rejects_non_get_route`.
-- `inertia_adapter_http_exception_is_error` (M1 adapter via `visit-outcome`).
 
-**Task gate:** `pnpm -F @toolmark/inertia exec vitest run test/pages.test.ts test/props-tools.test.ts test/navigation.test.ts test/inertia-adapter-outcome.test.tsx`
+**Task gate:** `pnpm -F @toolmark/inertia exec vitest run test/pages.test.ts test/props-tools.test.ts test/navigation.test.ts test/inertia-adapter.test.tsx test/visit-outcome.test.ts` (M1's adapter tests stay green)
 
 ---
 
@@ -771,8 +778,8 @@ new `./dom` entry (it must import it under Node, per the Global constraints).
   `pnpm -r --filter "./packages/*" pack --pack-destination "$PWD/dist-tarballs"` and
   `node scripts/tarball-smoke.mjs dist-tarballs`.
 - Run `ROUND_BUDGET_REPORT=<file> pnpm -F @toolmark-examples/react-vite exec playwright test e2e/round-budget.spec.ts`
-  and render `docs/release/round-budget.md` from the report as in M1 (one row per task:
-  `simple-form`, `wizard`).
+  and render `docs/release/round-budget.md` with `node scripts/render-round-budget.mjs <file>` as in
+  M1 (one row per task: `simple_form`, `wizard`).
 - Append the M2 entry (version, each tarball's filename and SHA-256, smoke result) to
   `docs/release/next-tarballs.md`. Consumption by any app is outside this plan and is not verified
   here.
@@ -790,7 +797,7 @@ new `./dom` entry (it must import it under Node, per the Global constraints).
 - React 19 checkbox/radio `onChange` from `click` (T5); form-associated custom elements in
   `form.elements` on Chromium/Firefox/WebKit (T5).
 - RHF 7.88 `setValue` on an array path updates a mounted `useFieldArray` (T7).
-- Inertia per-visit callback names in 2.3.28 and 3.7.1; whether `navigate` fires on initial load;
+- Whether `navigate` fires on initial load (the per-visit callback names are verified in M1 T13);
   `<Form>` availability in 2.3.28 (T8, T9).
 - Current WebMCP declarative attribute names (T6).
 
@@ -813,9 +820,10 @@ new `./dom` entry (it must import it under Node, per the Global constraints).
   match the overview registry M2 rows; `discoverFields` stays internal; `resolveFileRef` is internal.
 - **Ownership:** lanes are disjoint. M1-owned files modified in M2 have one M2 owner each: core
   `schema.ts`, `call.ts`, `undo.ts`, `tool.ts`, `registry.ts`, `scope.ts`, `manifest.ts`, `index.ts`,
-  `forms/**`, `package.json`, `tsdown.config.ts`, root `vitest.config.ts`, `pnpm-workspace.yaml`,
+  `forms/**`, `package.json`, `tsdown.config.ts`, root `vitest.config.ts`,
   `pnpm-lock.yaml` → A; react `use-form-tool.ts`, `rhf/index.ts`, `index.ts` → C; inertia
-  `inertia-adapter.ts`, `index.ts` → D (Lane E adds one export line); example `app.tsx`, `main.tsx`,
+  `index.ts` → D (Lane E adds one export line; `inertia-adapter.ts` and `visit-outcome.ts` stay M1's,
+  unmodified); example `app.tsx`, `main.tsx`,
   `in-page-agent.ts`, `vite.config.ts`, `e2e/round-budget.spec.ts`, `e2e/support/round-recorder.ts`,
   `docs/guides/laravel-reference.md`, `docs/release/{next-tarballs,round-budget}.md`,
   `scripts/tarball-smoke.mjs` → E. `src/dom/index.ts` is created by A (T1 stub) and owned by B after.
