@@ -6,8 +6,10 @@ here (see [Resume protocol](#resume-protocol)). Update it at every checkpoint li
 context compaction, new sessions and new machines.
 
 - Toolmark repo: `~/repos/toolmark` — private `github.com/adams100111/toolmark`, branch `main`.
-- Innovation repo: `~/projects/innovation` — planning branch `docs/assistant-page-tools` (from
-  `next`, **local only**; push only when the owner asks — Innovation constitution).
+- Innovation repo: `~/projects/innovation` — the spec + plans are parked on local branch
+  `docs/assistant-page-tools` (3 docs-only commits on top of `next`, not pushed). **Innovation work is
+  deferred until Toolmark is ready**; the owner's checkout stays on `next` for other work. When I-P0
+  starts, rebase that branch onto the current `next` (or cherry-pick its 3 commits) first.
 
 ## Documents
 
@@ -38,7 +40,7 @@ Innov P0 ────┴─► Innov P1 ────┴─► Innov P2 ───
 | Unit | Repo | Plan | Depends on | Exit check | Status | Branch | Updated |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | T-M1 Core | toolmark | `…-m1-core.md` | — | lane gates green + CI green + `-next` tarballs packed | ready | — | 2026-09-24 |
-| I-P0 Foundations | innovation | `…-phase0-foundations.md` | — | 4 lanes merged; **baseline committed** | ready | — | 2026-09-24 |
+| I-P0 Foundations | innovation | `…-phase0-foundations.md` | — (deferred by owner) | 4 lanes merged; **baseline committed** | owner (deferred) | — | 2026-09-24 |
 | T-M2 Forms | toolmark | `…-m2-forms.md` | T-M1 | tarballs packed | todo | — | — |
 | I-P1 Simple form | innovation | `…-phase1-simple-form.md` | T-M1, I-P0 | SC-001/003/004 met | todo | — | — |
 | T-M3 Reach | toolmark | `…-m3-reach.md` | T-M2 | tarballs packed | todo | — | — |
@@ -47,7 +49,9 @@ Innov P0 ────┴─► Innov P1 ────┴─► Innov P2 ───
 | I-P3 Tours | innovation | `…-phase3-tours.md` | T-M4, I-P2 T1–T8 | e2e green | todo | — | — |
 | T-M5 Release | toolmark | `…-m5-release.md` | T-M4, I-P1, I-P2 | all §21 gates; publish (owner) | todo | — | — |
 
-**What can run at the same time:** T-M1 ∥ I-P0 now. Later: T-M2 ∥ I-P1, T-M3 ∥ I-P2,
+**Current focus:** Toolmark first (T-M1 → T-M4); Innovation deferred by the owner. The baseline
+(I-P0 Lane B) must still be recorded **before** any change to Innovation's assistant Entry Mode code.
+**What can run at the same time (once Innovation resumes):** T-M1 ∥ I-P0. Later: T-M2 ∥ I-P1, T-M3 ∥ I-P2,
 T-M4 ∥ (I-P2 Task 9 if approved). Each unit is driven by **its own controller session** (see
 [Parallel execution](#parallel-execution-and-resource-limits)).
 
@@ -192,4 +196,6 @@ cross-repo view. One line per event in the ledger; the board holds only lane-lev
 
 ## Log
 
-- 2026-09-24 — Specs and plans complete for both repos; roadmap created. Next: T-M1 ∥ I-P0.
+- 2026-09-24 — Specs and plans complete for both repos; roadmap created.
+- 2026-09-24 — Owner deferred Innovation; Innovation checkout back on `next`; plans parked on
+  `docs/assistant-page-tools`. Next: T-M1.
