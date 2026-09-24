@@ -195,6 +195,21 @@ describe('websocketTransport', () => {
     t.close?.()
   })
 
+  it('websocket_drops_oversized_frames', async () => {
+    const t = websocketTransport({ url: 'wss://a' })
+    const handler = vi.fn()
+    t.onMessage(handler)
+    sock(0).open()
+    await flush()
+    const parse = vi.spyOn(JSON, 'parse')
+    sock(0).serverSend(JSON.stringify({ s: 'x'.repeat(4 * 1048576) }))
+    expect(parse).not.toHaveBeenCalled()
+    parse.mockRestore()
+    sock(0).serverSend(JSON.stringify({ ok: true }))
+    expect(handler.mock.calls).toEqual([[{ ok: true }]])
+    t.close?.()
+  })
+
   it('websocket_terminal_close_code_stops_reconnect', async () => {
     const statuses: { state: string; closeCode?: number }[] = []
     const t = websocketTransport({

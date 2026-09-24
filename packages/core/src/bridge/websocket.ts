@@ -19,8 +19,8 @@ export interface WebSocketTransportStatus {
 export interface WebSocketOpenIo {
   /**
    * Resolves with the next parsed JSON frame received while `onOpen` runs (FIFO). Rejects with
-   * `Error('receive timeout')` after `timeoutMs`, or `Error('socket closed')` when the socket
-   * closes.
+   * `Error('receive timeout')` after `timeoutMs`, `Error('socket closed')` when the socket
+   * closes, or `Error('receive unavailable')` when called after `onOpen` has finished.
    */
   receive(timeoutMs?: number): Promise<unknown>
 }
@@ -37,8 +37,8 @@ export interface WebSocketTransportOptions {
   terminalCloseCodes?: number[]
   /**
    * Runs (and is awaited) on every (re)connect before buffered bridge messages flush, e.g. for a
-   * handshake. Frames arriving meanwhile go to `io.receive`, never to the bridge. A rejection stops
-   * the transport.
+   * handshake. Frames arriving meanwhile go to `io.receive`, never to the bridge; frames `onOpen`
+   * did not read are discarded when it resolves. A rejection stops the transport.
    */
   onOpen?: (socket: WebSocket, io: WebSocketOpenIo) => void | Promise<void>
   /** Connection status callback. */
@@ -50,6 +50,8 @@ const DEFAULT_MAX_DELAY_MS = 30000
 const MAX_BUFFERED = 100
 /** Frames kept for `io.receive` while `onOpen` runs; further frames are dropped. */
 const MAX_RECEIVE_QUEUE = 100
+/** Frames longer than this (UTF-16 code units; 4 × the bridge's default limit) are dropped unparsed. */
+const MAX_FRAME_LENGTH = 4 * 1048576
 /** `WebSocket.OPEN`. */
 const OPEN = 1
 
@@ -77,7 +79,8 @@ interface Connection {
 /**
  * WebSocket transport (JSON text frames) using the global `WebSocket` (Node ≥ 22.12, browsers).
  * Reconnects with exponential backoff (500 ms doubling, capped at `maxDelayMs`) until a terminal
- * close code, a rejecting `onOpen` or `close()`. Non-JSON and binary frames are ignored. The socket
+ * close code, a rejecting `onOpen` or `close()`. Non-JSON, binary and oversized (> 4 MiB of text)
+ * frames are ignored. The socket
  * opens on the first `send` or `onMessage`.
  * @param o - Connection options; see {@link WebSocketTransportOptions}.
  * @returns A {@link BridgeTransport}. `send` resolves once the frame is written to an open socket;
@@ -199,7 +202,7 @@ export function websocketTransport(o: WebSocketTransportOptions): BridgeTranspor
   const onFrame = (c: Connection, event: Event): void => {
     if (conn !== c) return
     const data: unknown = (event as MessageEvent).data
-    if (typeof data !== 'string') return
+    if (typeof data !== 'string' || data.length > MAX_FRAME_LENGTH) return
     let message: unknown
     try {
       message = JSON.parse(data)
