@@ -1,0 +1,13 @@
+{
+  "direction": "toAgent",
+  "message": {
+    "protocol": 1,
+    "type": "confirmed",
+    "clientId": "k7c1e0de-0000-4000-8000-000000000001",
+    "confirmId": "f",
+    "result": {
+      "status": "cancelled",
+      "by": "agent"
+    }
+  }
+}

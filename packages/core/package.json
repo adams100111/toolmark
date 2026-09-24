@@ -57,7 +57,7 @@
     "./package.json": "./package.json"
   },
   "scripts": {
-    "build": "tsdown",
+    "build": "tsdown && tsx scripts/emit-protocol-schemas.ts",
     "typecheck": "tsc -p tsconfig.test.json",
     "lint": "eslint ."
   },
