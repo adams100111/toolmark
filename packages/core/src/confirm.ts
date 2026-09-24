@@ -30,12 +30,35 @@ export interface StoredPending<Owner> {
   timer: ReturnType<typeof setTimeout> | undefined
 }
 
-/** @internal Deferred confirmation store: single-use, expiring, dropped with the owning tool. */
+/** @internal Maximum pending deferred confirmations (oldest evicted). */
+export const PENDING_LIMIT = 100
+
+/** @internal Deep copy where possible (inputs are JSON-like); falls back to the reference. */
+export function cloneValue<T>(v: T): T {
+  try {
+    return structuredClone(v)
+  } catch {
+    return v
+  }
+}
+
+/** @internal Deferred confirmation store: single-use, expiring, bounded, dropped with the tool. */
 export class PendingStore<Owner> {
   readonly #items = new Map<string, StoredPending<Owner>>()
 
-  add(item: PendingConfirmation, owner: Owner, onExpire: (p: StoredPending<Owner>) => void): void {
-    const stored: StoredPending<Owner> = { public: item, owner, timer: undefined }
+  constructor(readonly limit = PENDING_LIMIT) {}
+
+  /** Stores `item` (input deep-copied); returns entries evicted to respect the limit. */
+  add(
+    item: PendingConfirmation,
+    owner: Owner,
+    onExpire: (p: StoredPending<Owner>) => void,
+  ): StoredPending<Owner>[] {
+    const stored: StoredPending<Owner> = {
+      public: { ...item, input: cloneValue(item.input) },
+      owner,
+      timer: undefined,
+    }
     stored.timer = setTimeout(
       () => {
         if (this.#items.get(item.confirmId) !== stored) return
@@ -45,6 +68,13 @@ export class PendingStore<Owner> {
       Math.max(0, item.expiresAt - item.createdAt),
     )
     this.#items.set(item.confirmId, stored)
+    const evicted: StoredPending<Owner>[] = []
+    while (this.#items.size > this.limit) {
+      const oldest = this.#items.keys().next().value as string
+      const e = this.take(oldest)
+      if (e) evicted.push(e)
+    }
+    return evicted
   }
 
   /** Consumes `confirmId` synchronously (single use). */
@@ -78,7 +108,7 @@ function copyPending(p: PendingConfirmation): PendingConfirmation {
     confirmId: p.confirmId,
     tool: p.tool,
     caller: p.caller,
-    input: p.input,
+    input: cloneValue(p.input),
     summary: p.summary,
     createdAt: p.createdAt,
     expiresAt: p.expiresAt,

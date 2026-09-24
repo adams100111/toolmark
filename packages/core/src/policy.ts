@@ -28,6 +28,14 @@ export const HINT_CLASSES: readonly HintClass[] = [
 /** @internal */
 export const POLICY_CALLERS: readonly PolicyCaller[] = ['inapp', 'webmcp', 'mcp', 'test', 'tour']
 
+/** @internal Every known caller. */
+export const CALLERS: readonly Caller[] = [...POLICY_CALLERS, 'human']
+
+/** @internal Whether `c` is a known caller (guards untrusted caller strings). */
+export function isKnownCaller(c: unknown): c is Caller {
+  return typeof c === 'string' && (CALLERS as readonly string[]).includes(c)
+}
+
 /** @internal Default exposure per caller (spec §7 table, M1 constraints). */
 export const DEFAULT_ALLOW: Readonly<Record<Caller, readonly HintClass[]>> = {
   inapp: HINT_CLASSES,
@@ -134,8 +142,9 @@ export function isAllowed(
   cls: HintClass,
   fullName: string,
 ): boolean {
+  if (!isKnownCaller(caller)) return false
   if (caller === 'human') return true
-  const entry = policy[caller]
+  const entry = Object.prototype.hasOwnProperty.call(policy, caller) ? policy[caller] : undefined
   const classes = entry?.allow ?? DEFAULT_ALLOW[caller]
   if (!classes.includes(cls)) return false
   const tools = entry?.tools

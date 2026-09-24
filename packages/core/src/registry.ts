@@ -18,6 +18,7 @@ import { isValidToolName, toLlmName } from './names.js'
 import {
   hintClass,
   isAllowed,
+  isKnownCaller,
   needsConfirmation,
   POLICY_CALLERS,
   resolvePolicy,
@@ -277,7 +278,7 @@ export function createToolmark(options: ToolmarkOptions = {}): Toolmark {
   const policy = resolvePolicy(options.policy, (message) => fail('invalid_policy', message))
 
   const modeOf = (caller: Caller): ConfirmMode | undefined =>
-    caller === 'human' ? undefined : modes[caller]
+    caller !== 'human' && isKnownCaller(caller) ? modes[caller] : undefined
   const inlineWithoutHandler = (caller: Caller): boolean =>
     modeOf(caller) === 'inline' && options.confirm === undefined
   const visible = (entry: Entry, caller?: Caller): boolean => {
