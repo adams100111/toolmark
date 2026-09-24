@@ -137,6 +137,8 @@ interface ToolDefinition<I = unknown, O = unknown> {
   summary?: (input: I) => string   // user-facing one-liner for confirm cards (app-localized)
   anchors?: AnchorSpec
   state?: () => ToolState<I>
+  sensitivePaths?: () => string[]   // redacted from state(), telemetry (§14)
+  origin?: 'code' | 'native-form' | 'dom' | 'server'; nativeName?: string   // via tm.info, not in the manifest
   run(input: I, ctx: ToolContext): ToolResult<O> | Promise<ToolResult<O>>
 }
 
@@ -166,7 +168,7 @@ tm.subscribe(listener)                        // debounced; carries rev
 tm.events.on('call' | 'result' | 'confirm' | 'interaction' | 'change' | 'error', fn)
 tm.use(consumer)                              // → dispose()
 tm.anchor(name, param?) · tm.state(name)
-tm.info(name)                                 // { origin, nativeName? } | undefined; not in the manifest
+tm.info(name)                                 // { origin, nativeName?, sensitivePaths } | undefined; not in the manifest
 ```
 
 Rules:
@@ -262,8 +264,9 @@ not the adapter.
 - `<name>.options`: present when any field declares async `options` (§8.3).
 - `tm.undo(callId)` restores the `before` values of a `fill` while the form is mounted.
 
-Adapters: `rhfAdapter(form)` (`@toolmark/react/rhf`, react-hook-form ≥ 7, field arrays via array
-paths), `inertiaAdapter(form)` (`@toolmark/inertia`, server errors → `invalid`), and the DOM adapter
+Adapters: `rhfAdapter(form, { onSubmit, elementFor?, root? })` (`@toolmark/react/rhf`,
+react-hook-form ≥ 7, field arrays via array paths; `root` enables automatic anchors and focus/submit
+interaction events), `inertiaAdapter(form)` (`@toolmark/inertia`, server errors → `invalid`), and the DOM adapter
 (§10) for uncontrolled forms including Inertia `<Form>`.
 
 ### 8.2 Wizards (`useWizardTool`, D25)
@@ -280,8 +283,10 @@ useWizardTool({
 ```
 
 - `create.fill` accepts any subset of step slices, validates each against its step schema, writes to
-  parent state, and resets the mounted step form from the new data. Returns per-step `changes` and
-  per-step issues.
+  parent state, and resets the mounted step form from the new data. Returns `ok({ changes, skipped })`
+  or `invalid`, every path prefixed `<step>.`.
+- Without a mounted step adapter the wizard calls the optional `resetCurrent(values)`; the stepwise
+  fallback re-registers its step fill tool (`refresh()`) when the current step changes.
 - `create.goTo(step)`, `create.submit` (consequential). `submit` first validates every step's full
   schema; any issue → `invalid` (paths `<step>.<path>`) and no confirmation is created.
 - **Fallback:** a wizard that cannot expose parent state registers per-step `useFormTool` tools plus
@@ -294,6 +299,7 @@ useWizardTool({
   agents select real IDs.
 - Field arrays are JSON `array`s of objects; `fill` replaces an array unless given
   `{ $append: [...] }` or `{ $remove: [indexes] }`.
+- Option and file field keys are dot paths; `[]` denotes any array index (`sponsors[].memberId`).
 
 ### 8.4 Files (D27)
 
@@ -303,7 +309,7 @@ useWizardTool({
 - `{ url }` is **disabled by default**; enabling requires `files.allowOrigins` (exact origins; `'*'`
   is a misconfiguration). Only `https:` URLs (or `http:` on `localhost`/`127.0.0.1`) without
   userinfo are fetched, with `credentials: 'omit'`, `redirect: 'error'`, `referrerPolicy:
-  'no-referrer'`, `cache: 'no-store'` and a timeout.
+  'no-referrer'`, `cache: 'no-store'` and a timeout (`files.timeoutMs`, default 30000 ms).
 - Size/MIME limits apply to every resolved file (`ref` or `url`); a field limit can only narrow the
   global one. Violations → `refused` `file_rejected`. File values appear in `changes`/results as
   JSON-safe `{ file: { name, size, type } }`.
@@ -327,7 +333,9 @@ useWizardTool({
 - `inertiaAdapter(form, { submit: { method, url }, elementFor? })` wraps `useForm`.
 - `inertiaPages({ router, initialPage, propsKey? })`: a page scope per visit, disposed on navigation
   (D23); registers server-declared tools from the `toolmark` props key (§12.4). Malformed entries
-  are skipped with an `error` event, never thrown.
+  are skipped with an `error` event, never thrown. A props entry whose `visit.method` is not `get`
+  is at least `consequential` (a `destructive` hint is kept, `readOnly` is dropped); a name
+  collision is skipped with a `duplicate_name` event, never thrown.
 - `navigationTool({ routes, visit })`: routes are `(params) => { url, method }` functions (Wayfinder
   or Ziggy). **GET only**: a route with another method → `refused` `navigation_failed` (mutations
   are server-declared tools). Returns `ok` before the page scope is disposed; a `changed` message
@@ -345,7 +353,7 @@ useWizardTool({
   `<iframe>` and `<template>` are never scanned (§14).
 - Schema synthesis: text/email/url/tel (format, length, pattern), number/range (type from `step`,
   min/max/multipleOf), date/time/datetime-local (format, min/max), checkbox (boolean / array enum),
-  radio/select (enum with titles), `select[multiple]` (array, uniqueItems), `fieldset[name]` (nested
+  radio/select (enum; option titles listed in the `description`), `select[multiple]` (array, uniqueItems), `fieldset[name]` (nested
   object), file (FileRef, accept, size), `required`, `value` (default). Hidden, password, `cc-*`,
   disabled and `data-tool-ignore` controls are excluded from schemas, values and `changes`, and are
   never written.
@@ -372,7 +380,8 @@ useWizardTool({
 
 ### 11.2 WebMCP (`@toolmark/core/webmcp`, **experimental**, D28)
 
-- `tm.use(webmcp({ polyfill?, filter?, exposedTo? }))`, `polyfill: 'none' | (() => Promise<PolyfillModule>)`
+- `tm.use(webmcp({ polyfill?, filter?, exposedTo?, modelContext? }))` (`modelContext` is an
+  advanced injection point, default `document.modelContext ?? navigator.modelContext`), `polyfill: 'none' | (() => Promise<PolyfillModule>)`
   (default `'none'`; e.g. `polyfill: () => import('@mcp-b/webmcp-polyfill')`, so bundlers never
   resolve the optional peer unless the app opts in).
 - Registers visible tools via `document.modelContext.registerTool()` (one `AbortSignal` each), maps
@@ -402,7 +411,10 @@ useWizardTool({
 - **Pairing.** While no page is paired, `tools/list` returns exactly one read-only tool
   `toolmark_pairing` whose result shows the current one-time pairing code and how to enter it in the
   app; the code is also printed to stderr. The page side,
-  `tm.use(mcpPairing({ code, port? }))` (the code comes from the app's pairing UI), connects to
+  `tm.use(mcpPairing({ code?, port?, onStatus? }))` (the code comes from the app's pairing UI;
+  without a code the page resumes from its stored session token, and is inert when it has none;
+  `onStatus` reports `connecting` / `paired` / `rejected` / `superseded` / `disconnected` /
+  `unreachable`), connects to
   `ws://127.0.0.1:<port>`. A correct code is consumed, a fresh code is issued, and the page receives a
   **session token** (kept in `sessionStorage`) that it uses to resume on reconnect and reload without
   a new code. A newer pairing supersedes the old page: its socket is closed with a terminal close
@@ -503,6 +515,8 @@ builder. Reusable extraction, if ever needed, goes to its **own** repo (`toolmar
 
 - `anchors`: supplied automatically by form adapters; `useToolAnchor` for custom widgets;
   `tm.anchor(tool, param?)` → `Element | null` (SVG and custom elements included).
+  `AnchorSpec` = `{ element?, params?, resolve?(param) }`; `tm.anchor` precedence: `setAnchor`
+  override → `params[param]` → `resolve(param)` → `null`.
 - `state`: `tm.state(tool)` → `{ values, issues, step? }` without side effects.
 - Interaction events `{ tool, param?, kind: 'input' | 'focus' | 'submit', caller: 'human' }` are
   emitted only for user-originated changes.
@@ -637,8 +651,8 @@ npm before M5. No exit check depends on another repository.
 | --- | --- | --- |
 | M1 · Core | §5–§7, protocol v1, bridge + all transports, React (`useTool`, `useFormTool`, confirm hooks), RHF + Inertia adapters, testing basics | `round-budget.spec.ts` › `simple_form_within_3_rounds` green; CI green; tarball smoke passes |
 | M2 · Forms complete | wizard, async options, arrays, files, undo, DOM adapter incl. Inertia `<Form>`, navigation, props-declared tools | `round-budget.spec.ts` › `wizard_within_5_rounds` green; tarball smoke passes |
-| M3 · Reach | WebMCP (experimental), `@toolmark/mcp`, OTel, tour hooks | One example tool declaration driven by a WebMCP agent (polyfill), a desktop MCP client (SDK client via `toolmark-mcp`) and the Playwright fixture; tarball smoke passes (incl. `toolmark-mcp` bin) |
-| M4 · Tours & tooling | `@toolmark/tour`, lint + TypeSafe judge, docs site, examples incl. Next.js | Authored and agent-planned tours e2e green in `examples/react-vite` on Chromium/Firefox/WebKit; an authored tour runs in `examples/inertia-laravel`; `same-tools.spec.ts` green; tarball smoke passes |
+| M3 · Reach | WebMCP (experimental), `@toolmark/mcp`, OTel, tour hooks | One example tool declaration driven by a WebMCP agent (polyfill), a desktop MCP client (SDK client via `toolmark-mcp`) and the Playwright fixture (`e2e/reach.spec.ts`); tarball smoke passes (incl. `toolmark-mcp` bin) |
+| M4 · Tours & tooling | `@toolmark/tour`, lint + TypeSafe judge, docs site, examples incl. Next.js | Authored and agent-planned tours e2e green in `examples/react-vite` on Chromium/Firefox/WebKit (axe-clean); an authored tour runs in `examples/inertia-laravel`; `same-tools.spec.ts` green; the Laravel and Next.js example suites green; `pnpm docs:build` passes; `toolmark lint` exits 0 on every example; tarball smoke passes |
 | M5 · Release | §21 gates, security review, publish `1.0` | All gates green; publish is owner-confirmed |
 
 ## 21. Release gates (definition of done for `1.0`)
@@ -658,7 +672,9 @@ npm before M5. No exit check depends on another repository.
   deprecation policy published (docs site deployed once the repo is public).
 - **In-repo release-candidate evidence:** on the release-candidate tarballs, the tarball smoke test
   passes and the round-budget e2e (`docs/release/round-budget.md`, regenerated) meets success
-  criterion 1; `same-tools.spec.ts` and the tours e2e are green.
+  criterion 1; `same-tools.spec.ts` and the tours e2e are green. The round-budget, same-tools and
+  tours e2e run against the built release-candidate packages (`TOOLMARK_DIST=1` disables the
+  `@toolmark/source` condition in `examples/react-vite`).
 - WebMCP WPT suites are informational (spec-watch), not a gate; the adapter's own WebMCP suites on
   Chromium gate.
 - Post-release: a weekly **spec-watch** CI job runs the WebMCP WPT suites and checks Chrome's
@@ -675,6 +691,10 @@ npm before M5. No exit check depends on another repository.
   the eight packages, and revoke the token (§17).
 - GitHub Actions budget for the private-repo CI matrix (or self-hosted runners) until the repo is
   public.
+- Set the repository variable `TOOLMARK_PUBLISH_ENABLED=true` only after `npm-release` exists with
+  the owner as the only reviewer (the publish job is skipped without it); enable Dependabot alerts
+  and secret scanning with push protection; after trusted publishing is configured, optionally set
+  each package to "Require two-factor authentication and disallow tokens".
 
 ## 23. Implementation rulings
 
@@ -690,20 +710,20 @@ Where one amends a section above, that section has been updated to match.
 | **Agent-set tracking**: a dirty field is user-edited unless its value equals what the agent last set. | M1 rulings, T6 |
 | The inline **confirm queue lives in core** (`createConfirmQueue`); `useConfirmQueue(queue)` only subscribes. | M1 rulings, T5, T11 |
 | **Transparent scopes** (`{ transparent: true }`) group tools without prefixing names. | M2 rulings, T1 |
-| Tool **`origin`** field (`'code' \| 'native-form' \| 'dom' \| 'server'`), not in the manifest. | M2 rulings, T1; M3 T2 |
+| Tool **`origin`** field (`'code' \| 'native-form' \| 'dom' \| 'server'`), not in the manifest. | M2 rulings, T1; M3 T3 |
 | `inertiaPages` (with props-declared tools and navigation) ships in **M2**; M1 ships `inertiaAdapter`. | M1 rulings; M2 T8 |
 | **Lint reads manifests, not source** (`--manifest`, `--url`). | M4 rulings, T3 |
 | Dev-only **tool budget**: `ToolmarkOptions.budget` (default 40) emits `tool_budget_exceeded` in `dev` only. | M1 constraints, T4 |
-| **FormAdapter** members are `getValues`, `setValues(values, { source })`, `dirtyPaths()`, `submit()`, `fields()`, optional `onUserInteraction` (§8.1 amended; `dirtyFields`/`validate?`/`reset` dropped). | M1 T6; M3 T1 |
+| **FormAdapter** members are `getValues`, `setValues(values, { source })`, `dirtyPaths()`, `submit()`, `fields()`, optional `onUserInteraction` (§8.1 amended; `dirtyFields`/`validate?`/`reset` dropped). | M1 T6; M3 T2 |
 | `tm.manifest` has no `scope` option and `tm.scope` has no `parent` option; nesting is via `scope.scope()` (§5 amended). | M1 T4 |
-| **MCP era routing uses the SDK**: `serveStdio(factory, { legacy: 'serve' })` from `@modelcontextprotocol/server/stdio` (2.1.0, verified) selects the era; Toolmark writes no era router or legacy handler; `server/discover` advertises only `2026-07-28`, legacy clients negotiate via `initialize` (D31, §11.3 amended; supersedes the earlier hand-written router). | M3 rulings, T3 |
+| **MCP era routing uses the SDK**: `serveStdio(factory, { legacy: 'serve' })` from `@modelcontextprotocol/server/stdio` (2.1.0, verified) selects the era; Toolmark writes no era router or legacy handler; `server/discover` advertises only `2026-07-28`, legacy clients negotiate via `initialize` (D31, §11.3 amended; supersedes the earlier hand-written router). | M3 rulings, T4 |
 | **Node floor `>=22.12`** (global `WebSocket`); CI matrix Node 22.x and 24.x. | Overview constraints; M1 T1; M5 constraints |
 | **Tarball hand-off**: each milestone packs `-next` versioned tarballs (`pnpm -r --filter "./packages/*" pack --pack-destination "$PWD/dist-tarballs"`) and verifies them with `scripts/tarball-smoke.mjs` (created in M1 T16); nothing is published before M5; handing tarballs to any consumer is an optional courtesy, not a gate (header, D32, §19, §20 amended; supersedes "Tarball consumption"). | Overview; final lane of M1–M4; M5 T7 |
 | **Confirm rule**: `missing_confirm_handler` only when no allowed caller has a confirmation path; inline callers without a handler don't see the tool (§7, D7 amended). | M1 constraints, T4, T5 |
-| **Release independence (R1)**: `1.0` depends on no consumer repo. SC1 is proven by the round-budget e2e (scripted agent, no LLM; round = one agent turn issuing ≥ 1 tool call), SC2 by `same-tools.spec.ts`, packaging by the tarball smoke test, tours by authored + agent-planned e2e on three browsers. Innovation adoption, its baseline and before/after measurement are a post-1.0 consumer track (header, §1, D3, D32, §15, §18–§21 amended). | Overview; M1 T15–T16; M2 T10; M3 T6; M4 T5, T8; M5 T7 |
-| **MCP pairing (R3)**: unpaired, the server lists only `toolmark_pairing` (result shows the code; code also on stderr); a correct code is consumed and re-issued and the page gets a session token for resume/reload; a newer pairing supersedes the old page with a terminal close code (no reconnect loop); call deadline (`--call-timeout`, default `600000`) or MCP cancellation sends protocol `cancel` to the page. `mcpPairing({ code, port? })` (§11.3, §14 amended). | M3 T3, T4 |
-| **MCP tool mapping**: MCP `name` = `llmName`; annotations always carry explicit `readOnlyHint`/`destructiveHint`; `untrustedContent` propagates as description note + result prefix + `_meta['toolmark/untrustedContent']` (§11.3, §14 amended). | M3 T3 |
-| **Versioning and publishing (R4)**: packages start at `0.0.0`; pre mode `next` for milestones; a `major` changeset for all 8 before the RC → `1.0.0`; one `fixed` group; owner bootstrap publish with a short-lived granular token, then trusted publishing (OIDC) per package and token revoked; publish job on Node 24 behind the owner-approved `npm-release` environment (§17, §21, §22 amended). | M1 T1, T16; M3 T1; M4 T0; M5 T7 |
+| **Release independence (R1)**: `1.0` depends on no consumer repo. SC1 is proven by the round-budget e2e (scripted agent, no LLM; round = one agent turn issuing ≥ 1 tool call), SC2 by `same-tools.spec.ts`, packaging by the tarball smoke test, tours by authored + agent-planned e2e on three browsers. Innovation adoption, its baseline and before/after measurement are a post-1.0 consumer track (header, §1, D3, D32, §15, §18–§21 amended). | Overview; M1 T15–T16; M2 T10; M3 T7; M4 T5, T8; M5 T7b |
+| **MCP pairing (R3)**: unpaired, the server lists only `toolmark_pairing` (result shows the code; code also on stderr); a correct code is consumed and re-issued and the page gets a session token for resume/reload; a newer pairing supersedes the old page with a terminal close code (no reconnect loop); call deadline (`--call-timeout`, default `600000`) or MCP cancellation sends protocol `cancel` to the page. `mcpPairing({ code?, port?, onStatus? })` (§11.3, §14 amended; see "M3 pass-2 API additions"). | M3 T4, T5 |
+| **MCP tool mapping**: MCP `name` = `llmName`; annotations always carry explicit `readOnlyHint`/`destructiveHint`; `untrustedContent` propagates as description note + result prefix + `_meta['toolmark/untrustedContent']` (§11.3, §14 amended). | M3 T4 |
+| **Versioning and publishing (R4)**: packages start at `0.0.0`; pre mode `next` for milestones; a `major` changeset for all 8 before the RC → `1.0.0`; one `fixed` group; owner bootstrap publish with a short-lived granular token, then trusted publishing (OIDC) per package and token revoked; publish job on Node 24 behind the owner-approved `npm-release` environment (§17, §21, §22 amended). | M1 T1, T16; M3 T1; M4 T0; M5 T7a–T7c |
 | **Doc comments (R5)**: every task that adds a public export writes its TSDoc in the same task (from M1); TypeDoc runs non-strict (`notDocumented` off) through M4; M5 turns `notDocumented` on as an error after a gap-fill task (§21 amended). | Overview constraints; M4 T7; M5 T3 |
 | **CI matrix (R6)**: React 18.3 × Inertia 3 excluded (Inertia 3 requires React 19); the zod 3 axis runs only the converter-specific tests; installed `zod` stays 4.x elsewhere (§21 amended). | M1 T16; M5 T1 |
 | **Root scripts (R7)**: root `build`/`typecheck`/`lint` cover `packages/*` only; examples run their own scripts in dedicated CI jobs; ESLint ignores examples' build output (`.next/`, `vendor/`, `public/build/`, `dist/`). | Overview constraints; M1 T1; M4 T0 |
@@ -712,9 +732,9 @@ Where one amends a section above, that section has been updated to match.
 | **`ctx.confirm`** takes `{ summary, changes? }`: `human` → approved; inline → awaits the handler; deferred or no handler → `{ approved: false, reason: 'confirmation_unavailable' }` + dev event `ctx_confirm_unavailable`. **`ctx.registerUndo(restore)`** stores a restorer under `callId` for `tm.undo` (§5 amended). | M1 T2, T5 |
 | **Confirm modes**: only `inapp`/`test` modes are configurable; `webmcp`, `mcp`, `tour` are always inline (`invalid_confirm_mode` otherwise), so they never see `needs_confirmation`; `createTestToolmark` keeps production modes with a default-approve inline handler. A `confirmId` is single-use (§7, §11.6 amended). | M1 T4, T5, T14 |
 | **Policy semantics**: `policy[c].allow` replaces caller `c`'s default hint classes; unlisted callers keep defaults; `human` is fixed; `policy[c].tools` allow/deny by full name or `prefix.*` (deny wins); no-caller `manifest()`/`describe()` is unfiltered. Default exposure also includes `test` and `human` for consequential/destructive (§7 amended). | M1 constraints, T4 |
-| **Plan signatures supersede spec text**: `useConfirmQueue(queue)` (no `confirm`), `inertiaAdapter(form, { submit, elementFor? })`, `inertiaPages({ router, initialPage, propsKey? })`, `mcpPairing({ code, port? })`, `webmcp({ polyfill?, filter?, exposedTo? })` (§9, §10.1, §11.2, §11.3 amended). | M1 T11, T13; M2 T8; M3 T2, T4 |
-| **WebMCP polyfill is an app-supplied loader** (`polyfill: 'none' \| () => import('@mcp-b/webmcp-polyfill')`, default `'none'`) so bundlers never resolve the optional peer implicitly; `execute` resolves the result object; WPT suites are informational, the adapter's own Chromium suites gate (§11.2, §18, §21 amended). | M3 T2, T6; M5 T6 |
-| **`tm.info(name)`** → `{ origin, nativeName? }` (not in the manifest); native declarative forms set `nativeName` so the WebMCP adapter skips tools the browser already exposes (§5, §11.2 amended). | M2 T1, T6; M3 T2 |
+| **Plan signatures supersede spec text**: `useConfirmQueue(queue)` (no `confirm`), `inertiaAdapter(form, { submit, elementFor? })`, `inertiaPages({ router, initialPage, propsKey? })`, `mcpPairing({ code?, port?, onStatus? })`, `webmcp({ polyfill?, filter?, exposedTo?, modelContext? })` (§9, §10.1, §11.2, §11.3 amended). | M1 T11, T13; M2 T8; M3 T3, T5 |
+| **WebMCP polyfill is an app-supplied loader** (`polyfill: 'none' \| () => import('@mcp-b/webmcp-polyfill')`, default `'none'`) so bundlers never resolve the optional peer implicitly; `execute` resolves the result object; WPT suites are informational, the adapter's own Chromium suites gate (§11.2, §18, §21 amended). | M3 T3, T7; M5 T6 |
+| **`tm.info(name)`** → `{ origin, nativeName?, sensitivePaths }` (not in the manifest; `sensitivePaths` added in M3, default `[]`); native declarative forms set `nativeName` so the WebMCP adapter skips tools the browser already exposes (§5, §11.2 amended). | M2 T1, T6; M3 T1, T3 |
 | **DOM rules**: dirty = differs from the load snapshot and not the agent-set value, or touched by a trusted user event (`reset` re-snapshots); subtrees under `data-tool-ignore`/`contenteditable`/`iframe`/`template` are not scanned; hidden/password/`cc-*`/disabled controls are excluded; a submitting button is consequential (§10.2, §14 amended). | M2 T5, T6 |
 | **Navigation is GET-only**; mutations are server-declared tools; malformed props entries are skipped with an `error` event (§10.1 amended). | M2 T8 |
 | **Wizard submit validates every step** before creating a confirmation (§8.2 amended). | M2 T4 |
@@ -723,3 +743,13 @@ Where one amends a section above, that section has been updated to match.
 | **Testing entries**: `@toolmark/testing/vitest` exports `createTestToolmark` without importing Playwright (the `@playwright/test` peer is optional); the test hook rejects caller `human` and is installed only outside production builds (§4, §11.6 amended). | M1 T1, T14, T15 |
 | **Source condition is `@toolmark/source`** (package-unique, internal, outside semver) so consumers that set a generic `source` condition never compile Toolmark's `.ts`; packages keep shipping `src` so the condition's targets exist. | Overview constraints; M1 T1 |
 | **Security hardening from the plan audit**: untrusted field paths (`__proto__`/`prototype`/`constructor`, undeclared paths) rejected; sensitive-field redaction in fill results and confirmation payloads; abort grace period releases scope queues; bounded inbound message size; file URL fetch restricted to `https:` without userinfo, `redirect: 'error'`, no referrer, timeout; limits apply to `ref` files too (§8.4, §14 amended). | M1 T5, T6, T8; M2 T3 |
+| **Release gating (M5)**: publish job runs only from environment `npm-release` with repo variable `TOOLMARK_PUBLISH_ENABLED`, refuses pre mode and prerelease versions (`check-release-versions --stable`); size budgets use gzip; security review has 14 checklist items checked by `check-security-review.mjs`; RC evidence runs on built `dist` via `TOOLMARK_DIST=1` (one switch in one example config, not a permanent CI job) (§21, §22 amended). | M5 T2, T4, T7a, T7b |
+| **Server-declared mutations confirm**: props tools with a non-GET visit are at least `consequential`; collisions are events, never thrown; visits settle through per-visit callbacks (`finish` alone is an `error`) using the `visit-outcome` mapping that M1 creates for `inertiaAdapter` and M2's props tools reuse (§10.1 amended). | M1 T13; M2 T8 |
+| **Policy options**: `policy[c].allow` is optional (omitted → defaults kept, `tools` still filters); `policy.human` or an unknown hint class → `invalid_policy` (dev throw / prod event) (§7). | M1 T4 |
+| **Inertia adapter outcomes**: `inertiaAdapter.submit` settles on per-visit callbacks (`onSuccess` → `ok`; `onError` → `invalid`; `onHttpException`/`onInvalid` → `error` "Request failed"; `onNetworkError`/`onException` → `error` "Network error"; cancelled/interrupted → `cancelled`; a finish with no outcome → `error` "Visit did not complete") and submits the adapter's latest values via `form.transform`. The mapping lives in `@toolmark/inertia`'s internal `visit-outcome.ts` (M1); `InertiaVisitCallbacks` carries both the v2 and v3 callback names (§10.1). | M1 T13; M2 T8 |
+| **WebSocket transport hooks**: `websocketTransport` takes `terminalCloseCodes` (close codes that stop reconnecting), `onOpen(socket, { receive(timeoutMs?) })` (frames during `onOpen` go to `receive`, never the bridge) and `onStatus` (`connecting` / `open` / `closed` with `closeCode` and `firstConnectFailed` / `stopped`); all land in M1, and MCP pairing only consumes them (§11.1, §11.3). | M1 T9; M3 T5 |
+| **M1 pass-2 API**: `FormToolOptions.sensitive?: string[]` and `FieldInfo.sensitive?: boolean` (with `FieldInfo.element?: Element \| null`) drive redaction everywhere; `ToolmarkOptions.abortGraceMs` (default 5000); `BridgeOptions.maxMessageBytes` (default 1048576); an aborted or expired inline `ctx.confirm` resolves `{ approved: false, reason: 'signal' \| 'expired' }` (§5, §14). | M1 T4–T6, T8 |
+| **M2 pass-2 contract rulings**: the fill manifest schema inserts array-op branches and `fileFieldSchema` after `stripRequired`; `fromJsonSchema` implements Standard JSON Schema (draft 2020-12 only); a `{ ref }` with no `files.resolve` → `refused` `file_rejected` + dev event `files_not_configured` (M1 threw a `ToolmarkError`); DOM select/radio titles are `enum` + `"Options: <value> = <label>; …"` in `description` (no custom keyword); wizard fill returns `ok({ changes, skipped })` / `invalid` with `<step>.<path>` paths; `resetCurrent(values)` for parent-state wizards without a step adapter; stepwise wizards `refresh()` their step fill tool; disabled/hidden DOM buttons → `refused` `not_allowed`; table `limit` above 500 is clamped; option/file keys use `[]` for any array index (§8.2–§8.4, §10.2 amended). | M2 T1–T7 |
+| **M3 pass-2 API additions**: `AnchorSpec.resolve`, `ToolDefinition.sensitivePaths` / `tm.info().sensitivePaths`, `mcpPairing({ code?, port?, onStatus? })`, `webmcp({ modelContext? })`, `rhfAdapter(form, { root? })`, `BridgeOptions.caller: 'inapp' \| 'mcp'`; pairing close codes 4400/4401/4408/4409 terminal, 4429/1001 transient; unpaired grace 2000 ms; `toolmark_pairing` callable any time; `--port 0` allowed; a page reload fails pending MCP calls with an unknown-outcome `error` (§5, §11.3, §13 amended). | M3 T1, T2, T3, T5 |
+| **M4 pass-2 rulings**: the tour `confirming` status is engine-driven (the whole in-flight `do` call of a consequential/destructive tool); TypeSafe judge findings are `warn` unless `strictHints`; `@toolmark/judge-typesafe` exports `"."` with a `node` condition only; `toolmark lint --judge` executes the named module (documented) (§4, §11.5). | M4 T1, T3, T4 |
+| **Pass-3 consistency rulings**: the round-budget e2e runs on Chromium only (its report is one row per task; other example specs run on three browsers); the zod 3 axis runs tests whose names contain `zod3` (`vitest run --project core-node -t zod3`); the docs deploy workflow is M4's `docs-deploy.yml` (M5 hardens it, never adds a second one); TypeDoc strict validation becomes the default in M5 (`typedoc.config.mjs`) (§18, §21). | M1 T3; M4 T7, T8; M5 T1, T3, T3b, T7b |

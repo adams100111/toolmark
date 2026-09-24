@@ -16,8 +16,8 @@ executors read both.
 | --- | --- | --- | --- |
 | M1 | `2026-09-24-toolmark-m1-core.md` | workspace, core registry/policy/confirm/forms core, protocol v1, bridge + 4 transports, React + RHF, Inertia `useForm` adapter, testing basics, example + round-budget e2e, CI, tarball smoke script | `round-budget.spec.ts` › `simple_form_within_3_rounds` green; CI green; tarball smoke passes |
 | M2 | `2026-09-24-toolmark-m2-forms.md` | wizard, async options, arrays, files, DOM scanner + DOM adapter (incl. Inertia `<Form>`), `inertiaPages`, navigation, props-declared tools | `round-budget.spec.ts` › `wizard_within_5_rounds` green; tarball smoke passes |
-| M3 | `2026-09-24-toolmark-m3-reach.md` | WebMCP (experimental), `@toolmark/mcp`, OTel, tour hooks | one example tool declaration driven via WebMCP (polyfill), a desktop MCP client (SDK client via `toolmark-mcp`) and the Playwright fixture; tarball smoke passes (incl. `toolmark-mcp` bin) |
-| M4 | `2026-09-24-toolmark-m4-tours-tooling.md` | `@toolmark/tour`, lint + TypeSafe judge, docs site, examples (inertia-laravel, nextjs), same-tools e2e | authored + agent-planned tours e2e in `examples/react-vite` on Chromium/Firefox/WebKit; authored tour in `examples/inertia-laravel`; `same-tools.spec.ts` green; tarball smoke passes |
+| M3 | `2026-09-24-toolmark-m3-reach.md` | WebMCP (experimental), `@toolmark/mcp`, OTel, tour hooks | one example tool declaration driven via WebMCP (polyfill), a desktop MCP client (SDK client via `toolmark-mcp`) and the Playwright fixture (`e2e/reach.spec.ts`); tarball smoke passes (incl. `toolmark-mcp` bin) |
+| M4 | `2026-09-24-toolmark-m4-tours-tooling.md` | `@toolmark/tour`, lint + TypeSafe judge, docs site, examples (inertia-laravel, nextjs), same-tools e2e | authored + agent-planned tours e2e in `examples/react-vite` on Chromium/Firefox/WebKit (axe-clean); authored tour in `examples/inertia-laravel`; `same-tools.spec.ts` green; Laravel + Next.js example suites green; `pnpm docs:build`; `toolmark lint` clean on every example; tarball smoke passes |
 | M5 | `2026-09-24-toolmark-m5-release.md` | release gates §21, docs gap-fill, package metadata, security review, spec-watch, publish `1.0` | all §21 gates green (incl. round budget + tarball smoke on the RC); publish is owner-confirmed |
 
 **Release independence.** Toolmark 1.0 depends on no other repository. Innovation adoption (spec
@@ -31,7 +31,8 @@ never edit Innovation and no Toolmark exit check or gate waits on it.
   confirmation is not a round. Both tests assert zero `invalid`/`refused` results. With
   `ROUND_BUDGET_REPORT=<file>` set the spec writes a JSON report (`{ task, rounds, messages,
   manifestBytes, describeBytes, wallMs }`); the milestone's final lane renders it into
-  `docs/release/round-budget.md`. M5 Task 7 regenerates it on the release candidate.
+  `docs/release/round-budget.md` with `scripts/render-round-budget.mjs` (M1 T16). The spec runs on
+  Chromium only (one report row per task). M5 Task 7b regenerates it on the release candidate.
 - **Success criterion 2 in-repo:** `examples/react-vite/e2e/same-tools.spec.ts` (M4 T8) drives one
   tool declaration through the in-app bridge, WebMCP, MCP, a `do`-mode tour step and the Playwright
   fixture, with identical `ok` data.
@@ -46,6 +47,8 @@ never edit Innovation and no Toolmark exit check or gate waits on it.
   Handing tarballs to a consumer is an optional courtesy (documented recipe in `next-tarballs.md`),
   never a gate.
 - **Hosting:** the private GitHub repo `adams100111/toolmark` exists before M1 Task 16 (CI).
+- **RC evidence on built packages:** M5 runs the RC round-budget, same-tools and tours e2e with
+  `TOOLMARK_DIST=1` (the example resolves built `dist` instead of `@toolmark/source`).
 
 ## Global constraints (apply to every milestone plan)
 
@@ -103,7 +106,9 @@ never edit Innovation and no Toolmark exit check or gate waits on it.
   `docs/api/**`, `docs/.vitepress/{cache,dist}/**`, `**/test-results/**`, `**/playwright-report/**`.
 - **TSDoc with every export:** every task that adds a public export writes its TSDoc comment in the
   same task (from M1); reviewers reject undocumented exports. TypeDoc runs with `notDocumented` off
-  through M4; M5 turns it on as an error after a gap-fill task.
+  through M4; M5 turns it on as an error after a gap-fill task. M4 adds root script `docs:api:strict`
+  (`TYPEDOC_STRICT=1`, turns on `notDocumented` and `notExported`); M5 gates on it and makes strict
+  the default in `typedoc.config.mjs`.
 - **Confirmation modes:** `inapp`/`test` configurable (default deferred); `webmcp`, `mcp`, `tour` are
   always inline, so those consumers never receive `needs_confirmation`. `createTestToolmark`
   keeps production modes with a default-approve inline handler.
@@ -127,6 +132,9 @@ never edit Innovation and no Toolmark exit check or gate waits on it.
 | tsdown | 0.23.0 |
 | vitest · @vitest/browser · @vitest/browser-playwright | 5.0.1 |
 | @playwright/test | 1.63.0 |
+| playwright | 1.63.0 (peer of @vitest/browser-playwright; same as @playwright/test; M1 catalog) |
+| @testing-library/dom | pin at M1 start (peer ^10 of @testing-library/react) |
+| @eslint/js | pin at M1 start |
 | vite · @vitejs/plugin-react | 8.3.1 · 6.1.1 |
 | eslint · typescript-eslint · prettier | 10.11.0 · 8.70.1 · 3.9.9 |
 | @changesets/cli | 3.0.3 |
@@ -137,6 +145,7 @@ never edit Innovation and no Toolmark exit check or gate waits on it.
 | react-hook-form | 7.88.0 |
 | @inertiajs/react · @inertiajs/core | 3.7.1 (tests also run 2.x) |
 | zod (dev) · zod-to-json-schema (dev) | 4.6.5 · 3.25.2 |
+| zod (M5 zod 3 CI axis only) | 3.25.76 |
 | laravel-echo · pusher-js (dev) | 2.5.0 · 8.6.0 |
 | ws · @types/ws | 8.21.3 · 8.18.1 |
 | @modelcontextprotocol/server · @modelcontextprotocol/client (dev/e2e) | 2.1.0 · 2.1.0 |
@@ -149,6 +158,7 @@ never edit Innovation and no Toolmark exit check or gate waits on it.
 | axe-core · @axe-core/playwright | 4.13.0 · 4.13.0 |
 | laravel-vite-plugin · @laravel/vite-plugin-wayfinder | 3.2.0 · 0.1.10 |
 | @changesets/changelog-github | 1.0.1 |
+| yaml (root dev, M5 `check-workflows`) | 2.9.1 |
 | tsx · @types/node | pin at M1 start (`npm view`) · 22.x |
 | next (example) | 16.3.6 |
 
@@ -164,17 +174,41 @@ Names every milestone relies on. A later plan may add names; it never renames th
 | `ToolManifest`, `ToolManifestSummary` | core `src/manifest.ts` | M1 |
 | `FormAdapter` (`getValues`, `setValues`, `dirtyPaths`, `submit`, `fields`; `onUserInteraction?` added M3), `createFormTools`, `FormToolOptions`, `FieldInfo` | core `src/forms/*.ts` | M1 |
 | `ProtocolMessage` + `validateMessage` | core `src/protocol/*` | M1 |
-| `bridge`, `BridgeTransport`, `echoTransport`, `websocketTransport`, `postMessageTransport`, `createInPageChannel` | core `src/bridge/*` | M1 |
+| `bridge`, `BridgeTransport`, `echoTransport`, `websocketTransport` (with `terminalCloseCodes`, `onOpen(socket, { receive(timeoutMs?) })`, `onStatus`), `postMessageTransport`, `createInPageChannel` | core `src/bridge/*` | M1 |
 | `ToolmarkProvider`, `useToolmark`, `useTool`, `ToolScope`, `useFormTool`, `useConfirmQueue`, `usePendingConfirmations`, `useAgentActivity` | react | M1 |
 | `rhfAdapter` | react `/rhf` | M1 |
-| `inertiaAdapter` | inertia | M1 |
+| `inertiaAdapter`, `InertiaFormLike`, `InertiaVisitCallbacks` (v2 + v3 callback names); internal `visit-outcome.ts` mapping (reused by M2 props tools) | inertia | M1 |
 | `createConfirmQueue`, `ConfirmQueue`, `PendingConfirmation`, `ToolmarkError` | core | M1 |
 | `installTestHook`, `globalThis.__toolmark_test__` hook shape | testing `/page` | M1 |
 | `createTestRegistry` (test helper, not exported) | core `test/helpers/create-test-registry.ts` | M1 |
-| `test`, `expect`, `createTestToolmark` (also `@toolmark/testing/vitest`), `ToolsFixture` | testing | M1 |
-| `Toolmark`, `ToolmarkOptions`, `ConfirmRequest`, `ConfirmOutcome`, `Scope`, `Registration`, `ToolmarkEventMap`, `JsonSchema`, `JsonSchemaConverter`, `BridgeOptions`, `PageToAgentMessage`, `AgentToPageMessage`, `PROTOCOL_VERSION`, `protocolSchemas`, `useCurrentScope`, `ToolContext.registerUndo` | core / react | M1 |
-| `AnchorSpec`, `ToolState` (declared in M1 T2, behaviour in M3) | core `src/tool.ts` | M1 |
+| `test`, `expect`, `createTestToolmark` (also `@toolmark/testing/vitest`; production confirm modes, `inline: 'approve' \| 'reject' \| handler`), `ToolsFixture` | testing | M1 |
+| `Toolmark`, `ToolmarkOptions`, `ConfirmRequest`, `ConfirmOutcome`, `Scope`, `Registration`, `ToolmarkEventMap`, `JsonSchema`, `JsonSchemaConverter`, `BridgeOptions`, `PageToAgentMessage`, `AgentToPageMessage`, `PROTOCOL_VERSION`, `protocolSchemas`, `useCurrentScope`, `ToolContext.registerUndo`, `HintClass`, `CallerPolicy`, `FormToolOptions.sensitive`, `FieldInfo.sensitive`, `ToolmarkOptions.abortGraceMs`, `BridgeOptions.maxMessageBytes` | core / react | M1 |
+| `AnchorSpec` (`element?`, `params?`; `resolve?` added M3), `ToolState` (declared in M1 T2, behaviour in M3) | core `src/tool.ts` | M1 |
 | `createWizardTools`, `createStepwiseWizardTools`, `useWizardTool`, `FileRef`, `fromJsonSchema`, `scanDom`, `domFormAdapter`, `synthesizeFormSchema`, `navigationTool`, `propsTools`, `inertiaPages`, `inertiaFormComponentAdapter` | core / react / inertia | M2 |
-| `ArrayOp`, `OptionsProvider`, `FilesOptions`, `FileFieldSpec`, `fileFieldSchema`, `WizardStep`, `WizardToolOptions`, `StepwiseWizardOptions`, `RouterLike`, `PropsToolEntry`, `RouteFn`, `ToolOrigin`, `ToolDefinition.nativeName`, `tm.info` (`discoverFields` stays internal) | core / inertia | M2 |
-| `webmcp`, `otel`, `useToolAnchor`, `mcpPairing`, `tm.anchor`/`setAnchor`/`state`, `startMcpServer`, `createPairingServer`, `createServerFactory`, `PageLink`, `toMcpTool`, `toMcpResult` | core `/webmcp`, `/otel`, react, mcp (`mcpPairing` from `@toolmark/mcp/client`) | M3 |
-| `startTour`, `TourStep`, `Tour`, `Planner`, `TourMode`, `TourState`, `TourEvent`, `TourStrings`, `mountTourOverlay`, `useTour`, `lint`, `Judge`, `Finding`, `typesafeJudge` (named + default export) | tour / lint / judge-typesafe | M4 |
+| `ArrayOp`, `OptionsProvider`, `FilesOptions`, `FileFieldSpec`, `fileFieldSchema`, `WizardStep`, `WizardToolOptions`, `StepwiseWizardOptions`, `RouterLike`, `InertiaEventName`, `PropsToolEntry`, `RouteFn`, `ToolOrigin`, `ToolDefinition.origin`, `ToolDefinition.nativeName`, `ToolDefinition.mode`, `tm.info` (`{ origin, nativeName? }`; `sensitivePaths` added M3), transparent scopes, `FormToolOptions.options`/`files`, `createStepwiseWizardTools(...).refresh` (`discoverFields`, `resolveFileRef` stay internal) | core / inertia | M2 |
+| `webmcp` (`{ polyfill?, filter?, exposedTo?, modelContext? }`), `ModelContextLike`, `otel`, `useToolAnchor`, `mcpPairing` (`{ code?, port?, onStatus? }`), `McpPairingStatus`, `tm.anchor`/`setAnchor`/`state`, `tm.info().sensitivePaths`, `ToolDefinition.sensitivePaths`, `AnchorSpec.resolve`, `FormAdapter.onUserInteraction`, `rhfAdapter(form, { root? })`, `BridgeOptions.caller: 'inapp' \| 'mcp'`, `startMcpServer`, `createPairingServer`, `isAllowedUpgrade`, `createServerFactory`, `PageLink`, `toMcpTool`, `toMcpResult`, `PAIRING_TOOL_NAME` | core `/webmcp`, `/otel`, react, mcp (`mcpPairing` from `@toolmark/mcp/client`) | M3 |
+| `startTour`, `TourStep`, `Tour`, `Planner`, `TourMode`, `TourState`, `TourEvent`, `TourStrings`, `mountTourOverlay`, `useTour`, `lint`, `Judge`, `Finding`, `ManifestFile`, `typesafeJudge` (named + default export) | tour / lint / judge-typesafe | M4 |
+
+## Shared files across milestones
+
+Files an earlier milestone creates and a later one extends. Each later edit has one owning lane
+(named in that plan's lane table) and changes only what this table lists.
+
+| File / setting | M1 (creates) | M2 | M3 | M4 | M5 |
+| --- | --- | --- | --- | --- | --- |
+| `pnpm-workspace.yaml` catalog | every row of the dev-tool table (except the M5-only zod 3 axis row) incl. `playwright`, `@testing-library/dom`, `@eslint/js`, `tsx` (T1, Lane A) | — (verify versions) | — (verify versions) | — (verify versions; bump if `npm view` moved) (T0, A) | — (verify; `zod@3.25.76` is installed only inside the `zod3` job) |
+| root `vitest.config.ts` `test.projects` | `core-node`, `react`, `inertia`, `testing` (T1, A) | + `core-browser` (T1, A) | + `mcp` (T1, A) | + `tour`, `lint`, `judge-typesafe` (T0, A) | browser instances only (T1, A) |
+| root `package.json` scripts / devDeps | `build`, `typecheck`, `lint`, `test`, `format:check`; tooling devDeps (T1, A) | — | — | + `docs:api`, `docs:api:strict`, `docs:dev`, `docs:build`, `docs:preview`; docs devDeps (T0, A) | + `quality`, `size`, `test:all` (T1–T2, A), `docs:check` (controller); devDeps `publint`, `@arethetypeswrong/cli`, `size-limit`, `@size-limit/preset-small-lib`, `yaml` (T2, A) |
+| `packages/core/package.json` exports + `tsdown.config.ts` entries | `.`, `./protocol`, `./protocol/v1/*.json`, `./bridge*` (T1, A; bridge entry lines Lane B) | + `./dom` (T1, A) | + `./webmcp`, `./otel`; optional peers (T1, A) | — | metadata fields only (T2, A) |
+| `packages/core/src/index.ts` | Lane A (never re-exports the bridge) | Lane A | Lane A (T1) | — | Lane E only for security fixes |
+| `eslint.config.js` ignores | the full overview list (T1, A) | — | — | verify, append missing only (T0, A) | — |
+| `.gitignore` | T1, A | — | — | append missing (T0, A) | + `.quality/` (T2, A) |
+| `.github/workflows/ci.yml` jobs | `lint`, `typecheck`, `build`, `test` (4-cell matrix, Chromium), `types-ts7` (= tarball smoke), `e2e` (react-vite, Chromium, round-budget artifact) (T16, F) | — | — (Playwright `globalSetup` builds `@toolmark/mcp...`) | + `docs`, `example-nextjs`, `example-laravel`; `e2e` builds packages and installs 3 browsers, keeping M1's steps (T7, F) | full matrix, browser axis, `zod3`, `quality`, hardening + SHA pins, triggers (T1–T2, A) |
+| other workflows | — | — | — | `docs-deploy.yml` (T7, F) | hardens `docs-deploy.yml` (T3b, B); + `release.yml` (T7a, F), `spec-watch.yml` (T6, D), `dependabot.yml` (T1, A) |
+| `scripts/tarball-smoke.mjs` | creates (T16, F) | only if `./dom` is unhandled (T12, E) | — (bins already run) | only if non-JS export targets are unchecked (T8, F) | + second tarball-dir argument (T2, A) |
+| `scripts/render-round-budget.mjs` | creates (T16, F) | reuses | — | reuses | + `--check` budget enforcement (T7b, F) |
+| `examples/react-vite/package.json` | T1, A | — | + `@toolmark/mcp`, polyfill, OTel, MCP client (T1, A) | + `@toolmark/tour`, `@toolmark/lint`, `ws`, `@types/ws`, `@axe-core/playwright` (T0, A) | — |
+| `examples/react-vite/playwright.config.ts` | Chromium, `webServer` (T15, F) | — | + `globalSetup` (`e2e/global-setup.ts`) (T7, F) | 3 browsers; Chromium-only: `webmcp`, `mcp`, `reach`, `same-tools`, `lint-clean`, `round-budget` (T8, F) | verify projects (T1, A) |
+| `examples/react-vite/vite.config.ts` | `@toolmark/source` conditions (T15, F) | + `plain-form.html` input (T10, E) | — | — | + `TOOLMARK_DIST` switch (T2, A) |
+| `docs/release/{next-tarballs,round-budget}.md` | create (T16, F) | append / re-render (T12, E) | append (T7, F) | append / re-render (T8, F) | RC + 1.0.0 entries (T7b–T7c, F) |
+| `.changeset/` | `config.json` (T1, A); `pre.json`, `initial-release.md` (T16, F) | `m2-forms.md` (T12, E) | `m3-reach.md` (T7, F) | `m4-tours-tooling.md` (T8, F) | `release-1-0.md`, `pre exit` (T7b–T7c, F) |
