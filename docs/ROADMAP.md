@@ -52,7 +52,7 @@ its exit check passes. Task numbers refer to the unit's plan.
 
 ### T-M1 Core (toolmark)
 - [x] Wave 0 · Lane A (T1–T7, high; T6 **security**) workspace, model, schema, registry, call pipeline, form tools, protocol
-- [ ] Wave 1 · Lane B (T8–T9, high, **security**) bridge + transports (incl. WebSocket hooks for M3)
+- [x] Wave 1 · Lane B (T8–T9, high, **security**) bridge + transports (incl. WebSocket hooks for M3)
 - [ ] Wave 1 · Lane C (T10–T12) React + RHF
 - [ ] Wave 1 · Lane D (T13) Inertia adapter + visit-outcome mapping
 - [ ] Wave 1 · Lane E (T14) testing package
