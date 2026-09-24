@@ -115,7 +115,7 @@ app-supplied loader", "`tm.info`", "Anchors return `Element | null`", "Confirm m
   anchor dynamic paths; `tm.anchor` precedence is `setAnchor` override → `params[param]` →
   `resolve(param)` → `null` (no param: override → `element()` → `null`).
 - **Sensitive paths are queryable:** `ToolDefinition.sensitivePaths?: () => string[]` (set by form and
-  wizard tools from M1's `FieldInfo.sensitive` / `FormToolOptions.sensitivePaths` and the
+  wizard tools from M1's `FieldInfo.sensitive` / `FormToolOptions.sensitive` and the
   password/`cc-*` element rule) is surfaced as `tm.info(name).sensitivePaths` (`[]` by default), so
   `state()` and OTel payload redaction share one rule.
 - **`mcpPairing({ code?, port?, onStatus? })`:** `code` is optional so the app can call
@@ -135,6 +135,18 @@ app-supplied loader", "`tm.info`", "Anchors return `Element | null`", "Confirm m
 - **`@toolmark/core` is a `dependency` of `@toolmark/mcp`** (not a peer): the CLI needs it at run time
   under `npx`, and the changesets `fixed` group keeps versions aligned so the app and the client
   entry dedupe to one copy.
+
+## Rulings made while fixing (pass 3, cross-plan consistency)
+
+- The `websocketTransport` hooks (`terminalCloseCodes`, `onOpen` `receive(timeoutMs?)`, `onStatus`)
+  are M1 Task 9's; this plan consumes them and no longer edits `websocket.ts` or its test. Lane A
+  keeps the bridge `caller` widening (`'inapp' | 'mcp'`), which is new M3 behaviour.
+- The app-declared sensitive list is M1's `FormToolOptions.sensitive` (not `sensitivePaths`);
+  `ToolDefinition.sensitivePaths()` is the separate, M3-added function form and tools compute it
+  from that list, `FieldInfo.sensitive` and the password/`cc-*` element rule.
+- `rhfAdapter` keeps M1's required `opts.onSubmit`; M3 only adds `root?`.
+- The Playwright `globalSetup` file is `examples/react-vite/e2e/global-setup.ts`, created here and
+  extended by M4 T8; M3 makes no CI change.
 
 ## Review focus
 
@@ -161,7 +173,6 @@ app-supplied loader", "`tm.info`", "Anchors return `Element | null`", "Confirm m
 packages/core/src/anchors.ts                      anchor override store (tm.setAnchor)
 packages/core/src/tool.ts · registry.ts           (modify: AnchorSpec.resolve, sensitivePaths, tm.anchor/setAnchor/state, info)
 packages/core/src/bridge/bridge.ts                (modify, M1 T8 file: caller 'inapp' | 'mcp')
-packages/core/src/bridge/websocket.ts             (modify, M1 T9 file: terminalCloseCodes, onOpen receive, onStatus)
 packages/core/src/forms/{types,form-tools}.ts     (modify: onUserInteraction, anchors, state, sensitivePaths)
 packages/core/src/wizard/wizard-tools.ts          (modify, M2 T4 file: state, anchors, interaction)
 packages/core/src/dom/{form-adapter,scan,button-tools,table-tools}.ts   (modify, M2 T5/T6 files)
@@ -177,7 +188,7 @@ packages/mcp/  package.json tsconfig.json tsdown.config.ts vitest.config.ts
   src/client/index.ts                             browser entry: mcpPairing
   test/global-setup.ts  test/*.test.ts  test/helpers/{fake-link,origin-websocket}.ts
 examples/react-vite/src/{app.tsx,main.tsx,pair-mcp.tsx,telemetry.ts}  playwright.config.ts
-examples/react-vite/e2e/{reach,webmcp,mcp}.spec.ts  e2e/support/mcp-client.ts
+examples/react-vite/e2e/{reach,webmcp,mcp}.spec.ts  e2e/support/mcp-client.ts  e2e/global-setup.ts
 docs/guides/{webmcp,mcp,otel,anchors}.md  docs/release/next-tarballs.md (append)  .changeset/m3-reach.md
 ```
 
@@ -185,12 +196,12 @@ docs/guides/{webmcp,mcp,otel,anchors}.md  docs/release/next-tarballs.md (append)
 
 | Wave | Lane | Tasks | Owns files | Consumes |
 | --- | --- | --- | --- | --- |
-| 0 | A (high, security) | 1 | `packages/mcp/{package.json,tsconfig.json,tsdown.config.ts,vitest.config.ts}`, `packages/mcp/test/global-setup.ts` + the stub files `packages/mcp/src/{index,cli}.ts`, `packages/mcp/src/client/index.ts` (handed to Lane D after wave 0); `packages/core/package.json`, `packages/core/tsdown.config.ts`, stubs `core/src/webmcp/index.ts` (→ Lane C), `core/src/otel/index.ts` (→ Lane E); `core/src/tool.ts`, `core/src/registry.ts`, `core/src/anchors.ts`; **earlier-milestone files:** `core/src/bridge/bridge.ts` (M1 T8), `core/src/bridge/websocket.ts` (M1 T9), `core/test/transport-websocket.test.ts` (M1 T9); `examples/react-vite/package.json`, `pnpm-workspace.yaml`, `pnpm-lock.yaml`, root `vitest.config.ts`; tests `core/test/{anchors,bridge-caller,tool-info}.test.ts` | M1–M2 |
+| 0 | A (high, security) | 1 | `packages/mcp/{package.json,tsconfig.json,tsdown.config.ts,vitest.config.ts}`, `packages/mcp/test/global-setup.ts` + the stub files `packages/mcp/src/{index,cli}.ts`, `packages/mcp/src/client/index.ts` (handed to Lane D after wave 0); `packages/core/package.json`, `packages/core/tsdown.config.ts`, stubs `core/src/webmcp/index.ts` (→ Lane C), `core/src/otel/index.ts` (→ Lane E); `core/src/tool.ts`, `core/src/registry.ts`, `core/src/anchors.ts`; **earlier-milestone files:** `core/src/bridge/bridge.ts` (M1 T8); `examples/react-vite/package.json`, `pnpm-workspace.yaml`, `pnpm-lock.yaml`, root `vitest.config.ts`; tests `core/test/{anchors,bridge-caller,tool-info}.test.ts` | M1–M2 |
 | 1 | B (high, security) | 2 | `core/src/forms/**` (M1 T6), `core/src/wizard/wizard-tools.ts` (M2 T4), `core/src/dom/{form-adapter,scan,button-tools,table-tools}.ts` (M2 T5/T6), `react/src/rhf/**` (M1 T12), `react/src/use-tool-anchor.ts`, `react/src/index.ts`, `inertia/src/form-component.ts` (M2 T9); tests `core/test/{form-state,wizard-hooks}.test.ts`, `core/test/browser-interaction.test.ts`, `core/test/dom-anchors.test.ts`, `react/test/{use-tool-anchor,rhf-interaction}.test.tsx`, `inertia/test/form-component-interaction.test.tsx` | A |
 | 1 | C (high) | 3 | `core/src/webmcp/**`, `core/test/webmcp*.test.ts`, `core/test/browser-webmcp*.test.ts` | A |
 | 1 | D (high, security) | 4–5 | `packages/mcp/src/**`, `packages/mcp/test/**` | A |
 | 1 | E (normal) | 6 | `core/src/otel/**`, `core/test/otel.test.ts` | A |
-| 2 | F (normal) | 7 | `examples/react-vite/**` except `package.json`, `docs/guides/{webmcp,mcp,otel,anchors}.md`, `docs/release/next-tarballs.md`, `.changeset/m3-reach.md`, `.github/workflows/ci.yml` (one step, below); at the hand-off step only: the version fields of `packages/*/package.json`, `packages/*/CHANGELOG.md` and `.changeset/pre.json` rewritten by `pnpm changeset version` | A–E |
+| 2 | F (normal) | 7 | `examples/react-vite/**` except `package.json` (creates `e2e/global-setup.ts`), `docs/guides/{webmcp,mcp,otel,anchors}.md`, `docs/release/next-tarballs.md`, `.changeset/m3-reach.md`; at the hand-off step only: the version fields of `packages/*/package.json`, `packages/*/CHANGELOG.md` and `.changeset/pre.json` rewritten by `pnpm changeset version` | A–E |
 
 Wave 1 lanes may not add dependencies; every dependency is declared in Task 1.
 
@@ -199,20 +210,21 @@ milestone gate is the exit check below.
 
 ---
 
-### Task 1: Packaging, registry hooks, bridge caller and transport amendments   (Lane A, risk: high, security)
+### Task 1: Packaging, registry hooks and bridge caller   (Lane A, risk: high, security)
 
 **Files:** Create `packages/mcp/package.json`, `tsconfig.json`, `tsdown.config.ts`,
 `vitest.config.ts`, `test/global-setup.ts`, stubs `src/index.ts`, `src/cli.ts`,
 `src/client/index.ts` (`export {}`); Create stubs `packages/core/src/webmcp/index.ts`,
 `packages/core/src/otel/index.ts` (`export {}`), `core/src/anchors.ts`; Modify
 `core/src/tool.ts`, `core/src/registry.ts`, `core/src/bridge/bridge.ts`,
-`core/src/bridge/websocket.ts`, `packages/core/package.json`, `packages/core/tsdown.config.ts`,
+`packages/core/package.json`, `packages/core/tsdown.config.ts`,
 `examples/react-vite/package.json`, `pnpm-workspace.yaml`, `pnpm-lock.yaml`, root `vitest.config.ts`;
-Test `core/test/anchors.test.ts`, `core/test/tool-info.test.ts`, `core/test/bridge-caller.test.ts`,
-`core/test/transport-websocket.test.ts` (append).
+Test `core/test/anchors.test.ts`, `core/test/tool-info.test.ts`, `core/test/bridge-caller.test.ts`.
 
 **Interfaces — Consumes:** `AnchorSpec`, `ToolState` (declared in M1 T2), `tm.info` + `ToolOrigin` +
-`ToolDefinition.nativeName` (M2 T1), `websocketTransport`, `BridgeOptions` (M1 T8/T9).
+`ToolDefinition.nativeName` (M2 T1), `BridgeOptions` (M1 T8). The `websocketTransport` hooks MCP
+pairing needs (`terminalCloseCodes`, `onOpen(socket, { receive(timeoutMs?) })`, `onStatus`) already
+exist from M1 Task 9 with their tests; M3 does not modify `websocket.ts` (pass-3 ruling).
 
 **Interfaces — Produces:**
 ```ts
@@ -228,13 +240,7 @@ interface Toolmark {
   state(tool: string): ToolState<unknown> | undefined
   info(name: string): { origin: ToolOrigin; nativeName?: string; sensitivePaths: string[] } | undefined
 }
-interface BridgeOptions { transport: BridgeTransport; onChange?: 'manifest' | 'changed'; caller?: 'inapp' | 'mcp' }
-function websocketTransport(o: {
-  url: string; protocols?: string | string[]; maxDelayMs?: number
-  onOpen?: (socket: WebSocket, io: { receive(timeoutMs: number): Promise<unknown> }) => void | Promise<void>
-  terminalCloseCodes?: number[]
-  onStatus?: (s: { state: 'connecting' | 'open' | 'closed' | 'stopped'; closeCode?: number; firstConnectFailed?: boolean }) => void
-}): BridgeTransport
+interface BridgeOptions { transport: BridgeTransport; onChange?: 'manifest' | 'changed'; caller?: 'inapp' | 'mcp'; maxMessageBytes?: number }   // caller widened
 ```
 
 **Exact values:**
@@ -262,8 +268,9 @@ function websocketTransport(o: {
   `pnpm --filter "@toolmark/mcp..." build` once (`execFileSync`, `stdio: 'inherit'`, cwd = repo
   root) and fails the run on non-zero exit.
 - Root `vitest.config.ts`: append `'packages/mcp/vitest.config.ts'`.
-- `pnpm-workspace.yaml` catalog: add `@modelcontextprotocol/client: 2.1.0` (and `@types/node` if M1
-  did not already).
+- `pnpm-workspace.yaml` catalog: `@modelcontextprotocol/client` 2.1.0, `@types/node`, `ws`,
+  `@types/ws` and the OTel/WebMCP versions are already present (M1 seeded the catalog from the
+  overview table); verify only, bump through the catalog if `npm view` moved.
 - `packages/core/package.json`: exports `"./webmcp"` → `{ "@toolmark/source": "./src/webmcp/index.ts", "types": "./dist/webmcp.d.ts", "import": "./dist/webmcp.js" }`
   and `"./otel"` likewise; `peerDependencies` `@opentelemetry/api` `^1.9.0`, `@mcp-b/webmcp-polyfill`
   `^5.0.0` with `peerDependenciesMeta.<name>.optional: true`; `devDependencies`
@@ -288,13 +295,6 @@ function websocketTransport(o: {
   `manifest({ caller })` on attach and on each revision, `describe(tool, { caller })`,
   `call(…, { caller })` — so an `mcp` bridge never lists, describes or runs a tool the `mcp` caller
   may not use. Deferred-confirmation forwarding (`confirmed`) applies only to callers in deferred mode.
-- `websocketTransport` amendments (M1 T9 behaviour otherwise unchanged): while `onOpen` is pending,
-  inbound frames are delivered to `io.receive(timeoutMs)` (FIFO; rejects on timeout or close) and
-  never to bridge handlers; after `onOpen` resolves, frames go to the bridge as before. A close whose
-  code is in `terminalCloseCodes` stops the transport (no reconnect; pending and later `send`s reject
-  with `Error('transport stopped')`). `onStatus` reports `connecting`, `open` (after `onOpen`
-  resolves), `closed` (with `closeCode`; `firstConnectFailed: true` when the very first connection
-  never opened) and `stopped`.
 
 **Tests (write first):**
 - `anchors.test.ts`: `anchor_precedence` (override → params → resolve → null; no-param path),
@@ -304,11 +304,8 @@ function websocketTransport(o: {
   the destructive tool is absent from the `manifest` message, `describe` → `refused` `unknown_tool`,
   `call` → `refused` `not_allowed`; `mcp_caller_consequential_confirms_inline` (with an inline
   handler the call awaits it and returns the tool's result; no `confirmed` message).
-- `transport-websocket.test.ts` (append): `pairing_frames_not_forwarded_to_bridge`,
-  `terminal_close_code_stops_reconnect`, `non_terminal_close_reconnects`,
-  `on_status_reports_first_connect_failure`.
 
-**Task gate:** `pnpm install && pnpm exec vitest run --project core-node test/anchors.test.ts test/tool-info.test.ts test/bridge-caller.test.ts test/transport-websocket.test.ts && pnpm build`
+**Task gate:** `pnpm install && pnpm exec vitest run --project core-node test/anchors.test.ts test/tool-info.test.ts test/bridge-caller.test.ts test/transport-websocket.test.ts && pnpm build` (`transport-websocket.test.ts` is M1's, run unchanged to confirm the hooks M3 relies on)
 
 ---
 
@@ -324,18 +321,17 @@ function websocketTransport(o: {
 `inertia/test/form-component-interaction.test.tsx`.
 
 **Interfaces — Consumes:** Task 1 (`AnchorSpec.resolve`, `sensitivePaths`, `tm.anchor`/`state`);
-M1 `FieldInfo.sensitive?` and `FormToolOptions.sensitivePaths?` (M1 audit M1-19; if M1 merged other
-names, use M1's and ledger).
+M1 `FieldInfo.sensitive?` and `FormToolOptions.sensitive?` (M1 Task 6).
 
 **Interfaces — Produces:**
 ```ts
 interface FormAdapter { onUserInteraction?(cb: (e: { path: string; kind: 'input' | 'focus' | 'submit' }) => void): () => void }
-function rhfAdapter(form, o?: { elementFor?: (path: string) => HTMLElement | null; root?: () => HTMLElement | null }): FormAdapter   // + root
+function rhfAdapter<V extends FieldValues>(form: UseFormReturn<V>, opts: { onSubmit: (values: V) => unknown | Promise<unknown>; elementFor?: (path: string) => Element | null; root?: () => Element | null }): FormAdapter<V>   // M1 T12 signature + root
 function useToolAnchor(tool: string, param?: string): (el: Element | null) => void
 ```
 
 **Behaviour:**
-- **Sensitive rule:** a path is sensitive when listed in `FormToolOptions.sensitivePaths`, when its
+- **Sensitive rule:** a path is sensitive when listed in `FormToolOptions.sensitive`, when its
   `FieldInfo.sensitive` is true, or when its element is `type="password"` or has `autocomplete`
   starting with `cc-`. Form and wizard tools set `sensitivePaths` from this rule.
 - **Form tools** set `anchors`: on `<name>.fill`, `resolve(path)` → that field's `element` from
@@ -365,7 +361,7 @@ function useToolAnchor(tool: string, param?: string): (el: Element | null) => vo
 
 **Tests (write first):**
 - `form-state.test.ts`: `state_for_form`, `state_omits_password_and_cc` (elements),
-  `state_omits_sensitive_without_elements` (`sensitivePaths` only), `state_async_schema_returns_last_issues`,
+  `state_omits_sensitive_without_elements` (`FormToolOptions.sensitive` only), `state_async_schema_returns_last_issues`,
   `submit_anchor_is_form_owner`.
 - `wizard-hooks.test.ts`: `state_for_wizard`, `wizard_anchor_current_step_only`.
 - `browser-interaction.test.ts` (core-browser): `interaction_only_for_user_changes_dom` (trusted
@@ -577,7 +573,8 @@ function mcpPairing(o: { code?: string; port?: number; onStatus?: (s: McpPairing
 **Behaviour — page client (`mcpPairing`):**
 - Neither `code` nor a stored token (`sessionStorage` `toolmark:mcp:<port>`) → inert (returns a no-op
   disposer, no socket). Otherwise builds
-  `websocketTransport({ url: 'ws://127.0.0.1:<port>', onOpen, terminalCloseCodes: [4400, 4401, 4408, 4409], onStatus })`
+  `websocketTransport({ url: 'ws://127.0.0.1:<port>', onOpen, terminalCloseCodes: [4400, 4401, 4408, 4409], onStatus: s => o.onStatus?.(toPairingStatus(s)) })`
+  (M1 T9 transport; `toPairingStatus` is the internal mapping below)
   and `tm.use(bridge({ transport, caller: 'mcp' }))`; `port` default `17840`.
 - `onOpen(socket, { receive })` sends `{ type: 'pair', code }` on the first connection when `code` is
   given, otherwise `{ type: 'resume', token }`; awaits `receive(10000)`; `{ type: 'paired', token }`
@@ -674,10 +671,11 @@ and `MeterProvider({ readers: [new PeriodicExportingMetricReader({ exporter: new
 
 **Files:** Create `examples/react-vite/src/pair-mcp.tsx`, `src/telemetry.ts`, `e2e/reach.spec.ts`,
 `e2e/webmcp.spec.ts`, `e2e/mcp.spec.ts`, `e2e/support/mcp-client.ts`; Modify `src/app.tsx`,
-`src/main.tsx`, `playwright.config.ts` (`globalSetup` builds `@toolmark/mcp...`); Create
-`docs/guides/webmcp.md`, `mcp.md`, `otel.md`, `anchors.md`, `.changeset/m3-reach.md`; Modify
-`docs/release/next-tarballs.md` (append M3), `.github/workflows/ci.yml` (only: the `e2e` job runs
-`pnpm build` before Playwright, if M1's workflow does not already).
+`src/main.tsx`, `playwright.config.ts` (`globalSetup: './e2e/global-setup.ts'`); Create
+`e2e/global-setup.ts` (runs `pnpm --filter "@toolmark/mcp..." build` once, `execFileSync` from the
+repo root; M4 T8 extends it), `docs/guides/webmcp.md`, `mcp.md`, `otel.md`, `anchors.md`,
+`.changeset/m3-reach.md`; Modify `docs/release/next-tarballs.md` (append M3). No CI change: M1's
+`e2e` job runs Playwright, whose `globalSetup` builds what the MCP specs spawn.
 
 **Behaviour:**
 - The example adds `tm.use(webmcp({ polyfill: () => import('@mcp-b/webmcp-polyfill') }))`,
@@ -715,7 +713,8 @@ and `MeterProvider({ readers: [new PeriodicExportingMetricReader({ exporter: new
   `pnpm changeset version` (pre mode `next`, versions only), commit, then
   `pnpm -r --filter "./packages/*" pack --pack-destination "$PWD/dist-tarballs"` and
   `node scripts/tarball-smoke.mjs dist-tarballs` (now including `@toolmark/mcp` and its
-  `toolmark-mcp` bin, `./client` checked with `import.meta.resolve`), and append the M3 entry (version,
+  `toolmark-mcp` bin; `./client` has no top-level DOM access, so the smoke imports it under Node like
+  every entry and `scripts/tarball-smoke.mjs` needs no change), and append the M3 entry (version,
   filenames, SHA-256, smoke result) to `docs/release/next-tarballs.md`.
 
 **Tests (write first):**
@@ -774,7 +773,7 @@ No exit item depends on another repository.
   `--call-timeout` + `cancel`) → T5; §11.4 → T6; §18 WebMCP on Chromium → T3 browser tests + T7
   `native_webmcp_when_available`; MCP conformance → T4 execution check; §20 M3 exit → exit check;
   D28 → constraints + T3 TSDoc + T7 docs; D31 → T4/T5.
-- **Audit coverage (m3.md):** B1 → rulings/T4; B2 → T1 transport + T5; B3 → T5 tests; B4 → T5
+- **Audit coverage (m3.md):** B1 → rulings/T4; B2 → M1 T9 transport hooks (pass 3) + T5; B3 → T5 tests; B4 → T5
   `PageLink.call`; B5 → T4 pairing tool; M1–M6 → T3; M7–M9 → T2; M10/M17 → T4; M11 → T6; M12 → T5
   CLI; M13 → T1; M14 → T1; M15 → gates; M16 → T5 `unreachable` + T7 docs; M18 → T5 `PageLink`;
   minors m1–m18 → T1–T7 (m18's `storage` option replaced by the stubbed-`sessionStorage` tests).
@@ -785,7 +784,7 @@ No exit item depends on another repository.
   `toMcpResult` match the overview registry; new: `isAllowedUpgrade`, `McpPairingStatus`,
   `PAIRING_TOOL_NAME`, `ModelContextLike` (exported types, TSDoc in their task).
 - **Ownership:** every file has one lane; earlier-milestone files are named with their owner (Lane A:
-  `bridge.ts`, `websocket.ts`, its test; Lane B: forms, wizard, DOM, RHF, Inertia `<Form>` files).
+  `bridge.ts` (M1's `websocket.ts` is consumed unchanged); Lane B: forms, wizard, DOM, RHF, Inertia `<Form>` files).
   Stubs created by Lane A are handed to Lanes C, D, E after wave 0. Dependencies are all declared in
   Task 1 (wave 0).
 - **Execution-time checks (ledger each):** SDK `SUPPORTED_PROTOCOL_VERSIONS` and the `DiscoverResult`
