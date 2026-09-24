@@ -15,7 +15,7 @@ context compaction, new sessions and new machines.
 | --- | --- |
 | Toolmark spec (D1–D32, §23 rulings) | toolmark `docs/superpowers/specs/2026-09-24-toolmark-design.md` |
 | Toolmark plans (overview + M1–M5) | toolmark `docs/superpowers/plans/2026-09-24-toolmark-*.md` |
-| Release evidence | toolmark `docs/release/{round-budget,next-tarballs,checklist}.md` |
+| Release evidence | toolmark `docs/release/{round-budget,next-tarballs,checklist,owner-handoff}.md` |
 | Lane ledgers (per plan, git-ignored) | `<repo>/.superpowers/sdd/<plan-basename>/progress.md` (created by `sdd-lanes`) |
 
 ## Status legend
@@ -35,8 +35,8 @@ Post-1.0 consumer track:          └─► Innov P0 ─► P1 ─► P2 ─► 
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | T-M1 Core | toolmark | `…-m1-core.md` | — | CI green; round budget `simple_form_within_3_rounds`; tarball smoke | ready | — | 2026-09-24 |
 | T-M2 Forms | toolmark | `…-m2-forms.md` | T-M1 | round budget `wizard_within_5_rounds`; tarball smoke | todo | — | — |
-| T-M3 Reach | toolmark | `…-m3-reach.md` | T-M2 | same tool via WebMCP + MCP + Playwright; tarball smoke | todo | — | — |
-| T-M4 Tours & tooling | toolmark | `…-m4-tours-tooling.md` | T-M3 | authored + planned tours (3 browsers); same-tools e2e; tarball smoke | todo | — | — |
+| T-M3 Reach | toolmark | `…-m3-reach.md` | T-M2 | same tool via WebMCP + MCP + Playwright (`reach.spec.ts`); tarball smoke incl. `toolmark-mcp` | todo | — | — |
+| T-M4 Tours & tooling | toolmark | `…-m4-tours-tooling.md` | T-M3 | authored + planned tours (3 browsers, axe-clean); Laravel authored tour; same-tools e2e; Laravel + Next.js suites; `docs:build`; lint clean; tarball smoke | todo | — | — |
 | T-M5 Release | toolmark | `…-m5-release.md` | T-M4 | all §21 gates (incl. round budget + smoke on the RC); publish (owner) | todo | — | — |
 
 **Current focus:** Toolmark M1 → M5 (release). Innovation is post-1.0. Within Toolmark, units are
@@ -51,47 +51,48 @@ its exit check passes. Task numbers refer to the unit's plan.
 - [x] Pre-M1 housekeeping: `.gitignore` with `.superpowers/` and `.DS_Store` (commit `db12087`).
 
 ### T-M1 Core (toolmark)
-- [ ] Wave 0 · Lane A (T1–T7) workspace, model, schema, registry, call pipeline, form tools, protocol
-- [ ] Wave 1 · Lane B (T8–T9) bridge + transports
+- [ ] Wave 0 · Lane A (T1–T7, high; T6 **security**) workspace, model, schema, registry, call pipeline, form tools, protocol
+- [ ] Wave 1 · Lane B (T8–T9, high, **security**) bridge + transports (incl. WebSocket hooks for M3)
 - [ ] Wave 1 · Lane C (T10–T12) React + RHF
-- [ ] Wave 1 · Lane D (T13) Inertia adapter
+- [ ] Wave 1 · Lane D (T13) Inertia adapter + visit-outcome mapping
 - [ ] Wave 1 · Lane E (T14) testing package
-- [ ] Wave 2 · Lane F (T15–T16) example + round-budget e2e, docs, CI, tarballs + smoke → `docs/release/{round-budget,next-tarballs}.md`
+- [ ] Wave 2 · Lane F (T15–T16, high; T16 **security**) example + round-budget e2e, docs, Laravel reference, CI, tarballs + smoke → `docs/release/{round-budget,next-tarballs}.md`
 - [ ] Unit exit: CI green on `main`; `simple_form_within_3_rounds`; tarball smoke logged
 
 ### T-M2 Forms (toolmark)
-- [ ] W0 · A (T1–T4) arrays, JSON-Schema subset, files, wizard
-- [ ] W1 · B (T5–T6) DOM adapter + scanner · C (T7) `useWizardTool` · D (T8) Inertia pages/props/navigation
-- [ ] W2 · E (T9–T10) Inertia `<Form>`, examples + wizard round budget, guides, tarballs + smoke
-- [ ] Unit exit
+- [ ] W0 · A (T1–T4, high, **security**) arrays, `tm.info`, JSON-Schema subset + options, files, wizard
+- [ ] W1 · B (T5–T6, **security**) DOM adapter + scanner · C (T7) `useWizardTool`, RHF arrays · D (T8, **security**) Inertia pages/props/navigation
+- [ ] W2 · E (T9–T12; T11 **security**) Inertia `<Form>`, example pages + wizard round budget, guides + Laravel props builder, tarballs + smoke
+- [ ] Unit exit: `wizard_within_5_rounds` (+ `simple_form_within_3_rounds`); tarball smoke logged
 
 ### T-M3 Reach (toolmark)
-- [ ] W0 · A (T1) tour hooks + mcp skeleton
-- [ ] W1 · B (T2) WebMCP · C (T3–T4) `@toolmark/mcp` **(security)** · D (T5) OTel
-- [ ] W2 · E (T6) examples, guides, tarballs + smoke
-- [ ] Unit exit
+- [ ] W0 · A (T1, high, **security**) `@toolmark/mcp` skeleton, registry hooks (`tm.anchor`/`state`/`info`), bridge caller
+- [ ] W1 · B (T2, **security**) tour hooks in adapters · C (T3) WebMCP · D (T4–T5, **security**) MCP server + pairing + CLI · E (T6) OTel
+- [ ] W2 · F (T7) example, `reach.spec.ts`, guides, tarballs + smoke
+- [ ] Unit exit: `same_declaration_webmcp_mcp_fixture`; tarball smoke incl. `toolmark-mcp`
 
 ### T-M4 Tours & tooling (toolmark)
-- [ ] W0 · A (T0) skeletons
-- [ ] W1 · B (T1–T2) tours · C (T3–T4) lint + judge · D (T5) Laravel example **(security)** · E (T6) Next.js example
+- [ ] W0 · A (T0) skeletons + deps
+- [ ] W1 · B (T1–T2) tours · C (T3–T4) lint + judge · D (T5, high, **security**) Laravel example · E (T6) Next.js example
 - [ ] W2 · F (T7–T8) docs site, CI, cross-cutting e2e + same-tools + planned tour, tarballs + smoke
-- [ ] Unit exit
+- [ ] Unit exit: tours (3 browsers) + Laravel authored tour + same-tools + example suites + `docs:build` + lint clean + smoke
 
 ### T-M5 Release (toolmark)
 - [ ] W0 · A (T1–T2) CI matrix + quality gates + package metadata
-- [ ] W1 · B (T3) docs/policies + TSDoc gap-fill · C (T4) security review · D (T6) spec-watch
-- [ ] W2 · E (T5) security fixes
-- [ ] W3 · F (T7) release: round budget + smoke on the RC; **owner confirmations required**
-- [ ] Unit exit: `1.0.0` on npm with provenance
+- [ ] W1 · B (T3, T3b) TSDoc gap-fill + strict TypeDoc, policies/community/docs deploy · C (T4, high, **security**) security review · D (T6) spec-watch
+- [ ] W2 · E (T5, high, **security**) security fixes
+- [ ] W3 · F (T7a–T7c, high) release workflow + dry run, RC + in-repo evidence, 1.0.0 + owner hand-off → **stop for owner**
+- [ ] After owner: T7d (controller) post-publish verification
+- [ ] Unit exit: `1.0.0` on npm with provenance (T7d)
 
 ## Owner actions and open decisions
 
 | # | Item | Needed by | Status |
 | --- | --- | --- | --- |
-| O1 | npm org `toolmark` (account 2FA); first-publish bootstrap with a short-lived granular token; `npm trust` (OIDC) for each of the 8 packages after the first publish; revoke the token | T-M5 T7 | open |
+| O1 | npm org `toolmark` (account 2FA); first-publish bootstrap with a short-lived granular token; `npm trust` (OIDC) for each of the 8 packages after the first publish; revoke the token | T-M5 T7c hand-off (O-b, O-g…O-k) | open |
 | O2 | Confirm code ownership / employment IP terms before going public | T-M5 | open |
 | O6 | GitHub Actions budget for the private-repo CI matrix (3 browsers × Node × React/Inertia/zod), or self-hosted runners | T-M1 T16 / T-M5 T1 | open |
-| O7 | Go public: make the repo public; create environment `npm-release` (owner the only reviewer); enable Pages (GitHub Actions), private vulnerability reporting, "Allow GitHub Actions to create and approve pull requests", branch protection on `main`; approve the publish run | T-M5 T7 | open |
+| O7 | Go public: make the repo public; create environment `npm-release` (owner the only reviewer); enable Pages (GitHub Actions), private vulnerability reporting, "Allow GitHub Actions to create and approve pull requests", branch protection on `main`; set `TOOLMARK_PUBLISH_ENABLED`; approve the publish run | T-M5 T7c hand-off (O-c…O-i) | open |
 
 ## Post-1.0 consumer track (Innovation)
 
@@ -218,3 +219,6 @@ also record progress in Innovation's own branch history.
 - 2026-09-24 — Owner decision: Toolmark 1.0 is self-contained; Innovation becomes a post-1.0
   consumer track; SC1 proven in-repo (round budget), SC2 by the same-tools e2e, packaging by the
   tarball smoke test. Plan audit pass 1 applied to spec/overview (rulings R1–R9 in spec §23).
+- 2026-09-24 — Plan audit pass 3: pass-2 proposals applied to spec/overview; cross-plan consistency
+  fixed (M1 owns Inertia visit outcomes and WebSocket hooks; shared-files table in the overview);
+  lane board synced with the plans. T-M1 stays `ready`.
