@@ -37,11 +37,13 @@ token.
   (`gzip`, `import`, `ignore`, `rolldown`). Also run `npm trust --help` on npm ≥ 11.15, because the
   owner hand-off quotes its flags. For the Vitest 5 browser-instance filter, use ctx7
   `/vitest-dev/vitest`.
-- **M1–M4 artifacts present:** `scripts/tarball-smoke.mjs`,
-  `examples/react-vite/e2e/{round-budget,same-tools,tour}.spec.ts` (plus the planned-tour test
-  `tour_planned_via_agent_planner`), `docs/release/{round-budget,next-tarballs}.md`, `typedoc.json`
-  (non-strict), `docs/reference/codes.md`, `.changeset/{config.json,pre.json}` (pre mode `next`,
-  `fixed` group), and `ci.yml` jobs from M1 T16 and M4 T7. If one is missing, that is a ruling, not a
+- **M1–M4 artifacts present:** `scripts/tarball-smoke.mjs`, `scripts/render-round-budget.mjs`,
+  `examples/react-vite/e2e/{round-budget,reach,same-tools,tour}.spec.ts` (plus the planned-tour test
+  `tour_planned_via_agent_planner`), `docs/release/{round-budget,next-tarballs}.md`,
+  `typedoc.config.mjs` (non-strict by default; root script `docs:api:strict`),
+  `docs/reference/codes.md`, `.github/workflows/docs-deploy.yml`, `.changeset/{config.json,pre.json}`
+  (pre mode `next`, `fixed` group), and `ci.yml` jobs from M1 T16 (`lint`, `typecheck`, `build`,
+  `test`, `types-ts7`, `e2e`) and M4 T7 (`docs`, `example-nextjs`, `example-laravel`). If one is missing, that is a ruling, not a
   silent re-implementation.
 
 ## Global constraints (M5 additions)
@@ -56,8 +58,9 @@ token.
   React 18.3 × Inertia 3 is never run, because Inertia 3 requires React 19. Installed `zod` is
   4.6.5 in every cell.
 
-  A separate `zod3` job (Node 24) installs `zod@3.25.76` and runs only the converter-specific tests,
-  which import `zod/v3` and `zod-to-json-schema`. The `browser` axis is `[chromium, firefox, webkit]`
+  A separate `zod3` job (Node 24) installs `zod@3.25.76` and runs only the converter-specific tests
+  (names contain `zod3`; they import `zod/v3` and `zod-to-json-schema`):
+  `pnpm exec vitest run --project core-node -t zod3`. The `browser` axis is `[chromium, firefox, webkit]`
   over the DOM projects and the `examples/react-vite` Playwright suite. The WebMCP suites, the
   Laravel example and the Next.js example run on chromium only.
 - **Version swap in matrix jobs:** `pnpm -r --filter <pkg> add -D react@<v> react-dom@<v>
@@ -154,6 +157,20 @@ token.
   - Pushes to other branches run the `node 24 × react 19.3.0 × inertia 3.7.1` cell on chromium only.
   - Branch protection requires the full-matrix job names.
 
+## Rulings made while fixing (pass 3, cross-plan consistency)
+
+- The TypeDoc config is M4's `typedoc.config.mjs` (there is no `typedoc.json`); Task 3 makes strict
+  validation its default and gates on `pnpm docs:api:strict && pnpm docs:build`.
+- The Pages workflow is M4's `docs-deploy.yml`; Task 3b hardens and pins it and never adds
+  `docs.yml` (M4 pass-2 ruling).
+- `scripts/render-round-budget.mjs` is M1's; Task 7b adds a `--check` mode and its test instead of
+  creating a renderer.
+- M1's `types-ts7` job already is the packed-tarball smoke under both resolutions and TS 6/7; M5
+  adds no separate `smoke` job, only the second-directory argument.
+- The zod 3 axis selects tests with `-t zod3` (M1 T3 naming rule); `yaml` 2.9.1 is a definite root
+  devDependency added in Task 2.
+- The RC round-budget run uses `--project=chromium` (one report row per task, M4 pass-3 ruling).
+
 ## Review focus
 
 1. **Consumers on TS 6/7 and both resolutions**: the tarball smoke type-checks every public entry
@@ -171,12 +188,12 @@ token.
 ## File structure
 
 ```
-.github/workflows/{ci,release,docs,spec-watch}.yml · .github/dependabot.yml
+.github/workflows/{ci,release,spec-watch}.yml · .github/workflows/docs-deploy.yml (modify, M4) · .github/dependabot.yml
 .github/ISSUE_TEMPLATE/{bug,feature}.yml · .github/pull_request_template.md
 scripts/{check-zero-deps,check-package-meta,check-no-app-code,check-workflows}.mjs (+ *.test.mjs)
-scripts/{check-docs,check-security-review,check-release-versions,spec-watch,render-round-budget}.mjs (+ tests)
-scripts/tarball-smoke.mjs (modify)
-.size-limit.json · typedoc.json (modify) · docs/.vitepress/config.ts (modify)
+scripts/{check-docs,check-security-review,check-release-versions,spec-watch}.mjs (+ tests)
+scripts/tarball-smoke.mjs · scripts/render-round-budget.mjs (modify, M1 files; + render-round-budget.test.mjs)
+.size-limit.json · typedoc.config.mjs (modify, M4) · docs/.vitepress/config.ts (modify)
 SECURITY.md · CONTRIBUTING.md · CODE_OF_CONDUCT.md · README.md
 docs/policies/{versioning,deprecation,tool-names}.md · docs/security/{threat-model,review-2026}.md
 docs/release/{checklist,owner-handoff,round-budget,next-tarballs}.md
@@ -189,11 +206,11 @@ packages/*/{package.json (metadata),LICENSE,README.md}
 | Wave | Lane | Tasks | Owns files | Consumes |
 | --- | --- | --- | --- | --- |
 | 0 | A (normal) | 1, 2 | `.github/workflows/ci.yml`; `.github/dependabot.yml`; `scripts/{check-zero-deps,check-package-meta,check-no-app-code,check-workflows}.mjs` + their `*.test.mjs` and `scripts/fixtures/**`; `scripts/tarball-smoke.mjs` (modify); `.size-limit.json`; root `package.json` (scripts + devDependencies); `pnpm-workspace.yaml` catalog; `pnpm-lock.yaml` (wave 0 only); `packages/*/vitest*.config.ts` (browser instances only); `examples/*/playwright.config.ts` (projects only); `examples/react-vite/vite.config.ts` (the `TOOLMARK_DIST` switch only); `packages/*/package.json` (metadata fields, `files`, `peerDependenciesMeta`; never `version`); `packages/*/LICENSE` | M4 |
-| 1 | B (normal) | 3, 3b | TSDoc comment text in `packages/*/src/**` (comments only); `typedoc.json`; `docs/.vitepress/config.ts`; `docs/guides/**`; `docs/policies/**`; `docs/index.md`; `scripts/check-docs.mjs` + `scripts/check-docs.test.mjs`; `.github/workflows/docs.yml`; `README.md`; `SECURITY.md`; `CONTRIBUTING.md`; `CODE_OF_CONDUCT.md`; `.github/ISSUE_TEMPLATE/**`; `.github/pull_request_template.md`; `packages/*/README.md` | A |
+| 1 | B (normal) | 3, 3b | TSDoc comment text in `packages/*/src/**` (comments only); `typedoc.config.mjs`; `docs/.vitepress/config.ts`; `docs/guides/**`; `docs/policies/**`; `docs/index.md`; `scripts/check-docs.mjs` + `scripts/check-docs.test.mjs`; `.github/workflows/docs-deploy.yml` (M4 file: hardening + SHA pins); `README.md`; `SECURITY.md`; `CONTRIBUTING.md`; `CODE_OF_CONDUCT.md`; `.github/ISSUE_TEMPLATE/**`; `.github/pull_request_template.md`; `packages/*/README.md` | A |
 | 1 | C (high, security) | 4 | `docs/security/**`; `scripts/check-security-review.mjs` + test | A |
 | 1 | D (normal) | 6 | `.github/workflows/spec-watch.yml`, `.spec-watch/**`, `scripts/spec-watch.mjs`, `scripts/spec-watch.test.mjs` | A |
 | 2 | E (high, security) | 5 | any source file named by a finding + its tests; the resolution columns of `docs/security/review-2026.md`; dependency bumps through the controller (`pnpm-lock.yaml` regenerated by `pnpm install`, never hand-edited) | C |
-| 3 | F (high) | 7a–7c | `.github/workflows/release.yml`; `.changeset/**` (incl. `pre.json`, `release-1-0.md`, `config.json`); `docs/release/**`; `scripts/check-release-versions.mjs` + test; `scripts/render-round-budget.mjs` (if M1 did not create it); `packages/*/package.json` `version` and internal ranges (only through `changeset version`); `packages/*/CHANGELOG.md` (generated); `docs/ROADMAP.md` (T-M5 status at the stop) | all |
+| 3 | F (high) | 7a–7c | `.github/workflows/release.yml`; `.changeset/**` (incl. `pre.json`, `release-1-0.md`, `config.json`); `docs/release/**`; `scripts/check-release-versions.mjs` + test; `scripts/render-round-budget.mjs` (M1 file: `--check` mode) + `scripts/render-round-budget.test.mjs`; `packages/*/package.json` `version` and internal ranges (only through `changeset version`); `packages/*/CHANGELOG.md` (generated); `docs/ROADMAP.md` (T-M5 status at the stop) | all |
 
 - **Serial waves.** Lanes B and E never overlap in time (waves 1 and 2). Lane B's
   `packages/*/src/**` grant covers TSDoc comment text only. If a doc gap reveals a code change, the
@@ -205,13 +222,13 @@ packages/*/{package.json (metadata),LICENSE,README.md}
 ### Task 1: Complete the CI matrix   (Lane A, risk: normal)
 
 **Files:** Modify `.github/workflows/ci.yml`, `packages/*/vitest*.config.ts` (browser `instances`
-for chromium/firefox/webkit), `examples/react-vite/playwright.config.ts` (projects for all three
-browsers; `webmcp` project chromium only), root `package.json` (`test:all` script). Create
+for chromium/firefox/webkit), `examples/react-vite/playwright.config.ts` (verify M4 T8's projects:
+three browsers, with `webmcp`, `mcp`, `reach`, `same-tools`, `lint-clean` and `round-budget` on
+chromium only; fix only drift), root `package.json` (`test:all` script). Create
 `.github/dependabot.yml`.
 
 **Exact values:** the matrix, version swap, hardening and action pins from Global constraints; the
-`zod3` job and its test glob. The glob is the converter-test naming that M1 established, which the
-lane reads from M1 T3/T6 and writes into `ci.yml` verbatim. Triggers: `pull_request` (branches
+`zod3` job with `pnpm exec vitest run --project core-node -t zod3` (M1 T3 naming rule). Triggers: `pull_request` (branches
 `[main]`), `push`, and `schedule: cron '0 3 * * *'`, with the reduced push cell described in the
 rulings. Root script:
 `"test:all": "pnpm lint && pnpm typecheck && pnpm test && pnpm build && pnpm quality && pnpm -r --filter \"./examples/*\" run e2e"`.
@@ -223,9 +240,10 @@ rulings. Root script:
 - The browser axis runs each DOM project once per browser, selecting the Vitest 5 browser instance
   with the filter confirmed in pre-flight. It also runs `playwright test --project=<browser>` for
   `examples/react-vite`. WebMCP specs run in the chromium project only.
-- The Laravel and Next.js example jobs (M4) stay chromium-only and are verified present.
-  `types-ts7` from M1 stays. The `smoke` job (Task 2) adds the packed-tarball checks under both
-  resolutions.
+- The Laravel and Next.js example jobs and the `docs` job (M4) stay and are verified present
+  (examples chromium-only). `types-ts7` from M1 stays and is the packed-tarball smoke job (it
+  already type-checks under `nodenext` and `bundler` with TS 6.0.3 and 7.0.2); no second smoke job
+  is added. The `quality` job (Task 2) runs `pnpm quality`.
 - Playwright browsers are cached with `actions/cache` keyed on the Playwright version. `concurrency`
   cancels superseded runs.
 - Dependabot: the `github-actions` and `npm` ecosystems run weekly. npm updates are grouped by dev
@@ -248,8 +266,9 @@ Every `ci.yml` job must be green (`gh run view --json jobs`).
   root `LICENSE`) for all 8.
 - Modify: `packages/*/package.json` (metadata), `scripts/tarball-smoke.mjs`, root `package.json`
   (`quality`, `size`, and devDeps `publint` 0.3.24, `@arethetypeswrong/cli` 0.18.5, `size-limit` +
-  `@size-limit/preset-small-lib` 14.0.0), `examples/react-vite/vite.config.ts` (the `TOOLMARK_DIST`
-  switch), `ci.yml` (`quality` and `smoke` jobs).
+  `@size-limit/preset-small-lib` 14.0.0, `yaml` 2.9.1 — all catalog entries), `pnpm-workspace.yaml`
+  (only if a catalog entry is missing), `examples/react-vite/vite.config.ts` (the `TOOLMARK_DIST`
+  switch), `ci.yml` (`quality` job).
 
 **Exact values** (every `packages/<name>/package.json`):
 - `"license": "MIT"`, `"author": "adams100111"`
@@ -289,14 +308,12 @@ Every `ci.yml` job must be green (`gh run view --json jobs`).
     `exports`/`bin`, or its `package.json` still contains `workspace:`.
 - `check-no-app-code`: applies the pattern from the rulings.
 - `check-workflows`: for every `.github/workflows/*.yml`, checks the hardening list in Global
-  constraints. It uses a YAML parse via `yaml`, which is a root devDependency if M1 did not add it.
-- `tarball-smoke.mjs` (extend, keep its CLI):
-  - Its TS 6.0.3 and 7.0.2 type-check runs twice, with
-    `{ "module": "nodenext", "moduleResolution": "nodenext" }` and
-    `{ "module": "preserve", "moduleResolution": "bundler" }`.
-  - Neither run sets `customConditions`, so the smoke proves consumers never need
-    `@toolmark/source`.
-  - It accepts a second tarball directory argument.
+  constraints. It parses YAML with `yaml` (root devDependency, 2.9.1, added in this task).
+- `tarball-smoke.mjs` (extend, keep its CLI): it already (M1 T16) type-checks with TS 6.0.3 and
+  7.0.2 under `{ "module": "nodenext", "moduleResolution": "nodenext" }` and
+  `{ "module": "preserve", "moduleResolution": "bundler" }` without `customConditions`; verify
+  that, and add a second tarball directory argument (used by `release-dry-run` for the
+  changesets-packed tarballs).
 - `examples/react-vite/vite.config.ts`: when `process.env.TOOLMARK_DIST === '1'`, it omits
   `@toolmark/source` from `resolve.conditions` and `ssr.resolve.conditions`.
 - Limits are measured with `pnpm build && pnpm size-limit --json` and committed in the same commit.
@@ -312,8 +329,9 @@ Every `ci.yml` job must be green (`gh run view --json jobs`).
 - `check_no_app_code_flags_innovation`: fixture src containing `Innovation` → exit 1.
 - `check_workflows_rejects_unpinned_action`: fixture `uses: actions/checkout@v7` → exit 1.
 - `check_workflows_rejects_missing_top_level_permissions`: fixture → exit 1.
-- `smoke_typechecks_bundler_and_nodenext`: existing smoke test extended; a fixture tarball whose
-  `types` resolve only under `bundler` → nodenext failure reported.
+- `smoke_typechecks_bundler_and_nodenext` (new case in M1's `scripts/tarball-smoke.test.mjs`): a
+  fixture tarball whose `types` resolve only under `bundler` → nodenext failure reported.
+- `smoke_accepts_two_dirs`: two fixture dirs → both checked, one summary.
 
 **Task gate:** `node --test scripts/*.test.mjs && pnpm build && pnpm quality &&
 pnpm -r --filter "./packages/*" pack --pack-destination "$PWD/dist-tarballs" &&
@@ -323,17 +341,18 @@ node scripts/tarball-smoke.mjs dist-tarballs`
 
 ### Task 3: TSDoc gap-fill, then strict TypeDoc   (Lane B, risk: normal)
 
-**Files:** Modify TSDoc comments in `packages/*/src/**` (comments only), `typedoc.json`,
+**Files:** Modify TSDoc comments in `packages/*/src/**` (comments only), `typedoc.config.mjs` (M4),
 `docs/.vitepress/config.ts`, and root `package.json` via the controller (`docs:check` script; Lane A
 owns the file, so the controller applies the one-line script add at wave-1 merge). Create
 `scripts/check-docs.mjs` and `scripts/check-docs.test.mjs`.
 
 **Exact values:**
-- `typedoc.json`: `"treatWarningsAsErrors": true`,
-  `"validation": { "notDocumented": true, "invalidLink": true, "notExported": true }`. `entryPoints`
-  = every `exports` subpath of every package, including `testing/vitest`, `testing/page`,
-  `mcp/client`, `tour/overlay`, `tour/react`, `core/{bridge,dom,webmcp,otel}`. The workspace TS stays
-  6.0.3 (typedoc caps at 6.0.x).
+- `typedoc.config.mjs` (M4): after the gap-fill, strict becomes the default — `strict =
+  process.env.TYPEDOC_STRICT !== '0'` — so `notDocumented` and `notExported` are on for `docs:api`,
+  `docs:build` and the CI `docs` job (`treatWarningsAsErrors: true` and `invalidLink: true` stay).
+  `entryPoints` stay derived from every package's `exports` (M4), which covers `testing/vitest`,
+  `testing/page`, `mcp/client`, `tour/overlay`, `tour/react`, `core/{bridge,dom,webmcp,otel}`; the
+  lane verifies that list. The workspace TS stays 6.0.3 (typedoc caps at 6.0.x).
 - VitePress `base: '/toolmark/'` (GitHub project Pages). `srcExclude` keeps
   `['superpowers/**','ROADMAP.md','release/**','security/**']`.
 - Sidebar entries for `docs/policies/*` and `docs/reference/codes.md`.
@@ -341,7 +360,8 @@ owns the file, so the controller applies the one-line script add at wave-1 merge
 **Behaviour:**
 - Step 1 (gap-fill): run TypeDoc with `notDocumented` on, collect every warning, and write the
   missing TSDoc. Each comment needs a one-line summary, `@param`/`@returns` where non-obvious, and
-  `@experimental` on every `core/webmcp` export. Then switch `typedoc.json` to strict.
+  `@experimental` on every `core/webmcp` export (use `pnpm docs:api:strict` to list gaps). Then make
+  strict the default in `typedoc.config.mjs`.
 - `check-docs.mjs` fails unless all of these hold:
   - These files exist and are reachable from the sidebar:
     - `docs/guides/{react,inertia,nextjs,webmcp,mcp,tours}.md`
@@ -356,7 +376,7 @@ owns the file, so the controller applies the one-line script add at wave-1 merge
 **Tests:** `check_docs_fails_on_missing_guide` and `check_docs_fails_without_experimental_label`
 (fixture dirs).
 
-**Task gate:** `node --test scripts/check-docs.test.mjs && pnpm docs:build && pnpm docs:check`.
+**Task gate:** `node --test scripts/check-docs.test.mjs && pnpm docs:api:strict && pnpm docs:build && pnpm docs:check`.
 TypeDoc must report zero warnings.
 
 ---
@@ -373,8 +393,9 @@ TypeDoc must report zero warnings.
 - `docs/policies/tool-names.md`
 - `.github/ISSUE_TEMPLATE/{bug,feature}.yml`
 - `.github/pull_request_template.md`
-- `.github/workflows/docs.yml`
 - every `packages/*/README.md`
+
+Modify `.github/workflows/docs-deploy.yml` (created in M4 T7; no second Pages workflow).
 
 **Exact values:**
 - `SECURITY.md`:
@@ -385,11 +406,11 @@ TypeDoc must report zero warnings.
   - Scope: the §14 surfaces.
 - `CODE_OF_CONDUCT.md`: Contributor Covenant 2.1; contact via the same advisory link or the owner's
   GitHub profile.
-- `docs.yml`:
-  - Triggers: `push` to `main` + `workflow_dispatch`.
-  - Top-level `permissions: {}`. Build job: `contents: read`. Deploy job:
-    `pages: write, id-token: write`, `environment: github-pages`.
-  - The deploy job has `if: ${{ !github.event.repository.private }}`, so it is a no-op until the
+- `docs-deploy.yml` (hardened M4 workflow):
+  - Triggers stay `push` to `main` + `workflow_dispatch`.
+  - Top-level `permissions: {}`; split into a build job (`contents: read`) and a deploy job
+    (`pages: write, id-token: write`, `environment: github-pages`); actions SHA-pinned.
+  - The deploy job keeps `if: ${{ !github.event.repository.private }}`, so it is a no-op until the
     repo is public.
 
 **Behaviour:**
@@ -422,9 +443,9 @@ TypeDoc must report zero warnings.
 - The root README states the "one declaration, every agent" pitch, links to the packages and docs,
   and links the policies.
 
-**Tests:** covered by `check-docs` (Task 3) and `check-workflows` (Task 2) over `docs.yml`.
+**Tests:** covered by `check-docs` (Task 3) and `check-workflows` (Task 2) over `docs-deploy.yml`.
 
-**Task gate:** `pnpm docs:build && pnpm docs:check && node scripts/check-workflows.mjs .github/workflows/docs.yml`
+**Task gate:** `pnpm docs:build && pnpm docs:check && node scripts/check-workflows.mjs .github/workflows/docs-deploy.yml`
 
 ---
 
@@ -652,7 +673,8 @@ and the PR-triggered `release-dry-run` job is green. Task 4 item 13 is re-review
 ### Task 7b: Release candidate and in-repo evidence   (Lane F, risk: high)
 
 **Files:** Create `.changeset/release-1-0.md`, `docs/release/checklist.md`,
-`scripts/render-round-budget.mjs` (only if M1/M2 left no renderer); Modify
+`scripts/render-round-budget.test.mjs`; Modify `scripts/render-round-budget.mjs` (M1 T16: add
+`--check`, exit 1 when `simple_form` > 3 or `wizard` > 5 rounds or either entry is missing),
 `docs/release/next-tarballs.md` (RC entry), `docs/release/round-budget.md` (regenerated),
 `packages/*/package.json` versions and `packages/*/CHANGELOG.md` (through `changeset version` only).
 
@@ -673,8 +695,9 @@ and the PR-triggered `release-dry-run` job is green. Task 4 item 13 is re-review
 
    Append the RC entry (version, filenames, SHA-256, smoke result) to `next-tarballs.md`.
 4. Run the evidence on built `dist`:
-   - `TOOLMARK_DIST=1 ROUND_BUDGET_REPORT=$PWD/.quality/round-budget.json pnpm -F @toolmark-examples/react-vite exec playwright test e2e/round-budget.spec.ts`
-     → both tests green. Render `docs/release/round-budget.md` from the JSON: simple form ≤ 3
+   - `TOOLMARK_DIST=1 ROUND_BUDGET_REPORT=$PWD/.quality/round-budget.json pnpm -F @toolmark-examples/react-vite exec playwright test e2e/round-budget.spec.ts --project=chromium`
+     → both tests green. `node scripts/render-round-budget.mjs --check .quality/round-budget.json`
+     renders `docs/release/round-budget.md` from the JSON: simple form ≤ 3
      rounds, wizard ≤ 5, zero `invalid`/`refused`, manifest and describe bytes, wall time, RC
      version, commit SHA.
    - `TOOLMARK_DIST=1 pnpm -F @toolmark-examples/react-vite exec playwright test e2e/same-tools.spec.ts e2e/tour.spec.ts --project=chromium --project=firefox --project=webkit`
@@ -686,8 +709,9 @@ and the PR-triggered `release-dry-run` job is green. Task 4 item 13 is re-review
 Any failure in steps 2–4 stops the release. The fix goes back to the owning wave, and Task 7b
 reruns from step 3.
 
-**Tests:** the evidence runs above; `render_round_budget_fails_over_budget` (fixture JSON with 4
-rounds for the simple form → exit 1), if the renderer is created here.
+**Tests:** the evidence runs above; `render_round_budget_fails_over_budget`
+(`scripts/render-round-budget.test.mjs`: fixture JSON with 4 rounds for the simple form → `--check`
+exits 1; within budget → exit 0 and the table is written).
 
 **Task gate:** every `checklist.md` row for §21 gates 1–7 (gate table below) has pasted evidence,
 dated.
@@ -750,17 +774,31 @@ Create `docs/release/owner-handoff.md`.
 
 ---
 
+## Milestone exit check (spec §20 M5, overview M5 row)
+
+M5 is done when all of these hold (no other repository involved):
+
+1. Every §21 gate row in the table below has dated, pasted evidence in `docs/release/checklist.md`
+   (Task 7b gate), including the RC tarball smoke, `render-round-budget.mjs --check` on the RC
+   report (simple form ≤ 3, wizard ≤ 5 rounds) and `same-tools.spec.ts` + `tour.spec.ts` green on
+   built `dist` (`TOOLMARK_DIST=1`).
+2. All 8 packages are versioned `1.0.0` on `main` (`check-release-versions --exact 1.0.0`), the
+   `release.yml` run on that SHA shows `publish` skipped, and `docs/release/owner-handoff.md` exists
+   (Task 7c gate).
+3. Publishing is owner-confirmed: after the owner's O-a…O-k, Task 7d's provenance and
+   `npm audit signatures` checks pass and ROADMAP `T-M5` is `done`.
+
 ## §21 gate → task → runnable check
 
 | §21 gate | Task | Runnable check |
 | --- | --- | --- |
 | 1. Unit/DOM/contract/E2E suites green on the matrix (Node 22/24; React 18.3/19 × Inertia 2/3 excl. 18.3 × 3; zod 4 + zod 3 converter axis; Chromium/Firefox/WebKit; WebMCP, Laravel, Next on Chromium) | T1 | `gh run list --workflow ci.yml --branch main --limit 1 --json conclusion,headSha` → `success` for the RC SHA, with every matrix job listed by `gh run view <id> --json jobs` |
 | 2. Bundle budgets enforced; core zero runtime deps | T2 | `pnpm build && pnpm size-limit`; `node scripts/check-zero-deps.mjs`; `node --test scripts/check-zero-deps.test.mjs` |
-| 3. Every public export documented; API reference; guides (React, Inertia, Next.js, Laravel reference, WebMCP, MCP, tours) | T3 (+T3b) | `pnpm docs:build` (TypeDoc strict, zero warnings) and `pnpm docs:check` |
+| 3. Every public export documented; API reference; guides (React, Inertia, Next.js, Laravel reference, WebMCP, MCP, tours) | T3 (+T3b) | `pnpm docs:api:strict && pnpm docs:build` (TypeDoc strict, zero warnings) and `pnpm docs:check` |
 | 4. Security review against §14 completed, findings resolved | T4, T5 | `node scripts/check-security-review.mjs --resolved docs/security/review-2026.md`; `pnpm test:all`; re-review sign-offs in the report |
 | 5. §17 metadata (LICENSE, README, repository+directory, homepage, bugs, keywords, provenance; publint, `attw --profile esm-only`) | T2 | `pnpm quality` (`check-package-meta`, publint `--strict`, attw `esm-only` on packed tarballs) |
 | 6. Changesets release with npm provenance via the §17 path; changelog and deprecation policy published | T7a, T7c, T7d, T3b | `release-dry-run` job green; publish job skipped until the owner acts; after the owner: `npm view … dist.attestations.provenance.predicateType`, `npm audit signatures`; `CHANGELOG.md` inside each tgz (`check-package-meta`); `curl` of the deployed `policies/versioning` and `policies/deprecation` pages |
-| 7. In-repo RC evidence: tarball smoke on the RC; round budget meets SC1; same-tools + tours e2e green | T7b | `node scripts/tarball-smoke.mjs dist-tarballs`; `TOOLMARK_DIST=1 … playwright test e2e/round-budget.spec.ts` → `docs/release/round-budget.md`; `TOOLMARK_DIST=1 … playwright test e2e/same-tools.spec.ts e2e/tour.spec.ts` (3 browsers) |
+| 7. In-repo RC evidence: tarball smoke on the RC; round budget meets SC1; same-tools + tours e2e green | T7b | `node scripts/tarball-smoke.mjs dist-tarballs`; `TOOLMARK_DIST=1 … playwright test e2e/round-budget.spec.ts --project=chromium` → `node scripts/render-round-budget.mjs --check` → `docs/release/round-budget.md`; `TOOLMARK_DIST=1 … playwright test e2e/same-tools.spec.ts e2e/tour.spec.ts` (3 browsers) |
 | 8. WebMCP WPT informational; the adapter's own Chromium WebMCP suites gate | T1, T6 | chromium `webmcp` jobs in `ci.yml` (required); `wpt` job in `spec-watch.yml` (`continue-on-error`) |
 | 9. Post-release weekly spec-watch | T6, T7d | `node --test scripts/spec-watch.test.mjs`; PR dry-run green; `gh workflow run spec-watch.yml --ref main` |
 | SC4 / D3: no app-specific code | T2 | `node scripts/check-no-app-code.mjs` (in `pnpm quality`) |
@@ -782,7 +820,7 @@ after O-j. None of them may be run by an agent.
   - Settings → Code security: enable private vulnerability reporting, Dependabot alerts, and secret
     scanning with push protection.
   - Settings → Pages: source "GitHub Actions".
-  - Then run `gh workflow run docs.yml --ref main`.
+  - Then run `gh workflow run docs-deploy.yml --ref main`.
 - **O-e · Branch protection on `main`:** require the `ci.yml` and `release.yml` job names listed in
   `owner-handoff.md`, require PRs, and block force-pushes.
 - **O-f · Environment:** Settings → Environments → `npm-release`:
@@ -831,7 +869,7 @@ after O-j. None of them may be run by an agent.
   - `npm trust` flags.
 
   Size numbers come from a defined measurement rule.
-- **Ownership:** each file belongs to one lane. `ci.yml` is Lane A's. `docs.yml` is Lane B's.
+- **Ownership:** each file belongs to one lane. `ci.yml` is Lane A's. `docs-deploy.yml` (M4's, hardened) is Lane B's.
   `spec-watch.yml` is Lane D's. `release.yml`, `.changeset/**` and `docs/release/**` are Lane F's.
   `packages/*/package.json` is split by field: A owns metadata; F owns versions through
   `changeset version`, in a later wave. The root `package.json` `docs:check` script is added by the
