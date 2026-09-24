@@ -30,7 +30,8 @@ import type { FieldChange, ToolResult } from './result.js'
 import { resolveJsonSchema, type JsonSchemaConverter } from './schema.js'
 import { ScopeNode, type Scope } from './scope.js'
 import type { Caller, ConfirmOutcome, JsonSchema, ToolDefinition, ToolHints } from './tool.js'
-import { runCall } from './call.js'
+import { createCallRuntime } from './call.js'
+import type { PendingConfirmation } from './confirm.js'
 
 /** A confirmation request handed to the inline `confirm` handler. */
 export interface ConfirmRequest {
@@ -122,6 +123,15 @@ export interface Toolmark {
     input: unknown,
     opts: { caller: Caller; rev?: number; signal?: AbortSignal },
   ): Promise<ToolResult<unknown>>
+  /** Deferred confirmations waiting for {@link Toolmark.confirmPending}. */
+  pendingConfirmations(): PendingConfirmation[]
+  /**
+   * Completes a `needs_confirmation` call (single use). Approval runs the tool as caller `human`
+   * (with re-validated edited `input`, if given); rejection → `cancelled` `operator`.
+   */
+  confirmPending(confirmId: string, outcome: ConfirmOutcome): Promise<ToolResult<unknown>>
+  /** Runs the undo restorer a call registered (once); otherwise `refused` `undo_unavailable`. */
+  undo(callId: string): Promise<ToolResult<{ changes: FieldChange[] }>>
   /** Subscribes to revision changes (once per microtask). Returns an unsubscribe function. */
   subscribe(listener: (rev: number) => void): () => void
   /** Registry events. */
@@ -306,6 +316,7 @@ export function createToolmark(options: ToolmarkOptions = {}): Toolmark {
     if (!entry.alive) return
     entry.alive = false
     if (entries.get(entry.fullName) === entry) entries.delete(entry.fullName)
+    runtime.onEntryRemoved(entry)
     markChanged()
   }
 
@@ -465,7 +476,10 @@ export function createToolmark(options: ToolmarkOptions = {}): Toolmark {
       if (!entry || !visible(entry, opts?.caller)) return undefined
       return buildManifestEntry(entry.source)
     },
-    call: (name, input, opts) => runCall(state, name, input, opts),
+    call: (name, input, opts) => runtime.call(name, input, opts),
+    pendingConfirmations: () => (browser ? runtime.pendingConfirmations() : []),
+    confirmPending: (confirmId, outcome) => runtime.confirmPending(confirmId, outcome),
+    undo: (callId) => runtime.undo(callId),
     subscribe(listener) {
       const fn = (rev: number): void => listener(rev)
       revListeners.add(fn)
@@ -502,6 +516,7 @@ export function createToolmark(options: ToolmarkOptions = {}): Toolmark {
     inlineWithoutHandler,
     modeOf,
   }
+  const runtime = createCallRuntime(state)
   stateOf.set(tm, state)
   return tm
 }
