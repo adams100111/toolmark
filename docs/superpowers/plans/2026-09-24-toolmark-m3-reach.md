@@ -95,7 +95,7 @@ docs/guides/{webmcp,mcp,otel,anchors}.md  .changeset/m3-reach.md
 `core/src/dom/form-adapter.ts`, `core/src/registry.ts`, `core/src/index.ts`,
 `core/src/bridge/bridge.ts` (widen `BridgeOptions.caller` to `'inapp' | 'mcp'`),
 `react/src/rhf/index.ts`, `react/src/index.ts`, `core/package.json`, `core/tsdown.config.ts`;
-Test `core/test/anchors.test.ts`, `core/test/interaction.test.ts`, `react/test/use-tool-anchor.test.tsx`.
+Test `core/test/anchors.test.ts`, `core/test/browser-interaction.test.ts`, `react/test/use-tool-anchor.test.tsx`.
 
 **Interfaces — Produces:**
 ```ts
@@ -123,14 +123,14 @@ exports `"."` (node) and `"./client"` (browser), deps `@modelcontextprotocol/ser
 
 **Tests (write first):** `anchor_precedence` · `state_for_form_and_wizard` · `state_omits_password_and_cc` · `interaction_only_for_user_changes` (DOM + RHF variants) · `use_tool_anchor_sets_and_clears`.
 
-**Task gate:** `pnpm install && pnpm -F @toolmark/core exec vitest run test/anchors.test.ts test/interaction.test.ts && pnpm -F @toolmark/react exec vitest run test/use-tool-anchor.test.tsx`
+**Task gate:** `pnpm install && pnpm -F @toolmark/core exec vitest run test/anchors.test.ts && pnpm -F @toolmark/core exec vitest run --project core-browser test/browser-interaction.test.ts && pnpm -F @toolmark/react exec vitest run test/use-tool-anchor.test.tsx`
 
 ---
 
 ### Task 2: WebMCP consumer (experimental)   (Lane B, risk: high)
 
 **Files:** Create `core/src/webmcp/index.ts`, `model-context.ts`, `sync.ts`; Test
-`core/test/webmcp.test.ts`, `core/test/webmcp-polyfill.test.ts` (browser mode).
+`core/test/webmcp.test.ts`, `core/test/browser-webmcp-polyfill.test.ts` (browser mode).
 
 **Interfaces — Produces:**
 ```ts
@@ -148,7 +148,7 @@ function webmcp(o?: { polyfill?: 'auto' | 'none'; filter?: (t: ToolManifest) => 
 **Tests (write first):** (fake `ModelContext` class recording calls; separate polyfill test in browser mode)
 - `registers_visible_tools_with_hints` · `destructive_not_exposed_by_default` · `execute_routes_through_call_with_caller_webmcp` · `execute_accepts_json_string_input` (review focus 4) · `resync_on_change_aborts_old` · `skips_native_form_duplicates` · `legacy_navigator_getter_supported` · `polyfill_auto_initializes` · `inactive_emits_unavailable_once`.
 
-**Task gate:** `pnpm -F @toolmark/core exec vitest run test/webmcp.test.ts && pnpm -F @toolmark/core exec vitest run --project core-browser test/webmcp-polyfill.test.ts`
+**Task gate:** `pnpm -F @toolmark/core exec vitest run test/webmcp.test.ts && pnpm -F @toolmark/core exec vitest run --project core-browser test/browser-webmcp-polyfill.test.ts`
 
 ---
 

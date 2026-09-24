@@ -91,7 +91,7 @@ docs/guides/{forms,wizards,files,dom,inertia}.md
 | 2 | E (normal) | 9–10 | `packages/inertia/src/form-component.ts` (+ its export line in `index.ts`), `examples/**`, `docs/guides/**`, `.changeset/m2-forms.md` | A–D |
 
 Core tests for DOM run in Vitest **browser mode**: Task 1 of this plan switches core's
-`vitest.config.ts` to two projects (`node` for `test/*.test.ts`, `browser` for `test/dom-*.test.ts`).
+`vitest.config.ts` to two projects (`core-node`, and `core-browser` for `test/dom-*.test.ts` and `test/browser-*.test.ts`).
 
 ---
 
@@ -116,7 +116,7 @@ type ArrayOp = { $append: unknown[] } | { $remove: number[] }
 - Fill values for an array path may be an array (replace), `{ $append: [...] }` or `{ $remove: [indexes] }` (indexes refer to the current array; out-of-range → `invalid` issue at that path).
 - `changes` report the whole array; user-edited if any `dirtyPaths()` entry starts with `path + '.'` or equals it.
 - A transparent scope does not add a name segment; disposing it still disposes its tools; `when` still applies.
-- `vitest.config.ts` defines projects `core-node` (`test/**/*.test.ts` excluding `dom-*`) and `core-browser` (`test/dom-*.test.ts`, Playwright chromium).
+- `vitest.config.ts` defines projects `core-node` (`test/**/*.test.ts` excluding `dom-*` and `browser-*`) and `core-browser` (`test/{dom,browser}-*.test.ts`, Playwright chromium).
 
 **Tests (write first):**
 - `array_replace_append_remove` · `array_remove_out_of_range_invalid` · `array_changes_whole_unit` · `array_user_edited_when_child_dirty`.
