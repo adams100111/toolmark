@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import {
   createFormTools,
@@ -7,6 +7,8 @@ import {
   setPath,
   type FieldInfo,
   type FormAdapter,
+  type JsonSchema,
+  type StandardSchemaV1,
 } from '@toolmark/core'
 import { createTestRegistry } from './helpers/create-test-registry.js'
 
@@ -474,5 +476,239 @@ describe('form tools', () => {
         (fillSchema.properties as { values: Record<string, unknown> }).values,
       ).not.toHaveProperty(key)
     }
+  })
+
+  it('fallback_sanitizes_through_nullish_and_ref_parents', async () => {
+    const tm = createTestRegistry()
+    const grpSchema = z.object({
+      pin: z.string().min(4),
+      grp: z.object({ tags: z.array(z.object({ name: z.string() })).optional() }).nullish(),
+    })
+    let values: Record<string, unknown> = { pin: '' }
+    const writes: Record<string, unknown>[] = []
+    const adapter: FormAdapter<Record<string, unknown>> = {
+      getValues: () => values,
+      setValues: (v) => {
+        writes.push(v)
+        for (const [p, x] of Object.entries(v)) values = setPath(values, p, x)
+      },
+      dirtyPaths: () => [],
+      submit: () => Promise.resolve(ok(null)),
+      fields: () => [],
+    }
+    createFormTools(tm, adapter, { name: 'n', description: 'd', input: grpSchema })
+    // pin is invalid and untouched → no validated value → schema fallback path.
+    const r = await tm.call(
+      'n.fill',
+      { values: { grp: { tags: [{ name: 'a', organization_id: 7 }] } } },
+      { caller: 'inapp' },
+    )
+    expect(r.status).toBe('ok')
+    expect(writes.at(-1)).toEqual({ 'grp.tags': [{ name: 'a' }] })
+
+    // $ref parent
+    const refTm = createTestRegistry()
+    values = { pin: '' }
+    createFormTools(refTm, adapter, {
+      name: 'r',
+      description: 'd',
+      input: grpSchema,
+      jsonSchema: {
+        type: 'object',
+        properties: { pin: { type: 'string', minLength: 4 }, grp: { $ref: '#/$defs/Grp' } },
+        $defs: {
+          Grp: {
+            type: 'object',
+            properties: {
+              tags: {
+                type: 'array',
+                items: { $ref: '#/definitions/Tag' },
+              },
+            },
+          },
+        },
+        definitions: { Tag: { type: 'object', properties: { name: { type: 'string' } } } },
+      },
+    })
+    const r2 = await refTm.call(
+      'r.fill',
+      { values: { grp: { tags: [{ name: 'b', organization_id: 8 }] } } },
+      { caller: 'inapp' },
+    )
+    expect(r2.status).toBe('ok')
+    expect(writes.at(-1)).toEqual({ 'grp.tags': [{ name: 'b' }] })
+  })
+
+  it('fallback_unresolvable_schema_node_is_undeclared_field', async () => {
+    const tm = createTestRegistry()
+    const input = z.object({ pin: z.string().min(4), blob: z.unknown().optional() })
+    let values: Record<string, unknown> = { pin: '' }
+    const setValues = vi.fn((v: Record<string, unknown>) => {
+      for (const [p, x] of Object.entries(v)) values = setPath(values, p, x)
+    })
+    createFormTools(
+      tm,
+      {
+        getValues: () => values,
+        setValues,
+        dirtyPaths: () => [],
+        submit: () => Promise.resolve(ok(null)),
+        fields: () => [],
+      },
+      {
+        name: 'u',
+        description: 'd',
+        input,
+        // `blob` declared only through an unresolvable $ref.
+        jsonSchema: {
+          type: 'object',
+          properties: { pin: { type: 'string' }, blob: { $ref: '#/$defs/Missing' } },
+        },
+      },
+    )
+    const r = await tm.call(
+      'u.fill',
+      { values: { blob: [{ secret: 1 }], pin: undefined } },
+      { caller: 'inapp' },
+    )
+    expect(r).toEqual({
+      status: 'invalid',
+      issues: [{ path: 'blob', message: 'Undeclared field' }],
+    })
+    expect(setValues).not.toHaveBeenCalled()
+  })
+
+  it('ancestor_write_forgets_descendant_agent_values', async () => {
+    const { adapter, fill } = setup()
+    expect((await fill({ pay: { number: 'A' } })).status).toBe('ok')
+    expect((await fill({ pay: null })).status).toBe('ok')
+    // RHF-like adapters keep reporting the leaf dirty after the agent's writes.
+    expect(adapter.dirty.has('pay.number')).toBe(true)
+    const r = await fill({ pay: { number: 'C' } })
+    expect(r).toMatchObject({ status: 'ok', data: { skipped: [] } })
+    expect(adapter.values.pay).toEqual({ number: 'C' })
+  })
+
+  it('submit_refused_stale_on_inline_confirmation_path', async () => {
+    const adapter = new FakeAdapter()
+    adapter.values = { ...adapter.values, title: 'T' }
+    const tm = createTestRegistry({
+      confirm: () => {
+        adapter.userTypes('title', 'Changed while confirming')
+        return Promise.resolve({ approved: true })
+      },
+    })
+    createFormTools(tm, adapter, { name: 'challenge', description: 'd', input: schema })
+    expect(await tm.call('challenge.submit', {}, { caller: 'webmcp' })).toMatchObject({
+      status: 'refused',
+      code: 'stale',
+      message: 'Form changed since confirmation was requested',
+    })
+    expect(adapter.submitted).toBe(0)
+  })
+
+  describe('fix round 3 — fallback sanitize semantics', () => {
+    /** A form whose `pin` is invalid and untouched, so fill takes the schema-sanitize fallback. */
+    function fallbackForm(
+      input: StandardSchemaV1<unknown, Record<string, unknown>>,
+      jsonSchema?: JsonSchema,
+    ) {
+      const tm = createTestRegistry()
+      let values: Record<string, unknown> = { pin: '' }
+      const writes: Record<string, unknown>[] = []
+      createFormTools(
+        tm,
+        {
+          getValues: () => values,
+          setValues: (v) => {
+            writes.push(v)
+            for (const [p, x] of Object.entries(v)) values = setPath(values, p, x)
+          },
+          dirtyPaths: () => [],
+          submit: () => Promise.resolve(ok(null)),
+          fields: () => [],
+        },
+        { name: 'f', description: 'd', input, ...(jsonSchema ? { jsonSchema } : {}) },
+      )
+      return {
+        writes,
+        fill: (v: Record<string, unknown>) => tm.call('f.fill', { values: v }, { caller: 'inapp' }),
+      }
+    }
+    const Tag = z.object({ name: z.string() })
+    const undeclared = (path: string) => ({
+      status: 'invalid',
+      issues: [{ path, message: 'Undeclared field' }],
+    })
+
+    it('anyof_with_no_branch_matching_kind_is_undeclared', async () => {
+      const f = fallbackForm(
+        z.object({ pin: z.string().min(4), blob: z.array(z.unknown()).nullish() }),
+        {
+          type: 'object',
+          properties: {
+            pin: { type: 'string' },
+            blob: { anyOf: [{ $ref: '#/$defs/Missing' }, { type: 'null' }] },
+          },
+        },
+      )
+      expect(await f.fill({ blob: [{ s: 1 }] })).toEqual(undeclared('blob'))
+      expect(f.writes).toEqual([])
+    })
+
+    it('array_items_anyof_without_object_branch_is_undeclared', async () => {
+      const f = fallbackForm(z.object({ pin: z.string().min(4), rows: z.array(Tag) }), {
+        type: 'object',
+        properties: {
+          pin: { type: 'string' },
+          rows: {
+            type: 'array',
+            items: { anyOf: [{ $ref: '#/$defs/Missing' }, { type: 'string' }] },
+          },
+        },
+      })
+      expect(await f.fill({ rows: [{ name: 'a', secret: 1 }] })).toEqual(undeclared('rows.0'))
+      expect(f.writes).toEqual([])
+    })
+
+    it('record_of_objects_is_sanitized_through_additional_properties', async () => {
+      const f = fallbackForm(
+        z.object({ pin: z.string().min(4), rows: z.array(z.record(z.string(), Tag)) }),
+      )
+      expect((await f.fill({ rows: [{ k: { name: 'a', secret: 1 } }] })).status).toBe('ok')
+      expect(f.writes.at(-1)).toEqual({ rows: [{ k: { name: 'a' } }] })
+    })
+
+    it('clean_record_of_objects_is_written', async () => {
+      const f = fallbackForm(
+        z.object({ pin: z.string().min(4), rows: z.array(z.record(z.string(), Tag)) }),
+      )
+      expect((await f.fill({ rows: [{ k: { name: 'a' }, j: { name: 'b' } }] })).status).toBe('ok')
+      expect(f.writes.at(-1)).toEqual({ rows: [{ k: { name: 'a' }, j: { name: 'b' } }] })
+    })
+
+    it('type_mismatch_is_undeclared', async () => {
+      const f = fallbackForm(z.object({ pin: z.string().min(4), blob: z.unknown() }), {
+        type: 'object',
+        properties: { pin: { type: 'string' }, blob: { type: 'string' } },
+      })
+      expect(await f.fill({ blob: [{ s: 1 }] })).toEqual(undeclared('blob'))
+      expect(await f.fill({ blob: { s: 1 } })).toMatchObject({ status: 'invalid' })
+      expect(f.writes).toEqual([])
+    })
+
+    it('open_nodes_keep_values_and_closed_objects_drop_extras', async () => {
+      const f = fallbackForm(
+        z.object({ pin: z.string().min(4), blob: z.array(z.unknown()), grp: Tag.optional() }),
+      )
+      expect((await f.fill({ blob: [{ anything: 1 }] })).status).toBe('ok')
+      expect(f.writes.at(-1)).toEqual({ blob: [{ anything: 1 }] })
+      const g = fallbackForm(z.object({ pin: z.string().min(4), list: z.array(z.unknown()) }), {
+        type: 'object',
+        properties: { pin: { type: 'string' }, list: { type: 'array' } },
+      })
+      expect((await g.fill({ list: ['a', 'b'] })).status).toBe('ok')
+      expect(await g.fill({ list: [{ a: 1 }] })).toEqual(undeclared('list.0'))
+    })
   })
 })

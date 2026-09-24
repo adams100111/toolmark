@@ -201,3 +201,33 @@ describe('fix round 1 — call pipeline', () => {
     expect(order).toEqual(['slow:start', 'slow:end', 'undo'])
   })
 })
+
+describe('fix round 2 — deferred input keeps class instances', () => {
+  it('deferred_run_keeps_transformed_class_instances', async () => {
+    class Money {
+      constructor(readonly cents: number) {}
+      format(): string {
+        return `$${(this.cents / 100).toFixed(2)}`
+      }
+    }
+    const tm = createTestRegistry()
+    const input: StandardSchemaV1<unknown, { price: Money }> = {
+      '~standard': {
+        version: 1,
+        vendor: 't',
+        validate: (v) => ({ value: { price: new Money((v as { cents: number }).cents) } }),
+      },
+    }
+    tm.register({
+      name: 'buy',
+      description: 'd',
+      jsonSchema: { type: 'object' },
+      hints: { consequential: true },
+      input,
+      run: (i) => ok(i.price.format()),
+    })
+    const r = await tm.call('buy', { cents: 1234 }, { caller: 'inapp' })
+    if (r.status !== 'needs_confirmation') throw new Error('expected needs_confirmation')
+    expect(await tm.confirmPending(r.confirmId, { approved: true })).toEqual(ok('$12.34'))
+  })
+})

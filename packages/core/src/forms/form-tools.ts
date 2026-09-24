@@ -166,56 +166,235 @@ function redact(changes: FieldChange[], sensitive: string[]): FieldChange[] {
   )
 }
 
-/** Keeps only the keys the JSON Schema declares (arrays via `items`); used when no validated
- * value is available. Unknown schemas (`{}`) keep the value. */
-function sanitize(value: unknown, node: unknown, root: JsonSchema, depth = 0): unknown {
-  if (depth > 64 || !isRecord(node)) return value
-  let schema: Record<string, unknown> = node
-  if (typeof schema.$ref === 'string') {
-    const m = /^#\/(\$defs|definitions)\/(.+)$/.exec(schema.$ref)
-    const defs = m ? root[m[1]!] : undefined
-    const target = m && isRecord(defs) ? defs[m[2]!] : undefined
-    if (isRecord(target)) schema = target
+interface ResolvedNode {
+  properties: Record<string, unknown> | undefined
+  items: unknown
+  open: boolean
+}
+
+/** Follows a local `$ref` (`#/$defs/…`, `#/definitions/…`); unresolvable refs → `undefined`. */
+function deref(node: unknown, root: JsonSchema, depth = 0): Record<string, unknown> | undefined {
+  if (!isRecord(node) || depth > 32) return undefined
+  if (typeof node.$ref !== 'string') return node
+  const m = /^#\/(\$defs|definitions)\/([^/]+)$/.exec(node.$ref)
+  const defs = m ? root[m[1]!] : undefined
+  const target =
+    m && isRecord(defs) && Object.prototype.hasOwnProperty.call(defs, m[2]!)
+      ? defs[m[2]!]
+      : undefined
+  return deref(target, root, depth + 1)
+}
+
+const typeIncludes = (n: Record<string, unknown>, t: string): boolean =>
+  n.type === t || (Array.isArray(n.type) && n.type.includes(t))
+
+/**
+ * Resolves a schema node for `value` (N1): follows `$ref`, merges `allOf`, and from
+ * `anyOf`/`oneOf` keeps the branches whose shape matches the value (object or array), unioning
+ * their properties. `undefined` when the node cannot be resolved.
+ */
+function resolveNode(
+  raw: unknown,
+  root: JsonSchema,
+  value: unknown,
+  depth = 0,
+): ResolvedNode | undefined {
+  const node = deref(raw, root)
+  if (!node || depth > 32) return undefined
+  const out: ResolvedNode = { properties: undefined, items: undefined, open: false }
+  const merge = (r: ResolvedNode): void => {
+    if (r.properties) out.properties = { ...(out.properties ?? {}), ...r.properties }
+    if (out.items === undefined && r.items !== undefined) out.items = r.items
+    if (r.open) out.open = true
   }
-  const props: Record<string, unknown> = {}
-  let hasProps = false
-  let open = schema.additionalProperties !== undefined && schema.additionalProperties !== false
-  let items: unknown = schema.items
-  const collect = (n: Record<string, unknown>): void => {
-    if (isRecord(n.properties)) {
-      hasProps = true
-      Object.assign(props, n.properties)
+  if (isRecord(node.properties)) out.properties = { ...node.properties }
+  if (node.items !== undefined) out.items = node.items
+  if (node.additionalProperties !== undefined && node.additionalProperties !== false)
+    out.open = true
+  if (Array.isArray(node.allOf)) {
+    for (const b of node.allOf) {
+      const r = resolveNode(b, root, value, depth + 1)
+      if (r) merge(r)
     }
-    if (n.additionalProperties !== undefined && n.additionalProperties !== false) open = true
-    if (items === undefined && n.items !== undefined) items = n.items
   }
-  collect(schema)
-  for (const key of ['anyOf', 'oneOf', 'allOf'] as const) {
-    const branches = schema[key]
-    if (Array.isArray(branches)) for (const b of branches) if (isRecord(b)) collect(b)
-  }
-  if (Array.isArray(value)) return value.map((v) => sanitize(v, items, root, depth + 1))
-  if (!isPlainObject(value) || !hasProps) return value
-  const out: Record<string, unknown> = {}
-  for (const key of Object.keys(value)) {
-    if (Object.prototype.hasOwnProperty.call(props, key)) {
-      out[key] = sanitize(value[key], props[key], root, depth + 1)
-    } else if (open) {
-      out[key] = value[key]
+  for (const key of ['anyOf', 'oneOf'] as const) {
+    const branches = node[key]
+    if (!Array.isArray(branches)) continue
+    for (const b of branches) {
+      const target = deref(b, root)
+      const r = resolveNode(b, root, value, depth + 1)
+      if (!target || !r) continue
+      const matches = Array.isArray(value)
+        ? r.items !== undefined || typeIncludes(target, 'array')
+        : isPlainObject(value)
+          ? r.properties !== undefined || r.open || typeIncludes(target, 'object')
+          : true
+      if (matches) merge(r)
     }
   }
   return out
 }
 
-/** The JSON Schema node declaring `path` (walking `properties`), or `undefined`. */
+/** The raw JSON Schema node declaring `path` (through `$ref`, `allOf`, `anyOf`, `oneOf`). */
 function schemaAt(root: JsonSchema, path: string): unknown {
   let node: unknown = root
   for (const seg of path.split('.')) {
-    if (!isRecord(node)) return undefined
-    const props = isRecord(node.properties) ? node.properties : undefined
-    node = props && Object.prototype.hasOwnProperty.call(props, seg) ? props[seg] : undefined
+    const r = resolveNode(node, root, {})
+    const props = r?.properties
+    if (!props || !Object.prototype.hasOwnProperty.call(props, seg)) return undefined
+    node = props[seg]
   }
   return node
+}
+
+const STRUCTURAL = [
+  'type',
+  'properties',
+  'items',
+  'prefixItems',
+  'additionalProperties',
+  'anyOf',
+  'oneOf',
+  'allOf',
+  '$ref',
+] as const
+
+/** Effective shape of a schema node for one value kind (fix round 3). */
+interface Shape {
+  props: Record<string, unknown> | undefined
+  items: unknown
+  prefix: unknown[] | undefined
+  /** `undefined` = absent. */
+  addl: unknown
+}
+
+/**
+ * Collects the shape a node declares for a value of `kind`. Returns `'open'` for `true`, `{}` or a
+ * node without structural keywords; `undefined` (unresolved) for unresolvable `$ref`s, a `type`
+ * that excludes `kind`, a failing `allOf` branch, or `anyOf`/`oneOf` with no branch of that kind
+ * and no own shape.
+ */
+function collect(
+  raw: unknown,
+  kind: 'array' | 'object',
+  root: JsonSchema,
+  depth = 0,
+): Shape | 'open' | undefined {
+  if (raw === true) return 'open'
+  if (!isRecord(raw) || depth > 32) return undefined
+  let node: Record<string, unknown> = raw
+  if (typeof node.$ref === 'string') {
+    const target = deref(node, root)
+    if (!target) return undefined
+    const rest = { ...node }
+    delete rest.$ref
+    node = STRUCTURAL.some((k) => k in rest)
+      ? {
+          ...rest,
+          allOf: [...(Array.isArray(rest.allOf) ? (rest.allOf as unknown[]) : []), target],
+        }
+      : target
+  }
+  if (!STRUCTURAL.some((k) => k in node)) return 'open'
+  if (node.type !== undefined && !typeIncludes(node, kind)) return undefined
+
+  const shape: Shape = {
+    props: isRecord(node.properties) ? { ...node.properties } : undefined,
+    items: node.items,
+    prefix: Array.isArray(node.prefixItems) ? node.prefixItems : undefined,
+    addl: node.additionalProperties,
+  }
+  const merge = (b: Shape): void => {
+    if (b.props) shape.props = { ...(shape.props ?? {}), ...b.props }
+    if (shape.items === undefined) shape.items = b.items
+    if (shape.prefix === undefined) shape.prefix = b.prefix
+    if (shape.addl === undefined || (!isRecord(shape.addl) && isRecord(b.addl))) {
+      if (b.addl !== undefined) shape.addl = b.addl
+    }
+  }
+  const hasShape = (): boolean =>
+    shape.props !== undefined ||
+    shape.items !== undefined ||
+    shape.prefix !== undefined ||
+    shape.addl !== undefined
+  let allOpen = false
+  if (Array.isArray(node.allOf)) {
+    for (const b of node.allOf) {
+      const c = collect(b, kind, root, depth + 1)
+      if (c === undefined) return undefined
+      if (c === 'open') allOpen = true
+      else merge(c)
+    }
+  }
+  for (const key of ['anyOf', 'oneOf'] as const) {
+    const branches = node[key]
+    if (!Array.isArray(branches)) continue
+    const matches = branches
+      .map((b) => collect(b, kind, root, depth + 1))
+      .filter((c) => c !== undefined)
+    if (matches.length === 0) {
+      if (!hasShape()) return undefined
+      continue
+    }
+    if (matches.includes('open') && !hasShape()) return 'open'
+    for (const c of matches) if (c !== 'open') merge(c)
+  }
+  if (!hasShape() && allOpen) return 'open'
+  return shape
+}
+
+const isStructured = (v: unknown): boolean => Array.isArray(v) || isPlainObject(v)
+
+/**
+ * Keeps only what the JSON Schema declares (C2b fallback when no validated value exists), per the
+ * fix-round-3 ruling. Fails closed: any object/array whose node is unresolved is reported in
+ * `undeclared` and the fill is refused.
+ */
+function sanitize(
+  value: unknown,
+  node: unknown,
+  root: JsonSchema,
+  path: string,
+  undeclared: string[],
+  depth = 0,
+): unknown {
+  if (!isStructured(value)) return value
+  const kind = Array.isArray(value) ? 'array' : 'object'
+  const shape = depth > 64 || node === undefined ? undefined : collect(node, kind, root)
+  if (shape === undefined) {
+    undeclared.push(path)
+    return undefined
+  }
+  if (shape === 'open') return value
+  if (Array.isArray(value)) {
+    return (value as unknown[]).map((item, i) => {
+      const itemNode = shape.prefix && i < shape.prefix.length ? shape.prefix[i] : shape.items
+      if (itemNode === undefined) {
+        if (!isStructured(item)) return item
+        undeclared.push(`${path}.${i}`)
+        return undefined
+      }
+      return sanitize(item, itemNode, root, `${path}.${i}`, undeclared, depth + 1)
+    })
+  }
+  const obj = value as Record<string, unknown>
+  const out: Record<string, unknown> = {}
+  for (const key of Object.keys(obj)) {
+    const child = `${path}.${key}`
+    if (shape.props && Object.prototype.hasOwnProperty.call(shape.props, key)) {
+      out[key] = sanitize(obj[key], shape.props[key], root, child, undeclared, depth + 1)
+    } else if (isRecord(shape.addl) && Object.keys(shape.addl).length > 0) {
+      out[key] = sanitize(obj[key], shape.addl, root, child, undeclared, depth + 1)
+    } else if (
+      shape.addl === true ||
+      (isRecord(shape.addl) && Object.keys(shape.addl).length === 0) ||
+      (shape.addl === undefined && shape.props === undefined)
+    ) {
+      out[key] = obj[key]
+    }
+    // `additionalProperties: false`, or absent on a node with `properties` → dropped.
+  }
+  return out
 }
 
 const byPath = (a: { path: string }, b: { path: string }): number =>
@@ -326,15 +505,21 @@ export function createFormTools<V extends Record<string, unknown>>(
 
     const before = new Map(touched.map((p) => [p, getPath(current, p)] as const))
     // C2: write the validated value (schema-stripped); without one, the schema-sanitized value.
-    const safeValue = (path: string): unknown => {
+    const undeclared: string[] = []
+    const safe = new Map<string, unknown>()
+    for (const path of touched) {
       const raw = flat[path]
-      if (raw === null) return null
-      if (checked.ok) {
-        const v = getPath(checked.value, path)
-        if (v !== undefined) return v
+      let v: unknown = raw === null ? null : undefined
+      if (raw !== null && checked.ok) v = getPath(checked.value, path)
+      if (raw !== null && v === undefined) {
+        v = sanitize(raw, schemaAt(inputSchema, path), inputSchema, path, undeclared)
       }
-      return sanitize(raw, schemaAt(inputSchema, path), inputSchema)
+      safe.set(path, v)
     }
+    if (undeclared.length > 0) {
+      return invalid(undeclared.sort().map((path) => ({ path, message: 'Undeclared field' })))
+    }
+    const safeValue = (path: string): unknown => safe.get(path)
     const toWrite: Record<string, unknown> = {}
     for (const path of touched) {
       const next = safeValue(path)
@@ -348,6 +533,7 @@ export function createFormTools<V extends Record<string, unknown>>(
     const stored = new Map<string, unknown>()
     for (const path of touched) {
       const value = getPath(after, path)
+      for (const p of [...agentSet.keys()]) if (p.startsWith(`${path}.`)) agentSet.delete(p)
       agentSet.set(path, value)
       stored.set(path, value)
       if (!deepEqual(before.get(path), value)) {
