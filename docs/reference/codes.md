@@ -107,5 +107,6 @@ module that cannot be found).
 | `judge/overlap`              | warn                            | `@toolmark/judge-typesafe` |
 | `judge/overlap-truncated`    | warn                            | `@toolmark/judge-typesafe` |
 | `judge/unavailable`          | warn                            | `@toolmark/judge-typesafe` |
+| `judge/timeout`              | warn                            | `@toolmark/judge-typesafe` |
 
 Rule definitions: [Lint](../guides/lint.md#rules).
