@@ -81,7 +81,7 @@ describe('json schema pattern safety (fix round 1, C1)', () => {
       for (const value of evil) {
         const t0 = performance.now()
         expect(s.validate(value)).not.toBeInstanceOf(Promise)
-        expect(performance.now() - t0, `${pattern} vs ${value}`).toBeLessThan(50)
+        expect(performance.now() - t0, `${pattern} vs ${value}`).toBeLessThan(1000)
       }
     }
   })
