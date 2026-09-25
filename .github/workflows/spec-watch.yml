@@ -133,7 +133,14 @@ jobs:
       # the closest continuously-updated Linux channel — see the two config files' header comments.
       # Installed fresh each week, not from a browser cache (SEC-14: this job holds a write token).
       - name: Install Chrome Dev
-        run: pnpm exec playwright install --with-deps chrome-dev
+        # Playwright has no `chrome-dev` install target (it installs chrome/chrome-beta only), but its
+        # `chrome-dev` channel finds Google's Linux Dev build at /opt/google/chrome-unstable.
+        run: |
+          set -euo pipefail
+          curl -fsSLo "$RUNNER_TEMP/chrome-dev.deb" https://dl.google.com/linux/direct/google-chrome-unstable_current_amd64.deb
+          sudo apt-get install -y "$RUNNER_TEMP/chrome-dev.deb"
+          pnpm exec playwright install-deps chromium
+          google-chrome-unstable --version
       - name: Vitest (browser-webmcp-polyfill.test.ts, Chrome Dev + WebMCPTesting)
         run: pnpm exec vitest run --config .spec-watch/vitest.canary.config.ts
       - name: Playwright (webmcp.spec.ts, Chrome Dev + WebMCPTesting)
@@ -174,20 +181,32 @@ jobs:
     permissions:
       contents: read
     steps:
-      - name: Sparse checkout web-platform-tests/wpt (webmcp/ only)
+      - name: Sparse checkout web-platform-tests/wpt (runner + webmcp/)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: web-platform-tests/wpt
           # wpt `master` (its default branch) on 2026-09-25.
           ref: ece2d7fdc436d4b9a3856877163b07ec15c05354
           sparse-checkout: |
-            webmcp
+            /wpt
+            /wpt.py
+            /tools/
+            /resources/
+            /common/
+            /webmcp/
+            /docs/commands.json
           sparse-checkout-cone-mode: false
           persist-credentials: false
-      - name: wpt run chrome_canary webmcp
+      # No Chrome Canary on Linux: run wpt's `chrome` product on the Dev channel.
+      - name: wpt run chrome (dev) webmcp
         run: |
-          ./wpt install-browser --browser=chrome --channel=canary
-          ./wpt run --binary-arg=--enable-blink-features=WebMCPTesting chrome_canary webmcp
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y libcairo2-dev libgirepository1.0-dev libgirepository-2.0-dev gobject-introspection pkg-config python3-dev
+          ./wpt make-hosts-file | sudo tee -a /etc/hosts > /dev/null
+          ./wpt run --channel=dev --install-browser --install-webdriver --yes --headless \
+            --log-mach=- --log-mach-level=info \
+            --binary-arg=--no-sandbox --binary-arg=--enable-blink-features=WebMCPTesting chrome webmcp
 
   audit:
     if: github.event_name != 'pull_request'
