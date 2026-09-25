@@ -71,7 +71,7 @@ Broadcast::channel('toolmark.{userId}.{conversationId}', function (User $user, s
 
 ```php
 <?php
-// app/Toolmark/ToolmarkMessage.php
+// file: app/Toolmark/ToolmarkMessage.php
 namespace App\Toolmark;
 
 use Illuminate\Broadcasting\PrivateChannel;
@@ -116,7 +116,7 @@ through the cache with polling when Redis is not available.
 
 ```php
 <?php
-// app/Toolmark/BrowserBridge.php
+// file: app/Toolmark/BrowserBridge.php
 namespace App\Toolmark;
 
 use App\Models\Conversation;
@@ -571,7 +571,7 @@ Route::post('/toolmark/bridge/{conversation}', BridgeController::class)
 
 ```php
 <?php
-// app/Toolmark/BridgeController.php
+// file: app/Toolmark/BridgeController.php
 namespace App\Toolmark;
 
 use App\Models\Conversation;
@@ -621,7 +621,7 @@ answering (Anthropic `tool_use.id`, OpenAI `tool_calls[].id`, …) to `handle()`
 
 ```php
 <?php
-// app/Toolmark/AgentTool.php
+// file: app/Toolmark/AgentTool.php
 namespace App\Toolmark;
 
 interface AgentTool
@@ -644,7 +644,7 @@ interface AgentTool
 
 ```php
 <?php
-// app/Toolmark/PageCallTool.php
+// file: app/Toolmark/PageCallTool.php
 namespace App\Toolmark;
 
 use App\Models\Conversation;
@@ -717,7 +717,7 @@ final class PageCallTool implements AgentTool
 
 ```php
 <?php
-// app/Toolmark/PageDescribeTool.php
+// file: app/Toolmark/PageDescribeTool.php
 namespace App\Toolmark;
 
 use App\Models\Conversation;
@@ -789,7 +789,7 @@ sending an empty tool list.
 
 ```php
 <?php
-// app/Toolmark/HandleToolmarkConfirmation.php
+// file: app/Toolmark/HandleToolmarkConfirmation.php
 namespace App\Toolmark;
 
 use App\Models\Conversation;
@@ -850,6 +850,28 @@ final class HandleToolmarkConfirmation implements ShouldQueue
 `PageCallTool`/`PageDescribeTool`); the essential parts are that no page tool can be called and
 the single step.
 
+```php
+<?php
+// file: app/Toolmark/AgentRunner.php
+namespace App\Toolmark;
+
+use App\Models\Conversation;
+
+/**
+ * Your agent loop, as HandleToolmarkConfirmation uses it: runs one turn of the conversation with
+ * the given tools. Implement it over your agent library (the example binds a scripted runner).
+ */
+interface AgentRunner
+{
+    /**
+     * @param list<AgentTool> $tools the tools the model may call in this turn ([] = none)
+     * @param string $instructions extra instructions for this turn only
+     * @param int $maxSteps model steps allowed in this turn
+     */
+    public function runTurn(Conversation $conversation, array $tools, string $instructions, int $maxSteps): void;
+}
+```
+
 ## 8. Props builder (server-declared tools)
 
 Server-declared tools are tools the page gets from the server in the `toolmark` Inertia prop
@@ -872,7 +894,7 @@ input schemas to that subset and test them on the page.
 
 ```php
 <?php
-// app/Toolmark/ServerTool.php
+// file: app/Toolmark/ServerTool.php
 namespace App\Toolmark;
 
 /**
@@ -910,7 +932,7 @@ final readonly class ServerTool
 
 ```php
 <?php
-// app/Toolmark/ToolmarkProps.php
+// file: app/Toolmark/ToolmarkProps.php
 namespace App\Toolmark;
 
 use Illuminate\Http\Request;
