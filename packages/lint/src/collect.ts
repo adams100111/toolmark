@@ -18,13 +18,14 @@ export const MISSING_HOOK_MESSAGE =
 /** Thrown for `--url`/`--judge` usage failures; the CLI reports these as exit code 2. */
 export class LintUsageError extends Error {}
 
-/** The minimal in-page test-hook surface `collectFromUrl` calls. */
+/**
+ * The minimal in-page test-hook surface `collectFromUrl` calls. Read via a local cast (not a
+ * `declare global` augmentation) so `@toolmark/lint`'s narrower view of `__toolmark_test__` never
+ * conflicts with `@toolmark/testing`'s own (broader) global declaration when both packages are
+ * type-checked together.
+ */
 interface PageTestHook {
   manifest(o: { detail: 'full'; caller: 'inapp' }): { rev: number; tools: ToolManifest[] }
-}
-
-declare global {
-  var __toolmark_test__: PageTestHook | undefined
 }
 
 /** Options for {@link collectFromUrl}. */
@@ -68,14 +69,19 @@ export async function collectFromUrl(
         )
       }
       try {
-        await page.waitForFunction(() => Boolean(globalThis.__toolmark_test__), undefined, {
-          timeout: HOOK_WAIT_MS,
-        })
+        await page.waitForFunction(
+          () => Boolean((globalThis as { __toolmark_test__?: PageTestHook }).__toolmark_test__),
+          undefined,
+          { timeout: HOOK_WAIT_MS },
+        )
       } catch {
         throw new LintUsageError(MISSING_HOOK_MESSAGE)
       }
       const manifest = await page.evaluate(() =>
-        globalThis.__toolmark_test__!.manifest({ detail: 'full', caller: 'inapp' }),
+        (globalThis as { __toolmark_test__?: PageTestHook }).__toolmark_test__!.manifest({
+          detail: 'full',
+          caller: 'inapp',
+        }),
       )
       return { page: url, tools: manifest.tools }
     } finally {
