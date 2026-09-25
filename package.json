@@ -25,6 +25,7 @@
   },
   "devDependencies": {
     "@arethetypeswrong/cli": "catalog:",
+    "@changesets/changelog-github": "catalog:",
     "@changesets/cli": "catalog:",
     "@eslint/js": "catalog:",
     "@playwright/test": "catalog:",
