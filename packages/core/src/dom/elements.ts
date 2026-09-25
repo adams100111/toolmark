@@ -140,6 +140,12 @@ function hasSensitiveAutocomplete(el: Element): boolean {
  */
 const seenAsPassword = new WeakSet<Element>()
 
+/**
+ * Page/user-content regions: labels inside are never field descriptions, and controls inside are
+ * excluded (a `form=`-associated control can sit in an editable region outside its form).
+ */
+const UNTRUSTED_LABEL_REGION = '[data-tool-ignore],[contenteditable]:not([contenteditable="false"])'
+
 function isDisabled(el: Element): boolean {
   try {
     return el.matches(':disabled')
@@ -153,7 +159,8 @@ function isDisabled(el: Element): boolean {
  * and writes (spec §10.2, §14): `type="hidden"` (CSRF tokens), `type="password"` (and any control
  * once seen as one, so a "show password" toggle does not expose it), `autocomplete` tokens `cc-*`,
  * `current-password`, `new-password` and `one-time-code`, disabled controls (incl. inside a
- * disabled `fieldset`) and anything under `[data-tool-ignore]`.
+ * disabled `fieldset`) and anything under `[data-tool-ignore]` or an editable region
+ * (`[contenteditable]` other than `"false"`; fix round 1 I3).
  */
 export function isExcluded(el: Element): boolean {
   if (seenAsPassword.has(el)) return true
@@ -165,7 +172,11 @@ export function isExcluded(el: Element): boolean {
     }
     if (type === 'hidden') return true
   }
-  return hasSensitiveAutocomplete(el) || isDisabled(el) || el.closest('[data-tool-ignore]') !== null
+  return (
+    hasSensitiveAutocomplete(el) ||
+    isDisabled(el) ||
+    Element.prototype.closest.call(el, UNTRUSTED_LABEL_REGION) !== null
+  )
 }
 
 /**
@@ -576,9 +587,6 @@ function textOf(node: Node, control: Element): string {
   }
   return Array.from(el.childNodes, (c) => textOf(c, control)).join('')
 }
-
-/** Labels inside these regions are page/user content, never field descriptions. */
-const UNTRUSTED_LABEL_REGION = '[data-tool-ignore],[contenteditable]:not([contenteditable="false"])'
 
 /**
  * @internal The text of a control's associated `<label>`s (nested controls and

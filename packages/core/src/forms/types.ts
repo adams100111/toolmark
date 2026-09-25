@@ -1,7 +1,7 @@
 import type { FileFieldSpec } from '../files.js'
 import type { ToolResult } from '../result.js'
 import type { StandardSchemaV1 } from '../standard-schema.js'
-import type { JsonSchema } from '../tool.js'
+import type { JsonSchema, ToolHints, ToolOrigin } from '../tool.js'
 
 /** A form field as the adapter knows it (labels and elements drive anchors and redaction). */
 export interface FieldInfo {
@@ -84,4 +84,20 @@ export interface FormToolOptions<V> {
    * production: event, no tools registered).
    */
   files?: Record<string, FileFieldSpec>
+  /**
+   * @internal Origin of every registered tool (`.fill`, `.submit`, `.options`); unset = `code`.
+   * Set by the DOM scanner (`dom` / `native-form`).
+   */
+  origin?: ToolOrigin
+  /**
+   * @internal `nativeName` of `.fill` / `.submit` (a `native-form` form's `toolname`, so WebMCP
+   * can skip tools the browser already serves). `.options` never gets one.
+   */
+  nativeName?: { fill?: string; submit?: string }
+  /**
+   * @internal Hint overrides: `fill` is merged into the fill tool's hints; `submit` REPLACES the
+   * submit tool's default `{ consequential: true }` (the scanner uses it for `toolautosubmit`,
+   * `data-tool-destructive` and `untrustedContent`).
+   */
+  hints?: { fill?: ToolHints; submit?: ToolHints }
 }

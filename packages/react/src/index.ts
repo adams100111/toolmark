@@ -7,6 +7,7 @@ export { ToolScope, useCurrentScope, type ToolScopeProps } from './scope.js'
 export { useTool } from './use-tool.js'
 export { useAgentActivity, type ActiveCall, type AgentActivity } from './use-agent-activity.js'
 export { useFormTool } from './use-form-tool.js'
+export { useWizardTool, type UseWizardToolOptions } from './use-wizard-tool.js'
 export { useConfirmQueue, type ConfirmQueueState } from './use-confirm-queue.js'
 export {
   usePendingConfirmations,

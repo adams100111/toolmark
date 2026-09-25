@@ -446,6 +446,7 @@ describe('DOM submit', () => {
     const mod = await import('@toolmark/core/dom')
     expect(typeof mod.domFormAdapter).toBe('function')
     expect(typeof mod.synthesizeFormSchema).toBe('function')
+    expect(typeof mod.scanDom).toBe('function')
   })
 })
 

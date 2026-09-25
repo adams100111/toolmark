@@ -1,29 +1,8 @@
 import { useEffect, useRef } from 'react'
+import { isDevRegistry } from '@toolmark/core'
 import type { Scope, ToolDefinition, Toolmark, ToolState } from '@toolmark/core'
 import { useCurrentScope } from './scope.js'
 import { useToolmark } from './provider.js'
-
-// Bundlers (webpack, Next.js, esbuild) statically replace `process.env.NODE_ENV`; declaring the
-// ambient shape (instead of depending on `@types/node`, which this package doesn't have) lets that
-// replacement/dead-code-elimination happen without a real Node `process` at runtime.
-declare const process: { env: Record<string, string | undefined> } | undefined
-
-/** @internal Best-effort dev-mode detection with no bundler-specific dependency. */
-function isDevEnvironment(): boolean {
-  try {
-    const meta = import.meta as unknown as { env?: { DEV?: boolean; MODE?: string } }
-    if (meta.env) {
-      if (typeof meta.env.DEV === 'boolean') return meta.env.DEV
-      if (typeof meta.env.MODE === 'string') return meta.env.MODE !== 'production'
-    }
-  } catch {
-    // Not bundled with a `define`d `import.meta.env`; fall through.
-  }
-  if (typeof process !== 'undefined' && process.env.NODE_ENV) {
-    return process.env.NODE_ENV !== 'production'
-  }
-  return false
-}
 
 /** @internal Registration timestamps per (registry, scope path + name), for the churn warning. */
 const churnTimestamps = new WeakMap<Toolmark, Map<string, number[]>>()
@@ -31,7 +10,7 @@ const CHURN_WINDOW_MS = 1000
 const CHURN_THRESHOLD = 3
 
 function warnIfChurning(toolmark: Toolmark, scope: Scope | undefined, name: string): void {
-  if (!isDevEnvironment()) return
+  if (!isDevRegistry(toolmark)) return
   const key = `${scope?.path ?? ''}.${name}`
   let byKey = churnTimestamps.get(toolmark)
   if (!byKey) churnTimestamps.set(toolmark, (byKey = new Map<string, number[]>()))
