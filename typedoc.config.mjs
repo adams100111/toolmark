@@ -42,6 +42,6 @@ export default {
   treatWarningsAsErrors: true,
   // Packages type-check separately (`pnpm typecheck`); compiled together here, lint's private
   // `__toolmark_test__` global declaration conflicts with @toolmark/testing's (ruling, M4 T7).
-  skipErrorChecking: true,
+  skipErrorChecking: false,
   validation: { invalidLink: true, notExported: strict, notDocumented: strict },
 }
