@@ -24,6 +24,9 @@ import { UndoStore } from './undo.js'
 
 const DEFAULT_CONFIRM_EXPIRY_MS = 600_000
 const DEFAULT_ABORT_GRACE_MS = 5_000
+const DEFAULT_CALL_TIMEOUT_MS = 120_000
+/** Largest delay `setTimeout` honours (longer ones fire immediately). */
+const MAX_TIMER_MS = 2_147_483_647
 const STATUSES = new Set(['ok', 'invalid', 'refused', 'needs_confirmation', 'cancelled', 'error'])
 
 type InlineOutcome =
@@ -63,6 +66,15 @@ export function createCallRuntime(state: RegistryState): CallRuntime {
   const undos = new UndoStore<Entry>()
   const expiryMs = (): number => state.options.confirmExpiryMs ?? DEFAULT_CONFIRM_EXPIRY_MS
   const graceMs = (): number => state.options.abortGraceMs ?? DEFAULT_ABORT_GRACE_MS
+  /** SEC-4: the deadline of a run without caller signal, or `undefined` when disabled. */
+  const callTimeoutMs = (): number | undefined => {
+    const ms = state.options.callTimeoutMs ?? DEFAULT_CALL_TIMEOUT_MS
+    return Number.isFinite(ms) && ms >= 0 ? Math.min(ms, MAX_TIMER_MS) : undefined
+  }
+  const timeoutReason = (): unknown =>
+    typeof DOMException === 'function'
+      ? new DOMException('The call exceeded callTimeoutMs', 'TimeoutError')
+      : new Error('The call exceeded callTimeoutMs')
 
   const queueFor = (scope: ScopeNode): SerialQueue => {
     let q = queues.get(scope)
@@ -295,6 +307,13 @@ export function createCallRuntime(state: RegistryState): CallRuntime {
     const onCallerAbort = (): void => controller.abort(callerSignal?.reason)
     if (callerSignal?.aborted) onCallerAbort()
     else callerSignal?.addEventListener('abort', onCallerAbort, { once: true })
+    // SEC-4: a run without a caller signal (signal-less `tm.call`, `confirmPending`) gets a
+    // deadline, so a hung tool is abandoned after the grace period and its scope queue released.
+    const timeout = callerSignal === undefined ? callTimeoutMs() : undefined
+    const deadline =
+      timeout === undefined
+        ? undefined
+        : setTimeout(() => controller.abort(timeoutReason()), timeout)
 
     const ctx: ToolContext = {
       signal: controller.signal,
@@ -344,6 +363,7 @@ export function createCallRuntime(state: RegistryState): CallRuntime {
       else controller.signal.addEventListener('abort', startGrace, { once: true })
 
       void work.then(async (result) => {
+        clearTimeout(deadline)
         callerSignal?.removeEventListener('abort', onCallerAbort)
         controller.signal.removeEventListener('abort', startGrace)
         if (settled) {
@@ -590,8 +610,37 @@ export function createCallRuntime(state: RegistryState): CallRuntime {
       }
       return errorResult('Tool failed')
     }
+    // SEC-4: a restorer that never settles is abandoned after `callTimeoutMs` plus the grace
+    // period (restorers get no signal), which releases the scope queue.
+    const bounded = (): Promise<ToolResult<{ changes: FieldChange[] }>> => {
+      const timeout = callTimeoutMs()
+      if (timeout === undefined) return restore()
+      return new Promise((resolve) => {
+        let settled = false
+        const timer = setTimeout(
+          () => {
+            settled = true
+            resolve(cancelled('signal'))
+          },
+          Math.min(timeout + graceMs(), MAX_TIMER_MS),
+        )
+        void restore().then((r) => {
+          if (settled) {
+            state.report({
+              code: 'late_result',
+              message: `Undo of "${owner.fullName}" settled after it was abandoned; result dropped`,
+              tool: owner.fullName,
+            })
+            return
+          }
+          settled = true
+          clearTimeout(timer)
+          resolve(r)
+        })
+      })
+    }
     return new Promise((resolve) => {
-      const slot = queueFor(owner.scope).push(async () => resolve(await restore()))
+      const slot = queueFor(owner.scope).push(async () => resolve(await bounded()))
       if (!slot)
         resolve(refuse('busy', `Too many pending calls in the scope of "${owner.fullName}"`))
     })

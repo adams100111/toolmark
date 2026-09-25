@@ -10,6 +10,7 @@ import {
   type FieldInfo,
   type StandardSchemaV1,
   type ToolmarkErrorEvent,
+  type ToolResult,
 } from '@toolmark/core'
 import { createTestRegistry } from './helpers/create-test-registry.js'
 
@@ -223,5 +224,117 @@ describe('SEC-3: confirmation expiry does not depend on timers alone', () => {
     expect(r).toEqual({ status: 'cancelled', by: 'operator' })
     expect(ran).toBe(0)
     expect(stages).toEqual(['pending', 'expired'])
+  })
+})
+
+describe('SEC-4: runs without a caller signal have a deadline (callTimeoutMs)', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  const never = () => new Promise<never>(() => undefined)
+
+  it('sec_4_confirm_pending_hung_tool_releases_scope_after_deadline', async () => {
+    vi.useFakeTimers()
+    const tm = createTestRegistry({ callTimeoutMs: 1000, abortGraceMs: 100 })
+    const errs: string[] = []
+    tm.events.on('error', (e) => errs.push(e.code))
+    let signal: AbortSignal | undefined
+    tm.register({
+      name: 'hang',
+      description: 'd',
+      hints: { consequential: true },
+      run: (_i, ctx) => {
+        signal = ctx.signal
+        return never()
+      },
+    })
+    tm.register({ name: 'next', description: 'd', run: () => ok('ran') })
+    const r = await tm.call('hang', {}, { caller: 'inapp' })
+    if (r.status !== 'needs_confirmation') throw new Error('expected needs_confirmation')
+    const approved = tm.confirmPending(r.confirmId, { approved: true })
+    const second = tm.call('next', {}, { caller: 'inapp' })
+    await vi.advanceTimersByTimeAsync(999)
+    expect(signal?.aborted).toBe(false)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(signal?.aborted).toBe(true)
+    await vi.advanceTimersByTimeAsync(100)
+    expect(await approved).toEqual({ status: 'cancelled', by: 'signal' })
+    expect(await second).toEqual(ok('ran'))
+  })
+
+  it('sec_4_signal_less_call_times_out_and_releases_queue', async () => {
+    vi.useFakeTimers()
+    const tm = createTestRegistry({ callTimeoutMs: 500, abortGraceMs: 50 })
+    tm.register({ name: 'hang', description: 'd', run: never })
+    tm.register({ name: 'next', description: 'd', run: () => ok('ran') })
+    const first = tm.call('hang', {}, { caller: 'inapp' })
+    const second = tm.call('next', {}, { caller: 'inapp' })
+    await vi.advanceTimersByTimeAsync(550)
+    expect(await first).toEqual({ status: 'cancelled', by: 'signal' })
+    expect(await second).toEqual(ok('ran'))
+  })
+
+  it('sec_4_default_call_timeout_is_120000_ms', async () => {
+    vi.useFakeTimers()
+    const tm = createTestRegistry({ abortGraceMs: 0 })
+    let signal: AbortSignal | undefined
+    tm.register({
+      name: 'hang',
+      description: 'd',
+      run: (_i, ctx) => {
+        signal = ctx.signal
+        return never()
+      },
+    })
+    const first = tm.call('hang', {}, { caller: 'inapp' })
+    await vi.advanceTimersByTimeAsync(119_999)
+    expect(signal?.aborted).toBe(false)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(signal?.aborted).toBe(true)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(await first).toEqual({ status: 'cancelled', by: 'signal' })
+  })
+
+  it('sec_4_caller_signal_is_not_given_a_deadline', async () => {
+    vi.useFakeTimers()
+    const tm = createTestRegistry({ callTimeoutMs: 100, abortGraceMs: 0 })
+    let signal: AbortSignal | undefined
+    let release!: () => void
+    tm.register({
+      name: 'slow',
+      description: 'd',
+      run: (_i, ctx) => {
+        signal = ctx.signal
+        return new Promise<ToolResult<string>>((r) => (release = () => r(ok('done'))))
+      },
+    })
+    const p = tm.call('slow', {}, { caller: 'inapp', signal: new AbortController().signal })
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(signal?.aborted).toBe(false)
+    release()
+    expect(await p).toEqual(ok('done'))
+  })
+
+  it('sec_4_hung_undo_restorer_releases_scope_after_deadline', async () => {
+    vi.useFakeTimers()
+    const tm = createTestRegistry({ callTimeoutMs: 1000, abortGraceMs: 100 })
+    let callId = ''
+    tm.events.on('call', (e) => (callId = e.callId))
+    tm.register({
+      name: 'edit',
+      description: 'd',
+      run: (_i, ctx) => {
+        ctx.registerUndo(never)
+        return ok(true)
+      },
+    })
+    tm.register({ name: 'next', description: 'd', run: () => ok('ran') })
+    await tm.call('edit', {}, { caller: 'inapp' })
+    const undone = tm.undo(callId)
+    const second = tm.call('next', {}, { caller: 'inapp' })
+    await vi.advanceTimersByTimeAsync(1100)
+    expect(await undone).toEqual({ status: 'cancelled', by: 'signal' })
+    expect(await second).toEqual(ok('ran'))
   })
 })

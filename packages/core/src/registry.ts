@@ -94,6 +94,15 @@ export interface ToolmarkOptions {
   confirmExpiryMs?: number
   /** Grace period after abort before a call is abandoned, in ms (default 5000). */
   abortGraceMs?: number
+  /**
+   * Deadline in ms (default 120000) for every run that has no caller `signal`: a `tm.call` without
+   * `signal`, the run a {@link Toolmark.confirmPending} approval starts, and an
+   * {@link Toolmark.undo} restorer. When it passes, the run's `ctx.signal` aborts; a tool that
+   * still has not settled after `abortGraceMs` is abandoned with `cancelled` `signal`, which
+   * releases its scope queue (a later settle is dropped with a `late_result` event). Calls that
+   * pass a `signal` are bounded by it instead. `Infinity` disables the deadline.
+   */
+  callTimeoutMs?: number
   /** Visible-tool budget; exceeding it emits `tool_budget_exceeded` in `dev` (default 40). */
   budget?: number
   /**
@@ -201,7 +210,7 @@ export interface Toolmark {
   /**
    * Completes a `needs_confirmation` call (single use). Approval runs the tool as caller `human`
    * (with re-validated edited `input`, if given); rejection → `cancelled` `operator`.
-   * Known limit: the approved run has no caller signal, so it cannot be cancelled.
+   * The approved run has no caller signal; it is bounded by `callTimeoutMs` (default 120000).
    */
   confirmPending(confirmId: string, outcome: ConfirmOutcome): Promise<ToolResult<unknown>>
   /** Runs the undo restorer a call registered (once); otherwise `refused` `undo_unavailable`. */
