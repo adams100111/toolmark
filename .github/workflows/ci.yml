@@ -164,7 +164,7 @@ jobs:
 
   e2e:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -175,6 +175,9 @@ jobs:
           node-version: 24.x
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # Built output first: Playwright spec files load in Node (no @toolmark/source), and the lint
+      # and MCP specs spawn the built CLIs.
+      - run: pnpm -r --filter "./packages/*" build
       - name: Playwright version
         id: playwright
         run: echo "version=$(pnpm exec playwright --version | awk '{print $2}')" >> "$GITHUB_OUTPUT"
@@ -183,17 +186,16 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}-chromium
-      - name: Install Chromium
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}-chromium-firefox-webkit
+      - name: Install Chromium, Firefox and WebKit
         if: steps.playwright-cache.outputs.cache-hit != 'true'
-        run: pnpm exec playwright install --with-deps chromium
-      - name: Install Chromium system dependencies
+        run: pnpm exec playwright install --with-deps chromium firefox webkit
+      - name: Install browser system dependencies
         if: steps.playwright-cache.outputs.cache-hit == 'true'
-        run: pnpm exec playwright install-deps chromium
-      # Playwright spec files load in Node (no @toolmark/source): @toolmark/testing resolves to dist.
-      - run: pnpm --filter "@toolmark/testing..." build
+        run: pnpm exec playwright install-deps chromium firefox webkit
       - run: pnpm -F @toolmark-examples/react-vite typecheck
-      - name: Playwright (react-vite, Chromium, port 5173)
+      # Every project in examples/react-vite/playwright.config.ts (Chromium, Firefox, WebKit).
+      - name: Playwright (react-vite, all projects, port 5173)
         run: pnpm -F @toolmark-examples/react-vite exec playwright test
         env:
           ROUND_BUDGET_REPORT: round-budget.json
@@ -210,3 +212,73 @@ jobs:
           name: round-budget
           path: examples/react-vite/round-budget.json
           if-no-files-found: error
+
+  docs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0 (version from packageManager)
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.x
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # TypeDoc (non-strict through M4, zero warnings) + VitePress.
+      - run: pnpm docs:build
+      # The Laravel reference guide must show examples/inertia-laravel/app/Toolmark/*.php byte for
+      # byte. Guarded until that example lands (M4 T7 ruling; the T7b follow-up removes the guard).
+      - name: Laravel reference matches the example
+        run: |
+          if [ ! -d examples/inertia-laravel ]; then
+            echo "::notice::examples/inertia-laravel not present yet; skipping the Laravel reference check"
+            exit 0
+          fi
+          node scripts/check-laravel-reference.mjs
+
+  example-nextjs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      NEXT_TELEMETRY_DISABLED: 1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0 (version from packageManager)
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.x
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # Turbopack resolves @toolmark/* through `import` (dist/): build the packages first.
+      - run: pnpm -r --filter "./packages/*" build
+      - run: pnpm -F @toolmark-examples/nextjs build
+      - run: pnpm -F @toolmark-examples/nextjs typecheck
+      - name: Playwright version
+        id: playwright
+        run: echo "version=$(pnpm exec playwright --version | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}-chromium
+      - name: Install Chromium
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: pnpm -F @toolmark-examples/nextjs exec playwright install --with-deps chromium
+      - name: Install Chromium system dependencies
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: pnpm -F @toolmark-examples/nextjs exec playwright install-deps chromium
+      # next dev (3100, test hook) and next start (3101, production) via the example's globalSetup.
+      - name: Playwright (nextjs, Chromium)
+        run: pnpm -F @toolmark-examples/nextjs exec playwright test
+      - name: Upload Playwright traces and server logs
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: example-nextjs-test-results
+          path: examples/nextjs/test-results/
+          if-no-files-found: ignore
