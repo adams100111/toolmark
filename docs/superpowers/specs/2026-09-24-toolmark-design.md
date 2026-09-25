@@ -533,7 +533,11 @@ builder. Reusable extraction, if ever needed, goes to its **own** repo (`toolmar
   any path segment `__proto__`, `prototype` or `constructor` is rejected (no prototype pollution).
 - **Bridge and MCP pairing security**: §12.2 MUSTs; bounded inbound message size; MCP pairing code +
   session token, origin allow-list (missing `Origin` rejected), localhost binding, page frames
-  validated and bound to the paired `clientId` (§11.3).
+  validated and bound to the paired `clientId` (§11.3). Threat model: pairing defends against web
+  pages and remote hosts (loopback bind, `Host`/`Origin` checks, single-use code, session token,
+  handshake throttling); a malicious **local process** that binds the pairing port first is out of
+  scope — it could receive the code/token and drive the page as caller `mcp` (consequential tools
+  still confirm inline). The first handshake frame must arrive within 3000 ms.
 - **Files**: URL fetching off by default, allow-listed origins, `credentials: 'omit'`, size/type
   limits.
 - **Timeouts and cancellation**: every call has a signal; no hanging promises. A tool that ignores its
