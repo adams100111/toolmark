@@ -8,8 +8,11 @@ export const BASE_URL = 'http://127.0.0.1:8010'
 export const STORAGE_STATE = path.join(ROOT, 'test-results', 'alice.json')
 
 /**
- * 1. Builds the frontend in mode `e2e`: the gate's `pnpm build` is a production build, which by
- *    design omits the test hook (spec §11.6); these tests and `toolmark lint --url` need it.
+ * 1. Builds the frontend in mode `e2e` into public/build-e2e: the gate's `pnpm build` is a
+ *    production build in public/build, which by design omits the test hook (spec §11.6); these
+ *    tests and `toolmark lint --url` need it. The server serves build-e2e because Playwright
+ *    starts it with TOOLMARK_E2E_BUILD=true (honoured in `local`/`testing` only), so
+ *    public/build never contains the hook.
  * 2. Logs in as Alice and saves `test-results/alice.json`.
  *
  * The database is seeded by `composer run toolmark:setup` before the servers start (never while

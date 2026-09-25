@@ -26,7 +26,7 @@ if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
 fi
 
 args=(run --rm --init -i -v "$PWD":/app -w /app --user "$(id -u):$(id -g)" -e COMPOSER_HOME=/tmp/composer)
-for var in APP_ENV CACHE_STORE REDIS_HOST PHP_CLI_SERVER_WORKERS; do
+for var in APP_ENV CACHE_STORE REDIS_HOST PHP_CLI_SERVER_WORKERS TOOLMARK_E2E_BUILD; do
   if [ -n "${!var:-}" ]; then
     args+=(-e "$var=${!var}")
   fi

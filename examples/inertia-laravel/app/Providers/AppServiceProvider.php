@@ -4,6 +4,7 @@ namespace App\Providers;
 
 use App\Agent\ScriptedAgentRunner;
 use App\Toolmark\AgentRunner;
+use Illuminate\Support\Facades\Vite;
 use Illuminate\Support\ServiceProvider;
 
 class AppServiceProvider extends ServiceProvider
@@ -26,6 +27,10 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
-        //
+        // The Playwright run builds the frontend with the test hook into public/build-e2e (never
+        // public/build) and starts the server with TOOLMARK_E2E_BUILD=true.
+        if (config('toolmark.e2e_build') && $this->app->environment(['local', 'testing'])) {
+            Vite::useBuildDirectory('build-e2e');
+        }
     }
 }
