@@ -822,7 +822,8 @@ after O-j. None of them may be run by an agent.
   - Settings → Pages: source "GitHub Actions".
   - Then run `gh workflow run docs-deploy.yml --ref main`.
 - **O-e · Branch protection on `main`:** require the `ci.yml` and `release.yml` job names listed in
-  `owner-handoff.md`, require PRs, and block force-pushes.
+  `owner-handoff.md`, require PRs, and block force-pushes. Only jobs that run on every PR may be
+  required: from `release.yml` that is `release-dry-run` alone (final review I-3).
 - **O-f · Environment:** Settings → Environments → `npm-release`:
   - Required reviewer: the owner only. Do not enable "prevent self-review", because the owner
     account pushes the release commit.
@@ -832,7 +833,9 @@ after O-j. None of them may be run by an agent.
   as the **environment** secret: `gh secret set NPM_BOOTSTRAP_TOKEN --env npm-release --repo adams100111/toolmark`.
 - **O-h · Enable publishing:** `gh variable set TOOLMARK_PUBLISH_ENABLED --body true --repo adams100111/toolmark`.
 - **O-i · Publish:** `gh workflow run release.yml --ref main`, then approve the `npm-release`
-  deployment in the Actions UI after checking that the run is on the SHA in `owner-handoff.md`.
+  deployment in the Actions UI after checking that the run is on the SHA in `owner-handoff.md` and
+  that `ci.yml` and `release-dry-run` are green for that SHA (final review m-5). If the publish
+  fails part-way, use "Re-run failed jobs" on the same run, not a new dispatch (m-3).
 - **O-j · Trusted publishing:** with npm ≥ 11.15, for each of `core react inertia testing tour mcp
   lint judge-typesafe` run:
   `npm trust github @toolmark/<pkg> --file release.yml --repo adams100111/toolmark --env npm-release --allow-publish`.

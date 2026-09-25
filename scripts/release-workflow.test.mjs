@@ -54,25 +54,67 @@ test('sec_15_release_step_runs_the_tag_guard_before_and_after_each_release', () 
 
 test('sec_16_publish_checks_plan_against_packed_manifests_first', () => {
   const plan = stepIndex('publish', /check-release-versions\.mjs --plan dist-pack/)
-  const publish = stepIndex('publish', /npm publish/)
+  const publish = stepIndex('publish', /publish-tarballs\.mjs dist-pack/)
   assert.ok(plan >= 0, 'publish runs check-release-versions --plan')
   assert.ok(plan < publish, 'before any npm publish')
-  const run = workflow.jobs.publish.steps[publish].run
-  assert.match(
-    run,
-    /\^packages\/\[a-z0-9-\]\+-\[0-9A-Za-z\.-\]\+\\\.tgz\$/,
-    'the loop re-checks the path',
-  )
+  // The loop's own re-checks (path, name, tag, workspace version, integrity) are tested by
+  // running scripts/publish-tarballs.mjs (publish-tarballs.test.mjs).
+  assert.doesNotMatch(workflow.jobs.publish.steps[publish].run, /--dry-run/)
 })
 
 test('sec_22_publish_asks_npm_what_each_tarball_is_before_publishing', () => {
   const plan = stepIndex('publish', /check-release-versions\.mjs --plan dist-pack/)
   const npm = stepIndex('publish', /check-release-versions\.mjs --npm-dry-run dist-pack/)
-  const publish = stepIndex('publish', /npm publish/)
+  const publish = stepIndex('publish', /publish-tarballs\.mjs dist-pack/)
   assert.ok(npm > plan, 'after the packed-manifest check')
   assert.ok(npm < publish, 'before any npm publish')
   // No token reaches the dry-run step (the script also strips the environment it gives npm).
   assert.equal(workflow.jobs.publish.steps[npm].env, undefined)
+})
+
+test('i3_release_dry_run_checks_a_synthetic_plan_when_the_publish_plan_is_empty', () => {
+  const plan = stepIndex('release-dry-run', /changeset publish-plan --output/)
+  const check = stepIndex('release-dry-run', /release-dry-run-plan\.mjs/)
+  const pack = stepIndex('release-dry-run', /changeset pack --from-publish-plan/)
+  assert.ok(plan >= 0 && check > plan && pack > check, 'plan → dry-run plan → pack')
+  assert.match(workflow.jobs['release-dry-run'].steps[pack].run, /check-plan\.json/)
+  // Every later step runs unconditionally (no step is skipped for an empty plan).
+  for (const step of workflow.jobs['release-dry-run'].steps) assert.equal(step.if, undefined)
+})
+
+test('i4_release_dry_run_runs_the_publish_checks_and_loop_in_order', () => {
+  const job = 'release-dry-run'
+  const order = [
+    /changeset pack --from-publish-plan/,
+    /\.changeset\/pre\.json[\s\S]*check-release-versions\.mjs --stable/,
+    /check-release-versions\.mjs --tarballs dist-pack/,
+    /check-release-versions\.mjs --plan dist-pack/,
+    /check-release-versions\.mjs --npm-dry-run dist-pack/,
+    /publish-tarballs\.mjs --dry-run dist-pack/,
+  ].map((re) => stepIndex(job, re))
+  assert.ok(
+    order.every((i) => i >= 0),
+    `every step exists: ${order}`,
+  )
+  assert.deepEqual(
+    [...order].sort((a, b) => a - b),
+    order,
+    'in the publish job order',
+  )
+  for (const step of workflow.jobs[job].steps) {
+    assert.doesNotMatch(step.run ?? '', /npm publish/, 'release-dry-run never runs npm publish')
+    assert.equal(step.env?.NPM_BOOTSTRAP_TOKEN, undefined)
+  }
+})
+
+test('m9_dist_e2e_runs_assert_the_dist_build', () => {
+  const ci = parse(readFileSync(join(root, '.github', 'workflows', 'ci.yml'), 'utf8'))
+  const steps = [
+    ...workflow.jobs['release-dry-run'].steps,
+    ...Object.values(ci.jobs).flatMap((j) => j.steps ?? []),
+  ].filter((s) => s.env?.TOOLMARK_DIST === '1')
+  assert.ok(steps.length >= 2)
+  for (const s of steps) assert.match(s.run, /e2e\/dist-resolution\.spec\.ts/)
 })
 
 test('sec_17_doc_lists_main_only_deployment_branches_as_a_gate', () => {
