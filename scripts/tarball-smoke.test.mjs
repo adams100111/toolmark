@@ -137,3 +137,64 @@ test('render_round_budget_rejects_malformed_report', async () => {
     await rm(root, { recursive: true, force: true })
   }
 })
+
+test('render_round_budget_accepts_input_as_first_or_last_argument', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'toolmark-round-budget-'))
+  try {
+    const json = join(root, 'round-budget.json')
+    const md = join(root, 'round-budget.md')
+    await writeFile(
+      json,
+      JSON.stringify([
+        {
+          task: 'simple_form',
+          rounds: 3,
+          messages: 3,
+          manifestBytes: 1,
+          describeBytes: 2,
+          wallMs: 3,
+        },
+      ]),
+    )
+    for (const argv of [
+      [json, '--out', md],
+      ['--out', md, json],
+    ]) {
+      const run = spawnSync(process.execPath, [RENDER, ...argv], { encoding: 'utf8' })
+      assert.equal(run.status, 0, `${argv.join(' ')}: ${run.stdout}${run.stderr}`)
+      assert.match(await readFile(md, 'utf8'), /\| simple_form \| 3 \|/)
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('render_round_budget_defaults_to_docs_release', async () => {
+  // A copy of the script in a scratch "repo" so the default output lands there, not in this repo.
+  const root = await mkdtemp(join(tmpdir(), 'toolmark-round-budget-'))
+  try {
+    await mkdir(join(root, 'scripts'))
+    const script = join(root, 'scripts', 'render-round-budget.mjs')
+    await writeFile(script, await readFile(RENDER, 'utf8'))
+    const json = join(root, 'round-budget.json')
+    await writeFile(
+      json,
+      JSON.stringify([
+        {
+          task: 'simple_form',
+          rounds: 2,
+          messages: 2,
+          manifestBytes: 1,
+          describeBytes: 2,
+          wallMs: 3,
+        },
+      ]),
+    )
+    const run = spawnSync(process.execPath, [script, json], { encoding: 'utf8', cwd: root })
+    assert.equal(run.status, 0, run.stdout + run.stderr)
+    const text = await readFile(join(root, 'docs', 'release', 'round-budget.md'), 'utf8')
+    assert.match(text, /\| simple_form \| 2 \| ≤ 3 \|/)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})

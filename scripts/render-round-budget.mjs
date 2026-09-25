@@ -53,7 +53,7 @@ async function main() {
     outIndex >= 0 && args[outIndex + 1]
       ? resolve(args[outIndex + 1])
       : join(repoRoot, 'docs/release/round-budget.md')
-  const input = args.find((a, i) => !a.startsWith('--') && i !== outIndex + 1)
+  const input = args.find((a, i) => !a.startsWith('--') && (outIndex < 0 || i !== outIndex + 1))
   if (!input) {
     console.error('usage: node scripts/render-round-budget.mjs <round-budget.json> [--out <file>]')
     return 1
