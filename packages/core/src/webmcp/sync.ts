@@ -1,6 +1,6 @@
 import type { ToolManifest } from '../manifest.js'
 import { emitEvent, type Toolmark } from '../registry.js'
-import { invalid } from '../result.js'
+import { invalid, refuse } from '../result.js'
 import type {
   ModelContextLike,
   WebMcpExecuteOptions,
@@ -58,8 +58,13 @@ export function createSync(tm: Toolmark, mc: ModelContextLike, opts: SyncOptions
     })
   }
 
-  function execute(name: string) {
+  function execute(name: string, controller: AbortController) {
     return async (input: unknown, options?: WebMcpExecuteOptions): Promise<unknown> => {
+      // The registration this `execute` belongs to was unregistered (resync) or disposed (the
+      // consumer's own disposer); a stale host handle must not fall through to `tm.call`.
+      if (controller.signal.aborted) {
+        return refuse('unknown_tool', `Tool "${name}" is no longer registered with WebMCP.`)
+      }
       const signal = options?.signal
       let value = input
       if (typeof input === 'string') {
@@ -86,15 +91,22 @@ export function createSync(tm: Toolmark, mc: ModelContextLike, opts: SyncOptions
         consequentialHint: !!(t.hints.consequential || t.hints.destructive),
         untrustedContentHint: !!t.hints.untrustedContent,
       },
-      execute: execute(t.name),
+      execute: execute(t.name, controller),
     }
     const options: WebMcpRegisterToolOptions = {
       signal: controller.signal,
       ...(opts.exposedTo?.length ? { exposedTo: [...opts.exposedTo] } : {}),
     }
     const onFailure = (cause: unknown): void => {
-      // Our own abort (change, removal, dispose) surfacing as a rejection is expected.
-      if (controller.signal.aborted && cause === controller.signal.reason) return
+      // Our own abort (change, removal, dispose) surfacing as a rejection is expected — either the
+      // exact reason we aborted with, or a host-minted AbortError once we've aborted.
+      const isOwnAbort =
+        controller.signal.aborted &&
+        (cause === controller.signal.reason ||
+          (typeof cause === 'object' &&
+            cause !== null &&
+            (cause as { name?: unknown }).name === 'AbortError'))
+      if (isOwnAbort) return
       if (registered.get(t.name)?.controller === controller) {
         registered.delete(t.name)
         failed.set(t.name, fingerprint)
@@ -127,14 +139,23 @@ export function createSync(tm: Toolmark, mc: ModelContextLike, opts: SyncOptions
     return names
   }
 
-  function visibleTools(): ToolManifest[] {
-    const tools = tm.manifest({ caller: 'webmcp', detail: 'full' }).tools
+  /** All webmcp-visible tools (pre app-filter) with their fingerprints, for retry bookkeeping. */
+  function fingerprintsOf(tools: ToolManifest[]): Map<string, string> {
+    return new Map(tools.map((t) => [t.name, fingerprintOf(t)]))
+  }
+
+  function applyFilter(tools: ToolManifest[], fingerprints: Map<string, string>): ToolManifest[] {
     const { filter } = opts
     if (!filter) return tools
     return tools.filter((t) => {
       try {
         return filter(t)
       } catch (e) {
+        // Reuse `failed` so a filter that keeps throwing on an unchanged tool is reported once,
+        // not on every sync pass.
+        const fingerprint = fingerprints.get(t.name)
+        if (fingerprint !== undefined && failed.get(t.name) === fingerprint) return false
+        if (fingerprint !== undefined) failed.set(t.name, fingerprint)
         reportFailure(t.name, e)
         return false
       }
@@ -147,11 +168,15 @@ export function createSync(tm: Toolmark, mc: ModelContextLike, opts: SyncOptions
     // Names this consumer registered are ours, not native duplicates.
     for (const name of registered.keys()) existing.delete(name)
 
+    const allTools = tm.manifest({ caller: 'webmcp', detail: 'full' }).tools
+    const fingerprints = fingerprintsOf(allTools)
+    const filtered = applyFilter(allTools, fingerprints)
+
     const desired = new Map<string, { tool: ToolManifest; fingerprint: string }>()
-    for (const t of visibleTools()) {
+    for (const t of filtered) {
       const nativeName = tm.info(t.name)?.nativeName
       if (nativeName !== undefined && existing.has(nativeName)) continue
-      desired.set(t.name, { tool: t, fingerprint: fingerprintOf(t) })
+      desired.set(t.name, { tool: t, fingerprint: fingerprints.get(t.name)! })
     }
 
     for (const [name, reg] of [...registered]) {
@@ -159,8 +184,11 @@ export function createSync(tm: Toolmark, mc: ModelContextLike, opts: SyncOptions
       registered.delete(name)
       reg.controller.abort()
     }
+    // A `failed` entry (registration rejection or filter throw) is retried once the tool's
+    // fingerprint changes or the tool is gone, regardless of whether it currently passes the
+    // app filter or the native-duplicate check.
     for (const [name, fingerprint] of [...failed]) {
-      if (desired.get(name)?.fingerprint !== fingerprint) failed.delete(name)
+      if (fingerprints.get(name) !== fingerprint) failed.delete(name)
     }
     for (const [name, { tool, fingerprint }] of desired) {
       if (registered.has(name) || failed.get(name) === fingerprint) continue
