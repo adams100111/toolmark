@@ -5,6 +5,8 @@
  */
 export {
   createServerFactory,
+  MAX_LISTED_TOOLS,
+  MAX_TOOL_LIST_BYTES,
   startMcpServer,
   UNPAIRED_CALL_TEXT,
   type PageLink,
@@ -12,6 +14,10 @@ export {
   type StartMcpServerOptions,
 } from './server/server.js'
 export {
+  MAX_DESCRIPTION_LENGTH,
+  MAX_INPUT_SCHEMA_BYTES,
+  MAX_INPUT_SCHEMA_DEPTH,
+  MAX_TITLE_LENGTH,
   toMcpResult,
   toMcpTool,
   UNTRUSTED_DESCRIPTION_SUFFIX,

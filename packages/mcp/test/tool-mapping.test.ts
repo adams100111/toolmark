@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import { refuse, type ToolResult } from '@toolmark/core'
-import { toMcpResult, toMcpTool, UNTRUSTED_DESCRIPTION_SUFFIX } from '../src/index.js'
+import {
+  MAX_DESCRIPTION_LENGTH,
+  MAX_INPUT_SCHEMA_BYTES,
+  MAX_INPUT_SCHEMA_DEPTH,
+  MAX_TITLE_LENGTH,
+  toMcpResult,
+  toMcpTool,
+  UNTRUSTED_DESCRIPTION_SUFFIX,
+} from '../src/index.js'
 import { entry } from './helpers/fake-link.js'
 
 describe('toMcpTool', () => {
@@ -76,6 +84,70 @@ describe('toMcpTool', () => {
     const mapped = toMcpTool(entry('a.k', { inputSchema: schema })).inputSchema
     expect(mapped).toEqual(schema)
     expect(mapped).not.toBe(schema)
+  })
+})
+
+describe('toMcpTool caps', () => {
+  it('caps_description_then_appends_untrusted_suffix', () => {
+    expect(MAX_DESCRIPTION_LENGTH).toBe(2048)
+    const huge = 'd'.repeat(2_000_000)
+    const plain = toMcpTool(entry('a.b', { description: huge }))
+    expect(plain.description).toBe('d'.repeat(2048))
+    const untrusted = toMcpTool(
+      entry('a.u', { description: huge, hints: { untrustedContent: true } }),
+    )
+    expect(untrusted.description).toBe('d'.repeat(2048) + UNTRUSTED_DESCRIPTION_SUFFIX)
+  })
+
+  it('truncation_never_splits_a_surrogate_pair', () => {
+    const t = toMcpTool(entry('a.e', { description: 'x'.repeat(2047) + '\u{1F600}' }))
+    expect(t.description).toBe('x'.repeat(2047))
+  })
+
+  it('caps_title', () => {
+    expect(MAX_TITLE_LENGTH).toBe(256)
+    expect(toMcpTool(entry('a.t', { title: 't'.repeat(10_000) })).title).toBe('t'.repeat(256))
+    expect(toMcpTool(entry('a'.repeat(300))).title).toHaveLength(256)
+  })
+
+  it('oversize_schema_becomes_object', () => {
+    expect(MAX_INPUT_SCHEMA_BYTES).toBe(32 * 1024)
+    const big = {
+      type: 'object',
+      properties: { s: { type: 'string', description: 'x'.repeat(40_000) } },
+    }
+    expect(toMcpTool(entry('a.big', { inputSchema: big })).inputSchema).toEqual({ type: 'object' })
+    const fits = {
+      type: 'object',
+      properties: { s: { type: 'string', description: 'x'.repeat(1000) } },
+    }
+    expect(toMcpTool(entry('a.fit', { inputSchema: fits })).inputSchema).toEqual(fits)
+  })
+
+  it('deep_schema_becomes_object', () => {
+    expect(MAX_INPUT_SCHEMA_DEPTH).toBe(32)
+    const nest = (depth: number): Record<string, unknown> => {
+      let inner: Record<string, unknown> = { type: 'string' }
+      for (let i = 0; i < depth; i++) inner = { type: 'object', properties: { n: inner } }
+      return inner
+    }
+    // 100 000 levels must not overflow the stack either.
+    for (const d of [40, 100_000]) {
+      expect(toMcpTool(entry('a.deep', { inputSchema: nest(d) })).inputSchema).toEqual({
+        type: 'object',
+      })
+    }
+    const ok = nest(8)
+    expect(toMcpTool(entry('a.ok', { inputSchema: ok })).inputSchema).toEqual(ok)
+  })
+
+  it('non_object_property_values_become_object', () => {
+    for (const bad of [null, 'string', 1, true, ['x']]) {
+      const schema = { type: 'object', properties: { a: { type: 'string' }, b: bad } }
+      expect(toMcpTool(entry('a.p', { inputSchema: schema })).inputSchema).toEqual({
+        type: 'object',
+      })
+    }
   })
 })
 
