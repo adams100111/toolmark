@@ -104,8 +104,8 @@ async function main() {
     '  before it next awaits results); human confirmation is not a round. Every task asserts zero',
     '  `invalid`/`refused` results.',
     '- `messages`: agent→page messages sent; `manifestBytes`: UTF-8 size of the summary manifest the',
-    '  agent started from; `describeBytes`: total size of `describe` results received; `wallMs`: wall',
-    '  time of the task in the browser.',
+    '  agent started from; `describeBytes`: total UTF-8 size of the `describe` results it received;',
+    "  `wallMs`: wall time from the agent's first message to the end of the task.",
     '- Budgets: `simple_form` ≤ 3 rounds (M1), `wizard` ≤ 5 rounds (M2).',
     '',
   ].join('\n')
