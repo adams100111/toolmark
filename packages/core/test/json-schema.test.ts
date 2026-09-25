@@ -301,7 +301,6 @@ describe('fromJsonSchema', () => {
       if: { required: ['a'] },
       then: { required: ['b'] },
       patternProperties: { '^z': { type: 'number' } },
-      additionalProperties: { type: 'number' },
       minProperties: 5,
       dependentRequired: { a: ['b'] },
       title: 'T',
