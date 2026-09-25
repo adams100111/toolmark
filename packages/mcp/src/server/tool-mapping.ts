@@ -10,6 +10,18 @@ export const UNTRUSTED_DESCRIPTION_SUFFIX =
 /** Prefix of the text content of every `untrustedContent` tool result. */
 export const UNTRUSTED_RESULT_PREFIX = '[untrusted page content]\n'
 
+/** Maximum length (UTF-16 code units) of a listed tool description, before the untrusted suffix. */
+export const MAX_DESCRIPTION_LENGTH = 2048
+
+/** Maximum length (UTF-16 code units) of a listed tool title. */
+export const MAX_TITLE_LENGTH = 256
+
+/** Maximum UTF-8 size of a tool's serialized input schema; larger schemas become `{ type: 'object' }`. */
+export const MAX_INPUT_SCHEMA_BYTES = 32 * 1024
+
+/** Maximum object/array nesting depth of a tool's input schema; deeper schemas become `{ type: 'object' }`. */
+export const MAX_INPUT_SCHEMA_DEPTH = 32
+
 /** An MCP tool input schema: always an object root. */
 export interface McpInputSchema {
   /** Always `object` (MCP requires an object root). */
@@ -60,41 +72,96 @@ export interface McpToolResult {
   [key: string]: unknown
 }
 
-function isPlainObject(v: unknown): v is Record<string, unknown> {
-  return typeof v === 'object' && v !== null && !Array.isArray(v)
+/** @internal A non-null, non-array object whose prototype is `Object.prototype` or `null`. */
+export function isPlainObject(v: unknown): v is Record<string, unknown> {
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) return false
+  const proto: unknown = Object.getPrototypeOf(v)
+  return proto === Object.prototype || proto === null
+}
+
+/** @internal UTF-8 byte length of a string. */
+export function utf8Length(s: string): number {
+  return new TextEncoder().encode(s).length
+}
+
+/** Truncates to `max` UTF-16 code units without leaving a lone high surrogate at the end. */
+function truncate(s: string, max: number): string {
+  if (s.length <= max) return s
+  let cut = s.slice(0, max)
+  const last = cut.charCodeAt(cut.length - 1)
+  if (last >= 0xd800 && last <= 0xdbff) cut = cut.slice(0, -1)
+  return cut
+}
+
+/** `true` when `v` nests objects/arrays deeper than `max` (iterative: never overflows the stack). */
+function deeperThan(v: unknown, max: number): boolean {
+  const stack: [unknown, number][] = [[v, 1]]
+  while (stack.length > 0) {
+    const [node, depth] = stack.pop()!
+    if (typeof node !== 'object' || node === null) continue
+    if (depth > max) return true
+    for (const child of Object.values(node)) {
+      if (typeof child === 'object' && child !== null) stack.push([child, depth + 1])
+    }
+  }
+  return false
+}
+
+/** Serialized UTF-8 size of `v`, or `Infinity` when it cannot be serialized. */
+function serializedBytes(v: unknown): number {
+  try {
+    const json = JSON.stringify(v)
+    return typeof json === 'string' ? utf8Length(json) : Infinity
+  } catch {
+    return Infinity
+  }
 }
 
 /**
- * Normalizes a manifest input schema to an MCP object-root schema. `{}`, a non-object root, or an
- * object root whose `properties` / `required` are malformed becomes `{ type: 'object' }` (one bad
- * schema must never break `tools/list` for every tool).
+ * Normalizes a manifest input schema to an MCP object-root schema. `{}`, a non-object root, an
+ * object root whose `properties` (or any property value) / `required` are malformed, or a schema
+ * nested deeper than {@link MAX_INPUT_SCHEMA_DEPTH} or larger than {@link MAX_INPUT_SCHEMA_BYTES}
+ * becomes `{ type: 'object' }` (one bad schema must never break `tools/list` for every tool).
  */
 function toInputSchema(schema: unknown): McpInputSchema {
   if (!isPlainObject(schema) || schema.type !== 'object') return { type: 'object' }
-  if ('properties' in schema && !isPlainObject(schema.properties)) return { type: 'object' }
+  if (
+    'properties' in schema &&
+    !(isPlainObject(schema.properties) && Object.values(schema.properties).every(isPlainObject))
+  ) {
+    return { type: 'object' }
+  }
   if (
     'required' in schema &&
     !(Array.isArray(schema.required) && schema.required.every((r) => typeof r === 'string'))
   ) {
     return { type: 'object' }
   }
+  if (deeperThan(schema, MAX_INPUT_SCHEMA_DEPTH)) return { type: 'object' }
+  if (serializedBytes(schema) > MAX_INPUT_SCHEMA_BYTES) return { type: 'object' }
   return { ...schema, type: 'object' }
 }
 
 /**
  * Maps a full manifest entry to an MCP tool (spec §11.3, §23 "MCP tool mapping"): `name` is the
  * `llmName`, annotations are always explicit, and `untrustedContent` tools say so in their
- * description and `_meta`.
+ * description and `_meta`. The description is capped at {@link MAX_DESCRIPTION_LENGTH} (before the
+ * untrusted suffix), the title at {@link MAX_TITLE_LENGTH}, and the input schema by
+ * {@link MAX_INPUT_SCHEMA_BYTES} / {@link MAX_INPUT_SCHEMA_DEPTH}.
  * @param t - A full manifest entry (as returned by `describe`).
  * @returns The MCP `Tool` for `tools/list`.
  */
 export function toMcpTool(t: ToolManifest): McpTool {
   const hints = isPlainObject(t.hints) ? t.hints : {}
   const untrusted = hints.untrustedContent === true
-  const description = typeof t.description === 'string' ? t.description : ''
+  const description = truncate(
+    typeof t.description === 'string' ? t.description : '',
+    MAX_DESCRIPTION_LENGTH,
+  )
+  const title = typeof t.title === 'string' && t.title !== '' ? t.title : t.name
   const tool: McpTool = {
     name: t.llmName,
-    title: typeof t.title === 'string' && t.title !== '' ? t.title : t.name,
+    title: truncate(title, MAX_TITLE_LENGTH),
     description: untrusted ? description + UNTRUSTED_DESCRIPTION_SUFFIX : description,
     inputSchema: toInputSchema(t.inputSchema),
     annotations: {

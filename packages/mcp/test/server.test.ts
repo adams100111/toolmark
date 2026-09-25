@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Client, InMemoryTransport, type Tool } from '@modelcontextprotocol/client'
-import { PAIRING_TOOL_NAME, startMcpServer } from '../src/index.js'
+import {
+  MAX_LISTED_TOOLS,
+  MAX_TOOL_LIST_BYTES,
+  PAIRING_TOOL_NAME,
+  startMcpServer,
+  UNTRUSTED_DESCRIPTION_SUFFIX,
+} from '../src/index.js'
 import { createFakeLink, entry, type FakeLink } from './helpers/fake-link.js'
 
 type Era = 'legacy' | 'modern'
@@ -183,6 +189,48 @@ describe.each(['legacy', 'modern'] as const)('%s era', (era) => {
     expect(link.calls).toEqual([])
   })
 
+  it('caps_two_million_char_description_and_title', async () => {
+    const link = createFakeLink()
+    const huge = 'd'.repeat(2_000_000)
+    link.pair([
+      entry('crm.big', { description: huge, title: huge }),
+      entry('crm.bigu', { description: huge, hints: { untrustedContent: true } }),
+    ])
+    const { client } = await connect(era, { link })
+    const { tools } = await client.listTools()
+    expect(tools.map((t) => t.name)).toEqual(['crm__big', 'crm__bigu'])
+    expect(tools[0]?.description).toBe('d'.repeat(2048))
+    expect(tools[0]?.title).toBe('d'.repeat(256))
+    expect(tools[1]?.description).toBe('d'.repeat(2048) + UNTRUSTED_DESCRIPTION_SUFFIX)
+  })
+
+  it('invalid_page_result_becomes_generic_error', async () => {
+    const link = createFakeLink()
+    link.pair([entry('crm.odd')])
+    const garbage: unknown[] = [
+      null,
+      undefined,
+      'ok',
+      42,
+      [],
+      { status: 'weird' },
+      { status: 'ok', data: 1n },
+      Object.assign(Object.create({ status: 'ok' }) as object, {}),
+    ]
+    let i = 0
+    link.respond(() => garbage[i++] as never)
+    const { client, errors } = await connect(era, { link })
+    for (let n = 0; n < garbage.length; n++) {
+      const r = await client.callTool({ name: 'crm__odd', arguments: {} })
+      expect(r.isError).toBe(true)
+      expect(r.structuredContent).toEqual({
+        status: 'error',
+        message: 'The call to the page failed.',
+      })
+    }
+    expect(errors).toHaveLength(garbage.length)
+  })
+
   it('mcp_cancel_aborts_link_call', async () => {
     const link = createFakeLink()
     link.pair([entry('crm.slow')])
@@ -232,6 +280,57 @@ describe('server hygiene', () => {
     const r = await client.callTool({ name: 'a__b', arguments: {} })
     expect(r.structuredContent).toMatchObject({ status: 'refused', code: 'unknown_tool' })
     expect(link.calls).toEqual([])
+  })
+
+  it('caps_tool_count_and_reports_once', async () => {
+    expect(MAX_LISTED_TOOLS).toBe(200)
+    const link = createFakeLink()
+    link.pair(Array.from({ length: 250 }, (_, n) => entry(`t.n${n}`)))
+    const { client, errors } = await connect('legacy', { link })
+    const first = await client.listTools()
+    expect(first.tools).toHaveLength(200)
+    expect(first.tools.at(-1)?.name).toBe('t__n199')
+    await client.listTools()
+    expect(errors).toHaveLength(1)
+    // Tools beyond the cap are not callable either.
+    const r = await client.callTool({ name: 't__n220', arguments: {} })
+    expect(r.structuredContent).toMatchObject({ status: 'refused', code: 'unknown_tool' })
+    expect(link.calls).toEqual([])
+  })
+
+  it('caps_total_list_bytes', async () => {
+    expect(MAX_TOOL_LIST_BYTES).toBe(256 * 1024)
+    const link = createFakeLink()
+    // Each tool serializes to roughly 30 KiB (a 2 KiB description plus a ~28 KiB schema).
+    const schema = {
+      type: 'object',
+      properties: { s: { type: 'string', description: 'x'.repeat(28_000) } },
+    }
+    link.pair(
+      Array.from({ length: 20 }, (_, n) =>
+        entry(`t.n${n}`, { description: 'd'.repeat(3000), inputSchema: schema }),
+      ),
+    )
+    const { client, errors } = await connect('legacy', { link })
+    const { tools } = await client.listTools()
+    expect(tools.length).toBeGreaterThan(0)
+    expect(tools.length).toBeLessThan(20)
+    expect(new TextEncoder().encode(JSON.stringify(tools)).length).toBeLessThanOrEqual(
+      MAX_TOOL_LIST_BYTES,
+    )
+    expect(errors).toHaveLength(1)
+  })
+
+  it('skips_non_object_manifest_entries', async () => {
+    const link = createFakeLink()
+    link.pair([null, 'crm.x', 7, [entry('crm.arr')], entry('crm.good')] as unknown as Parameters<
+      FakeLink['pair']
+    >[0])
+    const { client } = await connect('legacy', { link })
+    const { tools } = await client.listTools()
+    expect(tools.map((t) => t.name)).toEqual(['crm__good'])
+    const r = await client.callTool({ name: 'crm__good', arguments: {} })
+    expect(r.isError).toBe(false)
   })
 
   it('link_failures_do_not_leak', async () => {
