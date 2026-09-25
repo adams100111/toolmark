@@ -20,7 +20,7 @@ function summaryOf(findings: readonly Finding[]): { errors: number; warnings: nu
 const UNSAFE_CHARS = /[\u0000-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]/g
 
 /** Removes {@link UNSAFE_CHARS} from `s`. */
-export function stripControlChars(s: string): string {
+function stripControlChars(s: string): string {
   return s.replace(UNSAFE_CHARS, '')
 }
 
@@ -63,7 +63,7 @@ function formatJson(findings: readonly Finding[]): string {
 /**
  * Renders `findings` as `pretty` (one line per finding, grouped by page, then a summary line) or
  * `json` (`{ findings, summary: { errors, warnings } }`), per the Task 3 brief's exact shapes.
- * Every printed string field is first stripped of control characters ({@link stripControlChars}).
+ * Every printed string field is first stripped of control characters (C0/C1, DEL, bidi marks).
  */
 export function formatFindings(findings: readonly Finding[], format: LintFormat): string {
   const safe = findings.map(sanitize)
