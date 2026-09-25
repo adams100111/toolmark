@@ -16,9 +16,12 @@ It sends only the following to `api.typesafe.ai`:
 
 - the **page's origin and path** (for a `--url` page; query string, hash and any `user:pass@` are
   stripped, since they can carry tokens or user data), or the manifest file's `page` name as-is;
-- **tool names, titles, descriptions and JSON Schema parameter paths/descriptions**.
+- **tool names, titles and descriptions**;
+- **JSON Schema parameter paths and descriptions**, with the `Options: <value> = <label>; …` list
+  that DOM-synthesized select and radio descriptions end with removed.
 
-Never parameter values, `default`, `enum`, `examples`, `const`, or any other application data.
+Nothing else: never parameter values, option values or labels, `default`, `enum`, `examples`,
+`const`, or any other part of a schema.
 
 Requires a `TYPESAFE_API_KEY` environment variable (or `apiKey` below). Without one, the judge
 prints a one-line warning to stderr, returns no findings, and makes no network calls or SDK client

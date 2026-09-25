@@ -336,3 +336,53 @@ describe('state_contains_no_values', () => {
     expect(params).toEqual([{ path: 'a', description: 'd' }])
   })
 })
+
+describe('SEC-10: DOM option lists never leave the machine', () => {
+  it('sec_10_collect_params_strips_dom_option_lists', () => {
+    const params = collectParams({
+      type: 'object',
+      properties: {
+        owner: {
+          enum: ['17', '42'],
+          description: 'Owner Options: 17 = Ann Smith; 42 = Bob Jones',
+        },
+        only: { enum: ['a'], description: 'Options: a = Alice' },
+        tags: {
+          type: 'array',
+          items: { enum: ['x'] },
+          description: 'Tags (pick any) Options: x = Secret project',
+        },
+      },
+    })
+    expect(params).toEqual([
+      { path: 'owner', description: 'Owner' },
+      { path: 'only' },
+      { path: 'tags', description: 'Tags (pick any)' },
+    ])
+  })
+
+  it('sec_10_state_sent_has_no_option_values', async () => {
+    const tools = [
+      tool({
+        name: 'f.fill',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            values: {
+              type: 'object',
+              properties: {
+                owner: { enum: ['17'], description: 'Owner Options: 17 = Ann Smith' },
+              },
+            },
+          },
+        },
+      }),
+    ]
+    const { fetch, calls } = fakeSystemOneFetch([{ answers: {} }])
+    await typesafeJudge({ apiKey: 'k', fetch }).judge({ page: 'p', tools })
+    const serialized = JSON.stringify(calls[0]!.body.state)
+    for (const forbidden of ['Ann Smith', '17', 'Options:']) {
+      expect(serialized).not.toContain(forbidden)
+    }
+  })
+})
