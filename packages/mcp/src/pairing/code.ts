@@ -97,6 +97,9 @@ export function createPairingCodes(o: {
     },
     verify(input) {
       if (expired()) {
+        // An expired code is replaced first (resetting the budget), and the miss is then charged
+        // to the fresh code: an attempt with a stale code still spends one of the five tries, so
+        // expiry never hands out free guesses, and the fresh code starts at 1 of 5.
         issue()
         fail()
         return false
