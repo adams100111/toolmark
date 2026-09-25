@@ -3,6 +3,16 @@ import type { FileFieldSpec } from '../files.js'
 import { createFormTools } from '../forms/form-tools.js'
 import { optionsToolDefinition } from '../forms/options.js'
 import { deepEqual, isPlainObject, isSafePath, setPath, snapshotValue } from '../forms/paths.js'
+import {
+  createIssueReader,
+  emitInteraction,
+  fieldElement,
+  firstFormOwner,
+  redactValues,
+  safeFields,
+  sensitivePathsOf,
+  subscribeInteractions,
+} from '../forms/hooks.js'
 import type { FormAdapter, FormToolOptions, OptionsProvider } from '../forms/types.js'
 import { fromJsonSchema } from '../json-schema/from-json-schema.js'
 import {
@@ -25,7 +35,7 @@ import {
 import { validateInput } from '../schema.js'
 import type { Scope } from '../scope.js'
 import type { StandardSchemaV1 } from '../standard-schema.js'
-import type { JsonSchema, ToolContext, ToolDefinition } from '../tool.js'
+import type { AnchorSpec, JsonSchema, ToolContext, ToolDefinition, ToolState } from '../tool.js'
 
 /** One step of a wizard ({@link createWizardTools}, spec §8.2). */
 export interface WizardStep {
@@ -47,7 +57,10 @@ export interface WizardStep {
    * `<name>.options` tool lists them as `<step>.<path>`.
    */
   options?: Record<string, OptionsProvider>
-  /** Dot paths (within the step) whose values are always redacted (spec §14). */
+  /**
+   * Dot paths (within the step) whose values are always redacted (spec §14), including in the
+   * wizard's `state()`; published as `<step>.<path>` in `tm.info(name).sensitivePaths`.
+   */
   sensitive?: string[]
 }
 
@@ -390,6 +403,52 @@ function noInput<T>(
 const NO_INPUT_SCHEMA: JsonSchema = { type: 'object', properties: {}, additionalProperties: false }
 
 /**
+ * Follows the current step's mounted form for interaction events (spec §13). There is no
+ * step-change notification, so `sync()` re-subscribes whenever it sees a different current step or
+ * form; the wizard calls it on creation and from every tour hook (`state`, `anchors`) and `fill`.
+ */
+function interactionTracker(
+  tm: Toolmark,
+  current: () => { step: string; adapter: FormAdapter | undefined },
+  emit: (step: string, e: unknown) => void,
+  tool: () => string,
+): { sync(): void; dispose(): void } {
+  let watched: { step: string; adapter: FormAdapter | undefined; off(): void } | undefined
+  let disposed = false
+  return {
+    sync() {
+      if (disposed) return
+      let now: { step: string; adapter: FormAdapter | undefined }
+      try {
+        now = current()
+      } catch {
+        return
+      }
+      if (watched && watched.step === now.step && watched.adapter === now.adapter) return
+      watched?.off()
+      const step = now.step
+      let live = true
+      const off = subscribeInteractions(tm, now.adapter, tool(), (e) => {
+        if (live && !disposed) emit(step, e)
+      })
+      watched = {
+        step,
+        adapter: now.adapter,
+        off() {
+          live = false
+          off()
+        },
+      }
+    },
+    dispose() {
+      disposed = true
+      watched?.off()
+      watched = undefined
+    },
+  }
+}
+
+/**
  * Registers the tools of a wizard whose data lives in the parent (spec §8.2, D25):
  *
  * - `<name>.fill` — `{ steps: { <step>: partial values }, overwrite? }`. Each step is filled with the
@@ -407,6 +466,16 @@ const NO_INPUT_SCHEMA: JsonSchema = { type: 'object', properties: {}, additional
  *   step from its mounted form); any issue → `invalid` and no confirmation is created. A
  *   confirmation approved after the wizard's data changed is refused `stale`.
  * - `<name>.options` — when any step declares `options`; `field` is `<step>.<path>`.
+ *
+ * Tour hooks (spec §13): `<name>.fill` and `<name>.submit` expose `state()` → `{ values, issues,
+ * step }` (`values` keyed by step — the current step from its mounted form, the others from
+ * `getData()` — with sensitive paths redacted; `issues` of the current step as `<step>.<path>`;
+ * `step` = `getCurrent()`) and `sensitivePaths()` (`<step>.<path>`: each step's `sensitive` plus the
+ * current step form's sensitive fields). `<name>.fill` anchors `resolve('<step>.<path>')` to the
+ * field's element only while `<step>` is current (else `null`); both anchor to the current step's
+ * form. Interaction events of the current step's form are emitted as `<name>.fill` with
+ * `param: '<step>.<path>'` (`submit` → `param: '<step>'`); the wizard follows the current form
+ * when it is created and on every `state`/anchor read and `fill`.
  *
  * Empty or duplicate step names → `wizard_misconfigured` (development: throws `ToolmarkError`;
  * production: `error` event, nothing registered). Under SSR nothing is registered.
@@ -512,6 +581,7 @@ export function createWizardTools(
     input: { steps: Record<string, unknown>; overwrite?: boolean },
     ctx: ToolContext,
   ) {
+    tracker.sync()
     const issues: ToolIssue[] = []
     const work = new Map<StepRuntime, Record<string, unknown>>()
     for (const key of Object.keys(input.steps)) {
@@ -643,6 +713,62 @@ export function createWizardTools(
     const live = opts.getCurrent() === step ? opts.currentAdapter?.() : undefined
     return live ? live.getValues() : dataSlice(opts.getData(), step)
   }
+  // Tour hooks (spec §13, §14; M3 T2). Redaction is owned here: `state()` redacts every path of
+  // the sensitive rule (each step's `sensitive`, plus the current step form's sensitive fields),
+  // published as `<step>.<path>` through `sensitivePaths()` / `tm.info`.
+  const mountedForm = (step: string): FormAdapter | undefined =>
+    opts.getCurrent() === step ? opts.currentAdapter?.() : undefined
+  const stepSensitive = (rt: StepRuntime): string[] =>
+    sensitivePathsOf(rt.step.sensitive, safeFields(mountedForm(rt.step.name)))
+  const wizardSensitive = (): string[] =>
+    runtimes.flatMap((rt) => stepSensitive(rt).map((p) => prefixed(rt.step.name, p)))
+  const issueReaders = new Map(runtimes.map((rt) => [rt, createIssueReader(() => rt.step.input)]))
+  const tracker = interactionTracker(
+    tm,
+    () => {
+      const step = opts.getCurrent()
+      return { step, adapter: byName.has(step) ? opts.currentAdapter?.() : undefined }
+    },
+    (step, e) => {
+      emitInteraction(tm, e, { fillTool: fillToolName, mapPath: (p) => prefixed(step, p) })
+    },
+    () => fillToolName,
+  )
+  const wizardState = (): ToolState<unknown> => {
+    tracker.sync()
+    const step = opts.getCurrent()
+    const values: Data = {}
+    for (const rt of runtimes) {
+      define(values, rt.step.name, redactValues(currentValues(rt.step.name), stepSensitive(rt)))
+    }
+    const rt = byName.get(step)
+    const issues = rt
+      ? issueReaders.get(rt)!(currentValues(step)).map((i) => ({
+          path: prefixed(step, i.path),
+          message: i.message,
+        }))
+      : []
+    return { values, issues, step }
+  }
+  /** `<step>.<path>` → that field's element, only while `<step>` is current (`<step>` → its form). */
+  const wizardAnchors: AnchorSpec = {
+    element: () => {
+      tracker.sync()
+      return firstFormOwner(safeFields(mountedForm(opts.getCurrent())))
+    },
+    resolve: (param) => {
+      tracker.sync()
+      const dot = param.indexOf('.')
+      const step = dot < 0 ? param : param.slice(0, dot)
+      const fields = safeFields(mountedForm(step))
+      return dot < 0 ? firstFormOwner(fields) : fieldElement(fields, param.slice(dot + 1))
+    },
+  }
+  const wizardHooks: Pick<AnyTool, 'state' | 'sensitivePaths'> = {
+    state: wizardState,
+    sensitivePaths: wizardSensitive,
+  }
+
   const submitInput = noInput<Record<string, never>>(async () => {
     const issues: { message: string; path: PropertyKey[] }[] = []
     for (const rt of runtimes) {
@@ -669,18 +795,22 @@ export function createWizardTools(
   }
 
   const defsToRegister: AnyTool[] = [
-    asTool({
-      name: `${opts.name}.fill`,
-      ...title,
-      description:
-        `${opts.description} Fill wizard steps: pass "steps" as { <step>: partial values } for ` +
-        `any of the steps ${stepList} (null clears a field). Fields the user edited are skipped ` +
-        `unless "overwrite" is true.` +
-        (hasFiles ? ' File fields take { "ref": "..." } or { "url": "..." }.' : ''),
-      input: fillInput,
-      jsonSchema: fillSchema,
-      run: fill,
-    }),
+    {
+      ...asTool({
+        name: `${opts.name}.fill`,
+        ...title,
+        description:
+          `${opts.description} Fill wizard steps: pass "steps" as { <step>: partial values } for ` +
+          `any of the steps ${stepList} (null clears a field). Fields the user edited are skipped ` +
+          `unless "overwrite" is true.` +
+          (hasFiles ? ' File fields take { "ref": "..." } or { "url": "..." }.' : ''),
+        input: fillInput,
+        jsonSchema: fillSchema,
+        run: fill,
+      }),
+      anchors: wizardAnchors,
+      ...wizardHooks,
+    },
     asTool({
       name: `${opts.name}.goTo`,
       ...title,
@@ -696,17 +826,21 @@ export function createWizardTools(
         return ok({ step })
       },
     }),
-    asTool({
-      name: `${opts.name}.submit`,
-      ...title,
-      description: `${opts.description} Submit the wizard (every step is validated first).`,
-      hints: { consequential: true },
-      input: submitInput,
-      jsonSchema: NO_INPUT_SCHEMA,
-      summary: () => opts.submitSummary?.(opts.getData()) ?? `Submit ${opts.title ?? opts.name}`,
-      run: () => opts.submit(),
-      [CONFIRM_SNAPSHOT]: snapshotHook,
-    }),
+    {
+      ...asTool({
+        name: `${opts.name}.submit`,
+        ...title,
+        description: `${opts.description} Submit the wizard (every step is validated first).`,
+        hints: { consequential: true },
+        input: submitInput,
+        jsonSchema: NO_INPUT_SCHEMA,
+        summary: () => opts.submitSummary?.(opts.getData()) ?? `Submit ${opts.title ?? opts.name}`,
+        run: () => opts.submit(),
+        [CONFIRM_SNAPSHOT]: snapshotHook,
+      }),
+      anchors: { element: wizardAnchors.element! },
+      ...wizardHooks,
+    },
   ]
   const providers: Record<string, OptionsProvider> = {}
   for (const rt of runtimes) {
@@ -729,8 +863,10 @@ export function createWizardTools(
     return inert
   }
   fillToolName = regs[0]!.name
+  tracker.sync()
   return {
     dispose() {
+      tracker.dispose()
       for (const r of regs) r.dispose()
       disposePrivate()
     },
@@ -751,6 +887,11 @@ export function createWizardTools(
  *
  * `refresh()` re-registers `<name>.step.fill` for the current step (one revision bump) and is a
  * no-op while the current step's name is unchanged; call it whenever the step changes.
+ *
+ * Tour hooks (spec §13): `<name>.step.fill` anchors, `state()` and `sensitivePaths()` are those of
+ * the current step's mounted form (as {@link createFormTools}, plain paths), and its user
+ * interactions are emitted as `<name>.step.fill` events (followed on every anchor/state read and
+ * `refresh()`).
  * @param tm - The registry.
  * @param opts - Stepwise wizard options plus an optional target `scope`.
  * @returns A handle: `dispose()` removes the tools, `refresh()` follows the current step.
@@ -770,6 +911,17 @@ export function createStepwiseWizardTools(
     fields: () => opts.currentAdapter()?.fields() ?? [],
   }
 
+  // Interaction events of the current step's form under `<name>.step.fill` (spec §13).
+  let stepFillName = `${opts.name}.step.fill`
+  const tracker = interactionTracker(
+    tm,
+    () => ({ step: opts.currentStep().name, adapter: opts.currentAdapter() }),
+    (_step, e) => {
+      emitInteraction(tm, e, { fillTool: stepFillName })
+    },
+    () => stepFillName,
+  )
+
   /** Builds the private fill of the current step and its public `step.fill` definition. */
   const build = (): { def: AnyTool; step: string; dispose(): void } | undefined => {
     const step = opts.currentStep()
@@ -786,6 +938,22 @@ export function createStepwiseWizardTools(
       ...title,
       description: `${inner.description} (current step: ${step.name})`,
       mode: 'stepwise',
+      // The current step form's anchors and state (inherited from the private fill over `port`),
+      // each read also following the current form for interaction events.
+      anchors: {
+        element: () => {
+          tracker.sync()
+          return inner.anchors?.element?.() ?? null
+        },
+        resolve: (param) => {
+          tracker.sync()
+          return inner.anchors?.resolve?.(param) ?? null
+        },
+      },
+      state: () => {
+        tracker.sync()
+        return inner.state!()
+      },
       run: (input, ctx) =>
         opts.currentAdapter()
           ? inner.run(input, ctx)
@@ -844,6 +1012,8 @@ export function createStepwiseWizardTools(
   }
   const fixed = regs.slice(1)
   let fillReg: Registration | undefined = regs[0]
+  stepFillName = regs[0]!.name
+  tracker.sync()
   let fillPrivate: { dispose(): void } | undefined = first
   let currentStep = first.step
   let disposed = false
@@ -852,12 +1022,14 @@ export function createStepwiseWizardTools(
     dispose() {
       if (disposed) return
       disposed = true
+      tracker.dispose()
       fillReg?.dispose()
       fillPrivate?.dispose()
       for (const r of fixed) r.dispose()
     },
     refresh() {
       if (disposed) return
+      tracker.sync()
       if (opts.currentStep().name === currentStep) return
       const next = build()
       fillReg?.dispose()

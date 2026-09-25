@@ -48,7 +48,8 @@ function visitKey(detail: unknown): string | undefined {
 
 /**
  * Adapts an Inertia `<Form>` component (`@inertiajs/react` 2.1+, uncontrolled; spec §10.1, D11) to
- * form tools. `getValues`, `setValues`, `dirtyPaths` and `fields` come unmodified from
+ * form tools. `getValues`, `setValues`, `dirtyPaths`, `fields` and `onUserInteraction` (trusted
+ * user `input` / `focus` / `submit` interactions for tour hooks, spec §13) come unmodified from
  * {@link domFormAdapter} over the `<Form>`'s underlying `<form>` element; `dispose` extends its
  * `dispose` (see below).
  *
@@ -95,13 +96,18 @@ export function inertiaFormComponentAdapter(o: {
   element: HTMLFormElement
   formRef: { current: { submit(): void } | null }
   router: RouterLike
-}): FormAdapter & { dispose(): void } {
+}): FormAdapter & {
+  dispose(): void
+  onUserInteraction: NonNullable<FormAdapter['onUserInteraction']>
+} {
   const base = domFormAdapter(o.element)
   /** Cancels each in-flight `submit()` (tears down its listeners, settles it `cancelled`). */
   const inFlight = new Set<() => void>()
 
   return {
     ...base,
+    // Tour hooks (spec §13): the `<form>`'s trusted user interactions, straight from the DOM adapter.
+    onUserInteraction: (cb) => base.onUserInteraction!(cb),
     dispose(): void {
       for (const cancel of [...inFlight]) cancel()
       base.dispose()

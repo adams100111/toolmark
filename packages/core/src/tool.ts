@@ -49,7 +49,14 @@ export interface AnchorSpec {
   resolve?: (param: string) => Element | null
 }
 
-/** Side-effect-free snapshot of a tool's current state (spec §13), read through `tm.state`. */
+/**
+ * Side-effect-free snapshot of a tool's current state (spec §13), read through `tm.state`.
+ *
+ * Redaction is owned by the tool that produces the state: `values` must already have every
+ * sensitive path (see {@link ToolDefinition.sensitivePaths}) replaced by `'[redacted]'`, and must
+ * never contain fields the tool does not expose at all (e.g. excluded DOM controls). Form and wizard
+ * tools do this for their own state; a custom `state()` is responsible for its own values.
+ */
 export interface ToolState<I> {
   /** Current values. */
   values: Partial<I>
@@ -115,7 +122,8 @@ export interface ToolDefinition<I = unknown, O = unknown> {
   /**
    * Input paths whose values are sensitive (passwords, `cc-*` fields, app-declared ones), evaluated
    * on every read. Surfaced as `tm.info(name).sensitivePaths` so `state()` and telemetry share one
-   * redaction rule (spec §14). Never part of a manifest.
+   * redaction rule (spec §14). Never part of a manifest. The registry does not redact `state()`
+   * with it: the tool's own `state()` must (form and wizard tools do).
    */
   sensitivePaths?: () => string[]
   /** `'stepwise'` marks a stepwise wizard's tools; reported in manifest entries (spec §8.2). */
