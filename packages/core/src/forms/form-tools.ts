@@ -2,6 +2,7 @@ import { ToolmarkError } from '../errors.js'
 import {
   effectiveSpec,
   fileFieldSchema,
+  fileLimitIssues,
   filesConfig,
   fileSpecProblems,
   jsonSafeFiles,
@@ -773,10 +774,19 @@ function collectFileSlots(
   return { tree, slots, issues }
 }
 
-/** Validates each file slot's shape against its field's `fileFieldSchema` (issues at the slot). */
+/**
+ * Validates each file slot's shape against its field's `fileFieldSchema` (issues at the slot).
+ * The count (`maxFiles`) and reference-length limits are checked first, cheaply; a slot that
+ * breaks them is not schema-validated further (no walk over thousands of items or huge strings).
+ */
 function fileShapeIssues(slots: FileSlot[]): { path: string; message: string }[] {
   const issues: { path: string; message: string }[] = []
   for (const slot of slots) {
+    const limits = fileLimitIssues(slot.raw, slot.field.spec, slot.path)
+    if (limits.length > 0) {
+      issues.push(...limits)
+      continue
+    }
     const r = slot.field.validate['~standard'].validate(slot.raw)
     if (r instanceof Promise || !r.issues) continue
     for (const issue of r.issues) {

@@ -177,7 +177,7 @@ describe('files: urls', () => {
   it('url_non_https_rejected', async () => {
     const fetch = stubFetch(() => Promise.resolve(new Response('x', { status: 200 })))
     const files = {
-      allowOrigins: ['http://files.example.com', 'http://localhost:3000', 'http://127.0.0.1:3000'],
+      allowOrigins: [ORIGIN, 'http://localhost:3000', 'http://127.0.0.1:3000', 'http://[::1]:3000'],
     }
     for (const url of ['http://files.example.com/a.txt', 'ftp://files.example.com/a', 'data:,x']) {
       expect(code(await resolveThrough(files, { url }))).toBe('file_rejected')
@@ -185,7 +185,8 @@ describe('files: urls', () => {
     expect(fetch).not.toHaveBeenCalled()
     expect(code(await resolveThrough(files, { url: 'http://localhost:3000/a.txt' }))).toBe('ok')
     expect(code(await resolveThrough(files, { url: 'http://127.0.0.1:3000/a.txt' }))).toBe('ok')
-    expect(fetch).toHaveBeenCalledTimes(2)
+    expect(code(await resolveThrough(files, { url: 'http://[::1]:3000/a.txt' }))).toBe('ok')
+    expect(fetch).toHaveBeenCalledTimes(3)
   })
 
   it('url_userinfo_rejected', async () => {
@@ -416,3 +417,69 @@ function memoryAdapter() {
     fields: (): FieldInfo[] => [],
   }
 }
+
+describe('files: fix round 1', () => {
+  it('allow_origins_wildcard_and_remote_http_misconfigured', async () => {
+    for (const entry of [
+      'https://*.example.com',
+      'https://files*.example.com',
+      'http://files.example.com',
+      'http://10.0.0.1:8080',
+      'http://localhost.example.com',
+    ]) {
+      expect(() => createTestRegistry({ files: { allowOrigins: [entry] } }), entry).toThrow(
+        expect.objectContaining({ code: 'files_misconfigured' }) as Error,
+      )
+    }
+    for (const entry of [
+      'http://localhost:3000',
+      'http://127.0.0.1',
+      'http://[::1]:8080',
+      ORIGIN,
+    ]) {
+      expect(() => createTestRegistry({ files: { allowOrigins: [entry] } }), entry).not.toThrow()
+    }
+    // Production: an error event, and URL fetching stays disabled.
+    const events: ToolmarkErrorEvent[] = []
+    const fetch = stubFetch(() => Promise.resolve(new Response('x')))
+    const tm = createToolmark({
+      __environment: 'browser',
+      onError: (e) => events.push(e),
+      files: { allowOrigins: [ORIGIN, 'https://*.example.com', 'http://files.example.com'] },
+    })
+    expect(events.map((e) => e.code)).toEqual(['files_misconfigured', 'files_misconfigured'])
+    let message = ''
+    tm.register({
+      name: 'x',
+      description: 'd',
+      run: async (_i, ctx) => {
+        await ctx.files.resolve({ url: `${ORIGIN}/a.txt` }).catch((e: Error) => {
+          message = e.message
+        })
+        return ok(null)
+      },
+    })
+    await tm.call('x', {}, { caller: 'inapp' })
+    expect(message).toBe('File rejected: file URLs are not enabled')
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('ref_and_url_length_limits_rejected_before_resolution', async () => {
+    const resolve = vi.fn(() => Promise.resolve(new File(['x'], 'x.txt')))
+    const fetch = stubFetch(() => Promise.resolve(new Response('x')))
+    const files = { resolve, allowOrigins: [ORIGIN] }
+    for (const ref of [
+      { ref: '' },
+      { ref: 'x'.repeat(2049) },
+      { ref: 'x'.repeat(5_000_000) },
+      { url: '' },
+      { url: `${ORIGIN}/${'a'.repeat(8192)}` },
+    ]) {
+      expect(code(await resolveThrough(files, ref))).toBe('file_rejected')
+    }
+    expect(resolve).not.toHaveBeenCalled()
+    expect(fetch).not.toHaveBeenCalled()
+    expect(code(await resolveThrough(files, { ref: 'x'.repeat(2048) }))).toBe('ok')
+    expect(code(await resolveThrough(files, { ref: '\u{1F600}'.repeat(2048) }))).toBe('ok')
+  })
+})
