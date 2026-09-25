@@ -13,10 +13,20 @@ export const EXIT_OK = 0
 export const EXIT_ERRORS_FOUND = 1
 export const EXIT_USAGE_OR_RUNTIME_FAILURE = 2
 
+/** The only accepted positional subcommand; `toolmark <this> ...` and bare `toolmark ...` both work. */
+const SUBCOMMAND = 'lint'
+
 function usage(): string {
   return (
-    'Usage: toolmark lint [--manifest file]... [--url url]... [--storage-state file] ' +
-    '[--judge spec]... [--budget n] [--format pretty|json]'
+    'Usage: toolmark lint [options]\n\n' +
+    'Options:\n' +
+    '  --manifest <file>        Lint a manifest file (repeatable)\n' +
+    '  --url <url>              Lint tools collected from a live page (repeatable)\n' +
+    '  --storage-state <file>   Playwright storage state for --url\n' +
+    '  --judge <spec>           Load a judge module (repeatable)\n' +
+    '  --budget <n>             Positive integer judge budget\n' +
+    '  --format <pretty|json>   Output format (default: pretty)\n' +
+    '  --help                   Show this help\n'
   )
 }
 
@@ -28,6 +38,12 @@ export async function runCli(
     stderr: (s) => process.stderr.write(s),
   },
 ): Promise<number> {
+  // `toolmark lint ...` and bare `toolmark ...` both work: strip a single leading `lint`
+  // subcommand token before parsing flags. Any other positional (leading or otherwise) is
+  // rejected below by `allowPositionals: false`, and the usage text lists `lint` as the
+  // only accepted one.
+  const rest = argv[0] === SUBCOMMAND ? argv.slice(1) : argv
+
   let values: {
     manifest?: string[]
     url?: string[]
@@ -35,10 +51,11 @@ export async function runCli(
     judge?: string[]
     budget?: string
     format?: string
+    help?: boolean
   }
   try {
     ;({ values } = parseArgs({
-      args: argv,
+      args: rest,
       options: {
         manifest: { type: 'string', multiple: true },
         url: { type: 'string', multiple: true },
@@ -46,12 +63,18 @@ export async function runCli(
         judge: { type: 'string', multiple: true },
         budget: { type: 'string' },
         format: { type: 'string' },
+        help: { type: 'boolean' },
       },
       allowPositionals: false,
     }))
   } catch (e) {
     io.stderr(`${usage()}\n${e instanceof Error ? e.message : String(e)}\n`)
     return EXIT_USAGE_OR_RUNTIME_FAILURE
+  }
+
+  if (values.help) {
+    io.stdout(`${usage()}\n`)
+    return EXIT_OK
   }
 
   const format = values.format ?? 'pretty'
