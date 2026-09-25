@@ -16,7 +16,12 @@ export type {
 } from './tool.js'
 export { defineTool } from './tool.js'
 export type { FileFieldSpec, FileRef, FilesOptions } from './files.js'
-export { fileFieldSchema } from './files.js'
+export {
+  DEFAULT_MAX_FILES,
+  fileFieldSchema,
+  MAX_FILE_REF_LENGTH,
+  MAX_FILE_URL_LENGTH,
+} from './files.js'
 export { isValidToolName, toLlmName } from './names.js'
 export type { FieldChange, ToolIssue, ToolResult } from './result.js'
 export { cancelled, invalid, ok, refuse } from './result.js'
@@ -42,3 +47,5 @@ export { createFormTools } from './forms/form-tools.js'
 export type { ArrayOp, FlattenOptions } from './forms/paths.js'
 export { flatten, getPath, setPath } from './forms/paths.js'
 export { fromJsonSchema } from './json-schema/from-json-schema.js'
+export type { StepwiseWizardOptions, WizardStep, WizardToolOptions } from './wizard/index.js'
+export { createStepwiseWizardTools, createWizardTools } from './wizard/index.js'
