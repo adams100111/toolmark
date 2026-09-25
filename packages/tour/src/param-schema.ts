@@ -27,7 +27,13 @@ function deref(root: Node, node: Node, depth: number): Node | undefined {
     let target: unknown = root
     const tokens = ref === '#' ? [] : ref.slice(1).split('/').slice(1)
     for (const raw of tokens) {
-      const token = decodeURIComponent(raw).replace(/~1/g, '/').replace(/~0/g, '~')
+      let decoded: string
+      try {
+        decoded = decodeURIComponent(raw)
+      } catch {
+        return undefined // malformed percent-escape: unresolved
+      }
+      const token = decoded.replace(/~1/g, '/').replace(/~0/g, '~')
       if (FORBIDDEN.has(token)) return undefined
       target = Array.isArray(target) ? target[Number(token)] : own(target, token)
     }
@@ -37,11 +43,23 @@ function deref(root: Node, node: Node, depth: number): Node | undefined {
   return current
 }
 
-/** The child schema of `node` for one path segment, searching `allOf`/`anyOf`/`oneOf` branches. */
-function child(root: Node, node: Node, seg: string, depth: number): Node | undefined {
-  if (depth > MAX_DEPTH) return undefined
+/**
+ * The child schema of `node` for one path segment, searching `allOf`/`anyOf`/`oneOf` branches.
+ * `seen` holds the nodes already searched for this segment, so self-referential branches are
+ * visited once (no exponential search).
+ */
+function child(
+  root: Node,
+  node: Node,
+  seg: string,
+  depth: number,
+  seen: Set<Node> = new Set(),
+): Node | undefined {
+  if (depth > MAX_DEPTH || seen.has(node)) return undefined
+  seen.add(node)
   const resolved = deref(root, node, depth)
-  if (!resolved) return undefined
+  if (!resolved || (resolved !== node && seen.has(resolved))) return undefined
+  seen.add(resolved)
   const prop = own(resolved.properties, seg)
   if (isNode(prop)) return prop
   if (INDEX.test(seg)) {
@@ -56,7 +74,7 @@ function child(root: Node, node: Node, seg: string, depth: number): Node | undef
     if (!Array.isArray(branches)) continue
     for (const branch of branches) {
       if (!isNode(branch)) continue
-      const found = child(root, branch, seg, depth + 1)
+      const found = child(root, branch, seg, depth + 1, seen)
       if (found) return found
     }
   }

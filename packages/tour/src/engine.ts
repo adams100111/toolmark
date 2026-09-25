@@ -84,10 +84,14 @@ function concerns(path: string, param: string | undefined): boolean {
   return param === undefined || path === param || path.startsWith(`${param}.`)
 }
 
-/** Whether an interaction event targets the step (`submit` of a wizard step covers its fields). */
+/**
+ * Whether an interaction event targets the step: the step's param or a nested path of it (same
+ * prefix rule as {@link concerns}); a `submit` of a wizard step also covers the step's fields.
+ */
 function targets(e: { tool: string; param?: string; kind: string }, step: TourStep): boolean {
   if (e.tool !== step.tool) return false
-  if (step.param === undefined || e.param === step.param) return true
+  if (step.param === undefined) return true
+  if (e.param !== undefined && concerns(e.param, step.param)) return true
   return e.kind === 'submit' && (e.param === undefined || step.param.startsWith(`${e.param}.`))
 }
 
@@ -109,6 +113,7 @@ function createEngine(
     steps,
     anchor: null,
     highlight: null,
+    busy: false,
   })
   let ended = false
   /** Incremented on every step entry; async work of an older entry is ignored. */
@@ -116,6 +121,8 @@ function createEngine(
   /** `do` steps whose call already ran (never repeated after `back()`). */
   const ran = new Set<number>()
   let inFlight = false
+  /** The current `do` step was entered by `back()` and has not run: `next()` runs it. */
+  let awaitingRun = false
   /** Whether the current step's tool was describable for `tour` on entry. */
   let stepKnown = false
   /** Releases the current step's listeners and timers. */
@@ -166,12 +173,14 @@ function createEngine(
     clearStep()
     for (const fn of globalCleanup.splice(0)) fn()
     ac.abort()
-    update({ status, anchor: null, highlight: null, message })
+    update({ status, anchor: null, highlight: null, busy: false, message })
     if (status === 'done') emit({ type: 'done' })
   }
 
-  function enter(start: number): void {
+  /** Enters the first step from `start` that has an anchor. `auto`: run an unrun `do` step. */
+  function enter(start: number, auto = true): void {
     clearStep()
+    awaitingRun = false
     const t = ++token
     for (let i = start; ; i++) {
       if (ended || t !== token) return
@@ -190,7 +199,10 @@ function createEngine(
         continue
       }
       if (mode === 'guide') guide(step, t)
-      else if (mode === 'do' && !ran.has(i)) run(step, i, t)
+      else if (mode === 'do' && !ran.has(i)) {
+        if (auto) run(step, i, t)
+        else awaitingRun = true
+      }
       return
     }
   }
@@ -240,19 +252,39 @@ function createEngine(
 
   function run(step: TourStep, index: number, t: number): void {
     ran.add(index)
+    awaitingRun = false
     const manifest = tm.describe(step.tool, { caller: 'tour' })
-    const confirming =
-      manifest?.hints.consequential === true || manifest?.hints.destructive === true
+    const hinted = manifest?.hints.consequential === true || manifest?.hints.destructive === true
+    // `confirming` while an inline confirmation of the step's tool is pending: announced by the
+    // core `confirm` events (hinted tools and `ctx.confirm` inside `run` alike). A hinted tool is
+    // `confirming` from the start, until its first confirmation event arrives.
+    const pending = new Set<string>()
+    let sawConfirm = false
+    const sync = (): void => {
+      if (ended || t !== token || !inFlight) return
+      const confirming = pending.size > 0 || (hinted && !sawConfirm)
+      const status = confirming ? 'confirming' : 'running'
+      if (state.status !== status) update({ status })
+    }
+    const offConfirm = tm.events.on('confirm', (e) => {
+      if (!inFlight || e.tool !== step.tool) return
+      sawConfirm = true
+      if (e.stage === 'pending') pending.add(e.confirmId)
+      else pending.delete(e.confirmId)
+      sync()
+    })
+    stepCleanup.push(offConfirm)
     inFlight = true
-    if (confirming) update({ status: 'confirming' })
+    update({ busy: true, ...(hinted ? { status: 'confirming' as const } : {}) })
     const settle = (result: ToolResult<unknown>): void => {
+      offConfirm()
       inFlight = false
       if (ended || t !== token) return
       if (result.status !== 'ok') {
         end('stopped', failureMessage(result))
         return
       }
-      if (confirming) update({ status: 'running' })
+      update({ status: 'running', busy: false })
       const paths = reducedMotion ? [] : changedPaths(result.data)
       highlight(step, paths, 0, t)
     }
@@ -296,12 +328,14 @@ function createEngine(
       return state
     },
     next() {
-      if (!ended && !inFlight && state.status !== 'idle') advance()
+      if (ended || inFlight || state.status === 'idle') return Promise.resolve()
+      if (awaitingRun) run(steps[state.index]!, state.index, token)
+      else advance()
       return Promise.resolve()
     },
     back() {
       if (ended || inFlight || state.status === 'idle' || state.index === 0) return
-      enter(state.index - 1)
+      enter(state.index - 1, false)
     },
     stop,
     subscribe(fn) {
@@ -360,8 +394,8 @@ function createEngine(
  * - `guide` waits for the user's interaction events on the step's tool/param and validates via
  *   `tm.state()` (400 ms after the last input, or at once when focus leaves the anchor).
  * - `do` calls each step's tool as caller `tour` (policy and inline confirmation apply; state
- *   `confirming` while a consequential/destructive call is in flight), then highlights each changed
- *   field for 600 ms (none with reduced motion) and advances.
+ *   `busy` while the call is in flight, `confirming` while its inline confirmation is pending),
+ *   then highlights each changed field for 600 ms (none with reduced motion) and advances.
  *
  * Steps whose anchor is not rendered are skipped (`anchor_missing`); a step whose tool disappears
  * is skipped (`step_skipped`). The tour never reads DOM values: only anchors, `tm.state()` (redacted

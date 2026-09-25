@@ -66,8 +66,9 @@ export interface TourState {
    * - `idle` — not started yet.
    * - `running` — on a step (in `do` mode: its call may be in flight).
    * - `waiting` — `guide` mode: the user's input has issues (see `message`).
-   * - `confirming` — `do` mode: a consequential/destructive call is in flight; the app's inline
-   *   confirmation UI must stay usable.
+   * - `confirming` — `do` mode: an inline confirmation of the step's call is pending (a
+   *   consequential/destructive tool, or `ctx.confirm` inside its `run`); the app's confirmation
+   *   UI must stay usable.
    * - `done` — every step completed.
    * - `stopped` — `stop()`, an aborted signal, a failed `do` call or no valid steps.
    */
@@ -82,6 +83,11 @@ export interface TourState {
   anchor: Element | null
   /** `do` mode: the changed field being highlighted, else `null`. */
   highlight?: Element | null
+  /**
+   * `do` mode: the step's call is in flight (`next()`/`back()` are ignored). The overlay marks
+   * Next/Back `aria-disabled` and announces it.
+   */
+  busy: boolean
   /** `waiting`: the first issue of the field; `stopped`: why the tour stopped. */
   message?: string
 }
@@ -113,7 +119,8 @@ export interface Tour {
   next(): Promise<void>
   /**
    * Moves to the previous step. Only the index moves: in `do` mode nothing is undone and no call
-   * is repeated (apps use `tm.undo`). Ignored while a `do` call is in flight.
+   * is repeated (apps use `tm.undo`); a step that has not run yet (it was skipped) runs on the
+   * next `next()`, not on entry. Ignored while a `do` call is in flight.
    */
   back(): void
   /** Stops the tour (`stopped`) and releases every listener and timer. Idempotent. */

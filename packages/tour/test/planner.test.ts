@@ -7,6 +7,7 @@ import {
   type TourEvent,
   type TourStep,
 } from '../src/index.js'
+import { paramSchema } from '../src/param-schema.js'
 
 const created: Element[] = []
 function el(): HTMLElement {
@@ -243,5 +244,48 @@ describe('tour planner contract', () => {
     expect(tour.state.steps.map((s) => s.text)).toEqual(
       steps.map((s) => s.text).filter((t) => t.startsWith('ok')),
     )
+  })
+})
+
+describe('paramSchema', () => {
+  it('self_referential_combinators_do_not_blow_up', () => {
+    let reads = 0
+    const branchy = (): Record<string, unknown> => {
+      const node: Record<string, unknown> = {}
+      Object.defineProperty(node, 'anyOf', {
+        enumerable: true,
+        get() {
+          if (++reads > 10_000) throw new Error('exponential combinator search')
+          return [{ $ref: '#/$defs/loop' }, { $ref: '#/$defs/loop' }, { $ref: '#/$defs/loop' }]
+        },
+      })
+      return node
+    }
+    const schema = {
+      type: 'object',
+      properties: { a: { $ref: '#/$defs/loop' } },
+      $defs: { loop: branchy() },
+    }
+    expect(paramSchema(schema, 'a.missing', 'x')).toBeUndefined()
+    expect(reads).toBeLessThan(100)
+    // A path that exists through a later branch is still found.
+    const found = {
+      type: 'object',
+      properties: {
+        a: { anyOf: [{ $ref: '#/$defs/loop' }, { properties: { b: { type: 'string' } } }] },
+      },
+      $defs: { loop: { anyOf: [{ $ref: '#/$defs/loop' }, { $ref: '#' }] } },
+    }
+    expect(paramSchema(found, 'a.b', 'x')).toEqual({ type: 'string' })
+  })
+
+  it('malformed_ref_escape_is_unresolved', () => {
+    const schema = {
+      type: 'object',
+      properties: { a: { $ref: '#/$defs/%E0%A4%A' } },
+      $defs: {},
+    }
+    expect(() => paramSchema(schema, 'a.b', 'x')).not.toThrow()
+    expect(paramSchema(schema, 'a.b', 'x')).toBeUndefined()
   })
 })

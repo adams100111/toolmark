@@ -20,6 +20,8 @@ export interface TourStrings {
   done: string
   /** Announced while an inline confirmation is pending. Default `"Waiting for your confirmation"`. */
   confirming: string
+  /** Announced while a `do` step's call is in flight (Next/Back unavailable). Default `"Working…"`. */
+  busy: string
   /**
    * Step counter. Default `` (i, n) => `Step ${i} of ${n}` ``.
    * @param i - 1-based step number.
@@ -35,6 +37,7 @@ export const defaultTourStrings: Readonly<TourStrings> = Object.freeze({
   close: 'Close tour',
   done: 'Done',
   confirming: 'Waiting for your confirmation',
+  busy: 'Working…',
   stepOf: (i: number, n: number) => `Step ${i} of ${n}`,
 })
 
@@ -59,8 +62,9 @@ const TERMINAL = new Set<TourState['status']>(['done', 'stopped'])
 /**
  * Renders a running tour: a spotlight around the step's anchor and a dialog beside it (Next, Back,
  * Close, step counter, live status). The overlay is modal (`aria-modal`, focus trap) only in `do`
- * mode; while `status` is `confirming` it releases the trap and hides the backdrop so the app's
- * inline confirmation stays usable. `show`/`guide` leave the anchor operable (`guide` focuses it;
+ * mode; while `status` is `confirming` it releases the trap, hides the backdrop, drops its stacking
+ * and lets pointer input pass through the dialog, so the app's inline confirmation stays usable.
+ * While `busy` (a `do` call in flight), Next/Back are `aria-disabled` and the status says so. `show`/`guide` leave the anchor operable (`guide` focuses it;
  * `F6`/`Alt+T` toggle focus between dialog and anchor). Arrow keys move between steps (mirrored in
  * RTL) and `Esc` stops the tour while focus is in the dialog. The overlay removes itself when the
  * tour is `done` or `stopped` and returns focus to the element focused before it mounted.
@@ -150,7 +154,7 @@ export function mountTourOverlay(tour: Tour, o: TourOverlayOptions = {}): () => 
       title: step?.title ?? strings.stepOf(s.index + 1, n),
       text: step?.text ?? '',
       counter: strings.stepOf(s.index + 1, n),
-      message: confirming ? strings.confirming : (s.message ?? ''),
+      message: confirming ? strings.confirming : s.busy ? strings.busy : (s.message ?? ''),
       nextLabel: last ? strings.done : strings.next,
       backLabel: strings.back,
       closeLabel: strings.close,
@@ -158,6 +162,7 @@ export function mountTourOverlay(tour: Tour, o: TourOverlayOptions = {}): () => 
       rtl: isRtl(),
       modal: trapActive(),
       confirming,
+      busy: s.busy,
       blocking: trapActive(),
       mode: s.mode,
       status: s.status,
@@ -217,6 +222,7 @@ export function mountTourOverlay(tour: Tour, o: TourOverlayOptions = {}): () => 
     } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
       e.preventDefault()
       const forward = (e.key === 'ArrowRight') !== (dialog.dir === 'rtl')
+      if (state.busy) return
       if (forward) void tour.next()
       else if (state.index > 0) tour.back()
     }
@@ -228,8 +234,12 @@ export function mountTourOverlay(tour: Tour, o: TourOverlayOptions = {}): () => 
   }
 
   view.closeButton.addEventListener('click', () => tour.stop())
-  view.backButton.addEventListener('click', () => tour.back())
-  view.nextButton.addEventListener('click', () => void tour.next())
+  view.backButton.addEventListener('click', () => {
+    if (!state.busy) tour.back()
+  })
+  view.nextButton.addEventListener('click', () => {
+    if (!state.busy) void tour.next()
+  })
 
   container.append(root)
   resizes?.observe(dialog)

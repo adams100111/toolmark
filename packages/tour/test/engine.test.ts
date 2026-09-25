@@ -546,6 +546,198 @@ describe('tour engine', () => {
     expect(types(events)).toEqual(['entered:0', 'step_skipped:a:tool_removed', 'entered:1'])
   })
 
+  // -------------------------------------------------------------------------------------------
+  // fix round 1
+  // -------------------------------------------------------------------------------------------
+
+  it('do_mode_ctx_confirm_sets_confirming_and_busy', async () => {
+    const approval = deferred<ConfirmOutcome>()
+    const finish = deferred<void>()
+    let asked = 0
+    const tm = registry(() => {
+      asked++
+      return approval.promise
+    })
+    const anchor = el()
+    tm.register(
+      tool('other', {
+        anchors: { element: () => anchor },
+      }),
+    )
+    tm.register(
+      tool('save', {
+        // Not hinted: the confirmation comes from ctx.confirm inside run.
+        anchors: { element: () => anchor },
+        run: async (_input, ctx) => {
+          const o = await ctx.confirm({ summary: 'Save?' })
+          if (!o.approved) return ok({ changes: [], skipped: [] })
+          await finish.promise
+          return ok({ changes: [], skipped: [] })
+        },
+      }),
+    )
+    const tour = await startTour(tm, {
+      mode: 'do',
+      reducedMotion: true,
+      steps: [{ tool: 'save', text: 'Save it' }],
+    })
+    expect(tour.state).toMatchObject({ busy: true })
+    await vi.waitFor(() => expect(asked).toBe(1))
+    expect(tour.state).toMatchObject({ status: 'confirming', busy: true, index: 0 })
+    approval.resolve({ approved: true })
+    // Approved: the confirmation is over but the call is still running.
+    await vi.waitFor(() => expect(tour.state.status).toBe('running'))
+    expect(tour.state.busy).toBe(true)
+    finish.resolve()
+    await vi.waitFor(() => expect(tour.state.status).toBe('done'))
+    expect(tour.state.busy).toBe(false)
+  })
+
+  it('do_mode_two_consequential_steps_each_confirmed', async () => {
+    const approvals: ((o: ConfirmOutcome) => void)[] = []
+    const tm = registry(() => new Promise<ConfirmOutcome>((r) => approvals.push(r)))
+    const anchor = el()
+    const ran: string[] = []
+    for (const name of ['one', 'two']) {
+      tm.register(
+        tool(name, {
+          hints: { consequential: true },
+          anchors: { element: () => anchor },
+          run: () => {
+            ran.push(name)
+            return ok({ changes: [], skipped: [] })
+          },
+        }),
+      )
+    }
+    const tour = await startTour(tm, {
+      mode: 'do',
+      reducedMotion: true,
+      steps: [
+        { tool: 'one', text: 'One' },
+        { tool: 'two', text: 'Two' },
+      ],
+    })
+    await vi.waitFor(() => expect(approvals).toHaveLength(1))
+    expect(tour.state).toMatchObject({ status: 'confirming', index: 0 })
+    approvals[0]!({ approved: true })
+    await vi.waitFor(() => expect(approvals).toHaveLength(2))
+    // The second step asks again; its call has not run yet.
+    expect(tour.state).toMatchObject({ status: 'confirming', index: 1 })
+    expect(ran).toEqual(['one'])
+    approvals[1]!({ approved: true })
+    await vi.waitFor(() => expect(tour.state.status).toBe('done'))
+    expect(ran).toEqual(['one', 'two'])
+  })
+
+  it('do_mode_rejected_confirmation_stops', async () => {
+    const tm = registry(() => Promise.resolve({ approved: false, reason: 'nope' }))
+    const anchor = el()
+    let ran = 0
+    tm.register(
+      tool('publish', {
+        hints: { consequential: true },
+        anchors: { element: () => anchor },
+        run: () => {
+          ran++
+          return ok({ changes: [], skipped: [] })
+        },
+      }),
+    )
+    const tour = await startTour(tm, {
+      mode: 'do',
+      reducedMotion: true,
+      steps: [
+        { tool: 'publish', text: 'Publish' },
+        { tool: 'publish', text: 'Never reached' },
+      ],
+    })
+    await vi.waitFor(() => expect(tour.state.status).toBe('stopped'))
+    expect(tour.state).toMatchObject({ index: 0, busy: false })
+    expect(tour.state.message).toEqual(expect.any(String))
+    expect(tour.state.message).not.toBe('')
+    expect(ran).toBe(0)
+  })
+
+  it('guide_nested_input_satisfies_parent_param', async () => {
+    vi.useFakeTimers()
+    const tm = registry()
+    const field = el()
+    tm.register(
+      tool('addr.fill', {
+        anchors: { element: () => field, params: { address: () => field } },
+      }),
+    )
+    const tour = await startTour(tm, {
+      mode: 'guide',
+      steps: [{ tool: 'addr.fill', param: 'address', text: 'Address' }],
+    })
+    emitEvent(tm, 'interaction', {
+      tool: 'addr.fill',
+      param: 'address.city',
+      kind: 'input',
+      caller: 'human',
+    })
+    await vi.advanceTimersByTimeAsync(400)
+    expect(tour.state.status).toBe('done')
+  })
+
+  it('do_mode_back_to_unrun_step_runs_only_on_next', async () => {
+    vi.useFakeTimers()
+    const tm = registry()
+    let aAnchor: HTMLElement | null = null
+    const b = el()
+    let runsA = 0
+    let runsB = 0
+    tm.register(
+      tool('a', {
+        anchors: { element: () => aAnchor },
+        run: () => {
+          runsA++
+          return ok({ changes: [], skipped: [] })
+        },
+      }),
+    )
+    tm.register(
+      tool('b.fill', {
+        jsonSchema: FILL_SCHEMA,
+        anchors: { element: () => b },
+        run: () => {
+          runsB++
+          return ok({ changes: [{ path: 'name', before: '', after: 'x' }], skipped: [] })
+        },
+      }),
+    )
+    const tour = await startTour(tm, {
+      mode: 'do',
+      reducedMotion: false,
+      steps: [
+        { tool: 'a', text: 'A' },
+        { tool: 'b.fill', text: 'B', input: { name: 'x' } },
+      ],
+    })
+    await vi.advanceTimersByTimeAsync(0)
+    // A was skipped (no anchor); B ran and is highlighting.
+    expect(tour.state.index).toBe(1)
+    expect(runsB).toBe(1)
+    aAnchor = el()
+    tour.back()
+    expect(tour.state).toMatchObject({ status: 'running', index: 0, anchor: aAnchor })
+    await vi.advanceTimersByTimeAsync(5000)
+    // Entering A via back() does not run it.
+    expect(runsA).toBe(0)
+    expect(tour.state.index).toBe(0)
+    // next() runs it, then the tour moves on to B (already run: waits).
+    await tour.next()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(runsA).toBe(1)
+    expect(tour.state).toMatchObject({ status: 'running', index: 1 })
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(runsB).toBe(1)
+    await tour.next()
+    expect(tour.state.status).toBe('done')
+  })
+
   it('exactly_one_source_required', async () => {
     const tm = registry()
     const planner = { plan: () => Promise.resolve([]) }
