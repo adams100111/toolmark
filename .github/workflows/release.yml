@@ -191,43 +191,21 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         # A tag that already exists must point at this run's commit (SEC-15): `gh release create`
-        # would otherwise attach the release to it and ignore --target. Checked before and after.
+        # would otherwise attach the release to it and ignore --target. Checked before, and after
+        # (the tag must then exist) by scripts/require-tag-at-sha.sh through `git ls-remote`.
         run: |
           set -euo pipefail
-          # Prints the commit a tag points at (annotated tags dereferenced), or nothing if absent.
-          tag_commit() {
-            local out type sha
-            if ! out=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$1" --jq '.object.type + " " + .object.sha' 2> tag-err.txt); then
-              grep -q 'HTTP 404' tag-err.txt && return 0
-              cat tag-err.txt >&2
-              return 1
-            fi
-            read -r type sha <<< "$out"
-            while [ "$type" = tag ]; do
-              out=$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$sha" --jq '.object.type + " " + .object.sha')
-              read -r type sha <<< "$out"
-            done
-            [ "$type" = commit ] || { echo "tag $1 points at a $type" >&2; return 1; }
-            printf '%s\n' "$sha"
-          }
-          require_tag_at_sha() {
-            local at
-            at=$(tag_commit "$1")
-            if [ -n "$at" ] && [ "$at" != "$GITHUB_SHA" ]; then
-              echo "::error::tag $1 points at $at, not $GITHUB_SHA; refusing to release it"
-              exit 1
-            fi
-          }
+          remote="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git"
           while IFS=$'\t' read -r name version dir; do
             tag="$name@$version"
-            require_tag_at_sha "$tag"
+            bash scripts/require-tag-at-sha.sh "$remote" "$tag" "$GITHUB_SHA" < /dev/null
             if gh release view "$tag" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
               echo "release $tag exists"; continue
             fi
             awk -v h="## $version" '$0 == h {f=1; next} /^## / && f {exit} f' "$dir/CHANGELOG.md" > notes.md
             gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
               --title "$tag" --notes-file notes.md
-            require_tag_at_sha "$tag"
+            bash scripts/require-tag-at-sha.sh --must-exist "$remote" "$tag" "$GITHUB_SHA" < /dev/null
           done < released.tsv
 
   # PR and manual check of the whole publish path without publishing (spec §21): plan → pack →

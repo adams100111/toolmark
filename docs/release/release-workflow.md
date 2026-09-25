@@ -84,9 +84,11 @@ After approval, the job still refuses to publish if:
   (`check-release-versions --npm-dry-run`, SEC-22). It runs offline (`--force` skips the registry
   version lookup; the registry is a loopback address) with only `PATH` and a scratch `HOME` in its
   environment, so no token, OIDC request variable or npm config reaches it.
-- an existing `<name>@<version>` git tag points at a commit other than `$GITHUB_SHA` (checked
-  before and after `gh release create`, which would otherwise attach the release to the existing
-  tag and ignore `--target`; SEC-15).
+- an existing `<name>@<version>` git tag points at a commit other than `$GITHUB_SHA`, checked by
+  `scripts/require-tag-at-sha.sh` through `git ls-remote` (annotated tags peeled, exact ref match,
+  fail closed if the remote cannot be read) before `gh release create`, which would otherwise
+  attach the release to the existing tag and ignore `--target`, and again after it, when the tag
+  must exist (SEC-15).
 
 No job that feeds `publish` (`select-mode`, `pack`) restores a package-manager or `actions/cache`
 cache (`package-manager-cache: false`, SEC-14): a cache entry written by any other default-branch
