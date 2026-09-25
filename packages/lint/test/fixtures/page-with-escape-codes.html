@@ -1,0 +1,29 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>fixture: page whose tool name and description carry terminal escape codes</title>
+  </head>
+  <body>
+    <p>Fixture page for output sanitising: ESC / control characters in page-supplied strings.</p>
+    <script>
+      window.__toolmark_test__ = {
+        manifest: function () {
+          return {
+            rev: 1,
+            tools: [
+              {
+                name: 'evil\u001b[2J.tool',
+                llmName: 'evil_tool',
+                title: 'Evil\u0007 title',
+                description: 'short\u001b]0;pwned\u0007',
+                hints: {},
+                inputSchema: { type: 'object', properties: {} },
+              },
+            ],
+          }
+        },
+      }
+    </script>
+  </body>
+</html>

@@ -47,6 +47,13 @@ describe('collectFromUrl', () => {
     expect((error as Error).message.toLowerCase()).toMatch(/time(d)? ?out|did not respond/)
   }, 35_000)
 
+  it('url_manifest_validated_against_manifest_schema (malformed tool is a usage error)', async () => {
+    server = await startStaticServer(join(FIXTURES, 'page-with-invalid-tool.html'))
+    const error = await collectFromUrl(server.url).catch((e: unknown) => e)
+    expect(error).toBeInstanceOf(LintUsageError)
+    expect((error as Error).message).toBe(`invalid manifest collected from ${server.url}`)
+  }, 15_000)
+
   it('storage_state_passed_to_context', async () => {
     server = await startStaticServer(join(FIXTURES, 'page-with-hook.html'))
     tmpDir = await mkdtemp(join(tmpdir(), 'toolmark-lint-'))

@@ -7,6 +7,7 @@ import { promisify } from 'node:util'
 import { afterEach, describe, expect, it } from 'vitest'
 import { EXIT_ERRORS_FOUND, EXIT_OK, EXIT_USAGE_OR_RUNTIME_FAILURE, runCli } from '../src/cli.js'
 import { loadJudge } from '../src/judge.js'
+import { startStaticServer, type StaticServer } from './support/static-server.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -174,6 +175,34 @@ describe('runCli', () => {
     expect(code).toBe(EXIT_USAGE_OR_RUNTIME_FAILURE)
     expect(stderr()).toContain('judge module not found:')
   })
+})
+
+describe('--url (live pages)', () => {
+  let server: StaticServer | undefined
+  afterEach(async () => {
+    await server?.close()
+    server = undefined
+  })
+
+  it('a --url manifest with a malformed tool exits 2 (schema-validated like --manifest)', async () => {
+    server = await startStaticServer(`${FIXTURES}page-with-invalid-tool.html`)
+    const { io, stderr } = fakeIo()
+    const code = await runCli(['--url', server.url], io)
+    expect(code).toBe(EXIT_USAGE_OR_RUNTIME_FAILURE)
+    expect(stderr()).toContain(`invalid manifest collected from ${server.url}`)
+  }, 20_000)
+
+  it('page-supplied names/descriptions never reach the terminal with control characters', async () => {
+    server = await startStaticServer(`${FIXTURES}page-with-escape-codes.html`)
+    for (const format of ['pretty', 'json']) {
+      const { io, stdout } = fakeIo()
+      await runCli(['--url', server.url, '--format', format], io)
+      expect(stdout()).toContain('evil[2J.tool')
+      // eslint-disable-next-line no-control-regex
+      expect(stdout().trimEnd()).not.toMatch(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/)
+      expect(stdout().trimEnd()).not.toMatch(/\\u00(1b|07)/i)
+    }
+  }, 30_000)
 })
 
 describe('loadJudge', () => {
