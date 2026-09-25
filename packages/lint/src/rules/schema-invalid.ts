@@ -10,10 +10,16 @@ import type { Rule } from './rule.js'
 // `FormatsPlugin` type import is unaffected by the same interop gap.
 const addFormats = createRequire(import.meta.url)('ajv-formats') as FormatsPlugin
 
-// One compiler instance, per the brief's exact options; safe to reuse (no shared cross-schema
-// `$id`s across the manifests this CLI compiles).
-const ajv = new Ajv2020({ strict: false, allErrors: true, validateFormats: true })
-addFormats(ajv)
+/**
+ * A fresh compiler per schema, per the brief's exact options. Never reused: Ajv registers every
+ * compiled schema's `$id`, so a second tool (or page, or lint run) whose schema carries the same
+ * `$id` would fail with "schema with key or id … already exists" — a false `schema-invalid`.
+ */
+function newAjv(): Ajv2020 {
+  const ajv = new Ajv2020({ strict: false, allErrors: true, validateFormats: true })
+  addFormats(ajv)
+  return ajv
+}
 
 /**
  * `schema-invalid` (error): `inputSchema` fails to compile with Ajv 2020-12 (`strict: false`,
@@ -27,7 +33,7 @@ export const schemaInvalid: Rule = {
     for (const tool of file.tools) {
       let message: string | undefined
       try {
-        ajv.compile(tool.inputSchema)
+        newAjv().compile(tool.inputSchema)
         if (tool.inputSchema['type'] !== 'object') {
           message = 'inputSchema root type must be "object"'
         }
