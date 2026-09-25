@@ -16,7 +16,8 @@
     "docs:api:strict": "TYPEDOC_STRICT=1 typedoc --options typedoc.config.mjs",
     "docs:dev": "pnpm docs:api && vitepress dev docs",
     "docs:build": "pnpm docs:api && vitepress build docs",
-    "docs:preview": "vitepress preview docs"
+    "docs:preview": "vitepress preview docs",
+    "test:all": "pnpm lint && pnpm typecheck && pnpm test && pnpm build && pnpm quality && pnpm -r --filter \"./examples/*\" run e2e"
   },
   "devDependencies": {
     "@changesets/cli": "catalog:",
@@ -36,6 +37,7 @@
     "typescript": "catalog:",
     "typescript-eslint": "catalog:",
     "vitepress": "catalog:",
-    "vitest": "catalog:"
+    "vitest": "catalog:",
+    "yaml": "catalog:"
   }
 }

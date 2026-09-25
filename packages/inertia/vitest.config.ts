@@ -35,7 +35,9 @@ export default defineProject({
       enabled: true,
       provider: playwright(),
       headless: true,
-      instances: [{ browser: 'chromium' }],
+      // Spec §21: every DOM suite runs on Chromium, Firefox and WebKit (CI selects one instance per
+      // job with `--project '<name> (<browser>)'`).
+      instances: [{ browser: 'chromium' }, { browser: 'firefox' }, { browser: 'webkit' }],
     },
   },
 })

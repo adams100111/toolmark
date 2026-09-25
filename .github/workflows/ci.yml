@@ -1,21 +1,61 @@
 name: CI
 
+# Spec §21 / R6 release matrix (M5 Task 1). The full matrix runs on pull requests to main, on pushes
+# to main and nightly; a push to any other branch runs only the node 24 × react 19.3.0 × inertia
+# 3.7.1 cell on Chromium (owner O6, CI minutes). Branch protection names the full-matrix jobs.
 on:
-  push:
   pull_request:
+    branches: [main]
+  push:
+  schedule:
+    - cron: '0 3 * * *'
 
-permissions:
-  contents: read
+permissions: {}
 
 concurrency:
-  group: ci-${{ github.ref }}
-  # Every push to main gets a full run; superseded runs on other refs are cancelled.
+  group: ci-${{ github.event_name }}-${{ github.ref }}
+  # Every push to main (and every nightly run) completes; superseded runs on other refs are cancelled.
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
-# Third-party actions are pinned to full commit SHAs (version in the trailing comment).
+# Third-party and GitHub actions are pinned to full commit SHAs (version in the trailing comment);
+# scripts/check-workflows.mjs enforces the hardening rules.
 jobs:
+  # Chooses the matrix: full, or the reduced push cell for branches other than main.
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    outputs:
+      unit: ${{ steps.plan.outputs.unit }}
+      browsers: ${{ steps.plan.outputs.browsers }}
+    steps:
+      - id: plan
+        env:
+          FULL: ${{ github.event_name != 'push' || github.ref == 'refs/heads/main' }}
+        # suite: `full` = every Vitest project (DOM projects on Chromium; Firefox and WebKit run in
+        # the `browser` jobs); `react18` = react, inertia and core-browser; `inertia2` = inertia.
+        # React 18.3 × Inertia 3 is never included (Inertia 3 requires React 19). zod is 4.6.5 in
+        # every cell (the zod 3 axis is the `zod3` job).
+        run: |
+          if [ "$FULL" = true ]; then
+            unit='[
+              {"node":"22","react":"19.3.0","inertia":"3.7.1","suite":"full"},
+              {"node":"24","react":"19.3.0","inertia":"3.7.1","suite":"full"},
+              {"node":"24","react":"18.3.1","inertia":"2.3.28","suite":"react18"},
+              {"node":"24","react":"19.3.0","inertia":"2.3.28","suite":"inertia2"}
+            ]'
+            browsers='["chromium","firefox","webkit"]'
+          else
+            unit='[{"node":"24","react":"19.3.0","inertia":"3.7.1","suite":"full"}]'
+            browsers='["chromium"]'
+          fi
+          echo "unit=$(jq -c . <<<"$unit")" >> "$GITHUB_OUTPUT"
+          echo "browsers=$(jq -c . <<<"$browsers")" >> "$GITHUB_OUTPUT"
+
   lint:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -32,6 +72,8 @@ jobs:
 
   typecheck:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -47,6 +89,8 @@ jobs:
 
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -60,20 +104,17 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
 
-  test:
-    name: test (node ${{ matrix.node }}, react ${{ matrix.react }}, inertia ${{ matrix.inertia }})
+  unit:
+    name: unit (node ${{ matrix.node }}, react ${{ matrix.react }}, inertia ${{ matrix.inertia }})
+    needs: plan
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        # Spec §21 / R6: React 18.3 × Inertia 3 is never included (Inertia 3 requires React 19).
-        # Chromium only in M1; the zod 3 axis and Firefox/WebKit arrive in M5.
-        include:
-          - { node: 22.x, react: 19.3.0, inertia: 3.7.1 }
-          - { node: 24.x, react: 19.3.0, inertia: 3.7.1 }
-          - { node: 24.x, react: 19.3.0, inertia: 2.3.28 }
-          - { node: 24.x, react: 18.3.1, inertia: 2.3.28 }
+        include: ${{ fromJSON(needs.plan.outputs.unit) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -81,7 +122,7 @@ jobs:
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0 (version from packageManager)
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: ${{ matrix.node }}
+          node-version: ${{ matrix.node }}.x
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       # Non-default cells swap the React / Inertia dev versions in place (never committed).
@@ -91,7 +132,7 @@ jobs:
           REACT_VERSION: ${{ matrix.react }}
         run: |
           major="${REACT_VERSION%%.*}"
-          pnpm -F @toolmark/react -F @toolmark/inertia add -D \
+          pnpm -F @toolmark/core -F @toolmark/react -F @toolmark/inertia add -D \
             "react@${REACT_VERSION}" "react-dom@${REACT_VERSION}" \
             "@types/react@${major}" "@types/react-dom@${major}"
       - name: Use Inertia ${{ matrix.inertia }}
@@ -103,20 +144,22 @@ jobs:
         if: matrix.react != '19.3.0' || matrix.inertia != '3.7.1'
         run: pnpm install --no-frozen-lockfile
       # Fails the cell when the resolved versions are not the matrix ones (a silent no-op swap).
-      - name: Assert React ${{ matrix.react }} / Inertia ${{ matrix.inertia }} are resolved
+      - name: Assert React ${{ matrix.react }} / Inertia ${{ matrix.inertia }} / zod 4.6.5 are resolved
         env:
           REACT_VERSION: ${{ matrix.react }}
           INERTIA_VERSION: ${{ matrix.inertia }}
         run: |
           set -euo pipefail
           major="${REACT_VERSION%%.*}"
-          for pkg in @toolmark/react @toolmark/inertia; do
-            out="$(pnpm -F "$pkg" list react @types/react --depth 0)"
+          for pkg in @toolmark/core @toolmark/react @toolmark/inertia; do
+            out="$(pnpm -F "$pkg" list react @types/react zod --depth 0)"
             echo "$out"
             grep -qF " react@${REACT_VERSION}" <<<"$out" \
               || { echo "::error::$pkg does not resolve react@${REACT_VERSION}"; exit 1; }
             grep -qF " @types/react@${major}." <<<"$out" \
               || { echo "::error::$pkg does not resolve @types/react@${major}"; exit 1; }
+            grep -qF " zod@4.6.5" <<<"$out" \
+              || { echo "::error::$pkg does not resolve zod@4.6.5"; exit 1; }
           done
           out="$(pnpm -F @toolmark/inertia list @inertiajs/react --depth 0)"
           echo "$out"
@@ -137,12 +180,29 @@ jobs:
       - name: Install Chromium system dependencies
         if: steps.playwright-cache.outputs.cache-hit == 'true'
         run: pnpm exec playwright install-deps chromium
-      # Resolves workspace sources via the @toolmark/source condition: no build needed.
-      - run: pnpm test
+      # Resolves workspace sources via the @toolmark/source condition: no build needed. DOM projects
+      # run their Chromium instance here; Firefox and WebKit run in the `browser` jobs.
+      - name: Vitest (${{ matrix.suite }})
+        env:
+          SUITE: ${{ matrix.suite }}
+        run: |
+          set -euo pipefail
+          case "$SUITE" in
+            full) projects=(--project '!*(firefox)' --project '!*(webkit)') ;;
+            react18) projects=(--project 'react (chromium)' --project 'inertia (chromium)' --project 'core-browser (chromium)') ;;
+            inertia2) projects=(--project 'inertia (chromium)') ;;
+            *) echo "::error::unknown suite $SUITE"; exit 1 ;;
+          esac
+          pnpm exec vitest run "${projects[@]}"
 
-  types-ts7:
+  # Spec §21: zod 4 everywhere, plus a zod 3 axis that runs only the converter-specific tests (their
+  # names contain `zod3`; they import `zod/v3` and `zod-to-json-schema`).
+  zod3:
+    name: zod3 (node 24, zod 3.25.76)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    permissions:
+      contents: read
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -153,18 +213,34 @@ jobs:
           node-version: 24.x
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm build
-      - name: Pack tarballs
-        run: pnpm -r --filter "./packages/*" pack --pack-destination "$PWD/dist-tarballs"
-      # TypeScript 6.0.3 and 7.0.2 over the packed types (nodenext + bundler), imports, JSON, bins.
-      - name: Tarball smoke test
-        run: node scripts/tarball-smoke.mjs dist-tarballs
-      - name: Script tests
-        run: node --test "scripts/*.test.mjs"
+      # Swapped in place and never committed.
+      - name: Use zod 3.25.76
+        run: |
+          pnpm -F @toolmark/core add -D zod@3.25.76
+          pnpm install --no-frozen-lockfile
+      - name: Assert zod 3.25.76 is resolved
+        run: |
+          set -euo pipefail
+          out="$(pnpm -F @toolmark/core list zod --depth 0)"
+          echo "$out"
+          grep -qF " zod@3.25.76" <<<"$out" \
+            || { echo "::error::@toolmark/core does not resolve zod@3.25.76"; exit 1; }
+      - run: pnpm exec vitest run --project core-node -t zod3
 
-  e2e:
+  # The browser axis (Chromium, Firefox, WebKit): the Vitest DOM projects' Firefox and WebKit
+  # instances (Chromium runs in every `unit` cell) and the examples/react-vite Playwright project for
+  # that browser. WebMCP suites (and the chromium-only e2e specs) run on Chromium only.
+  browser:
+    name: browser (${{ matrix.browser }})
+    needs: plan
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: ${{ fromJSON(needs.plan.outputs.browsers) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -186,35 +262,74 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}-chromium-firefox-webkit
-      - name: Install Chromium, Firefox and WebKit
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}-${{ matrix.browser }}
+      - name: Install ${{ matrix.browser }}
         if: steps.playwright-cache.outputs.cache-hit != 'true'
-        run: pnpm exec playwright install --with-deps chromium firefox webkit
-      - name: Install browser system dependencies
+        run: pnpm exec playwright install --with-deps "${{ matrix.browser }}"
+      - name: Install ${{ matrix.browser }} system dependencies
         if: steps.playwright-cache.outputs.cache-hit == 'true'
-        run: pnpm exec playwright install-deps chromium firefox webkit
+        run: pnpm exec playwright install-deps "${{ matrix.browser }}"
+      - name: Vitest DOM projects (${{ matrix.browser }})
+        if: matrix.browser != 'chromium'
+        run: pnpm exec vitest run --project "*(${{ matrix.browser }})"
       - run: pnpm -F @toolmark-examples/react-vite typecheck
-      # Every project in examples/react-vite/playwright.config.ts (Chromium, Firefox, WebKit).
-      - name: Playwright (react-vite, all projects, port 5173)
-        run: pnpm -F @toolmark-examples/react-vite exec playwright test
+      - name: Playwright (react-vite, ${{ matrix.browser }})
+        run: pnpm -F @toolmark-examples/react-vite exec playwright test --project="${{ matrix.browser }}"
         env:
           ROUND_BUDGET_REPORT: round-budget.json
-      - run: pnpm -F @toolmark-examples/react-vite build
+      - name: Upload Playwright traces
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: react-vite-${{ matrix.browser }}-test-results
+          path: examples/react-vite/test-results/
+          if-no-files-found: ignore
+      - if: matrix.browser == 'chromium'
+        run: pnpm -F @toolmark-examples/react-vite build
       - name: Production build has no test hook
+        if: matrix.browser == 'chromium'
         run: |
           if grep -rqE "__toolmark_(test|agent)__" examples/react-vite/dist; then
             echo "::error::examples/react-vite/dist contains a test-only global"
             exit 1
           fi
+      # round-budget.spec.ts runs on Chromium only (one report row per task).
       - name: Upload round-budget report
+        if: matrix.browser == 'chromium'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: round-budget
           path: examples/react-vite/round-budget.json
           if-no-files-found: error
 
+  types-ts7:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0 (version from packageManager)
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.x
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Pack tarballs
+        run: pnpm -r --filter "./packages/*" pack --pack-destination "$PWD/dist-tarballs"
+      # TypeScript 6.0.3 and 7.0.2 over the packed types (nodenext + bundler), imports, JSON, bins.
+      - name: Tarball smoke test
+        run: node scripts/tarball-smoke.mjs dist-tarballs
+      - name: Script tests
+        run: node --test "scripts/*.test.mjs"
+
   docs:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -235,6 +350,8 @@ jobs:
 
   example-nextjs:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     timeout-minutes: 25
     env:
       NEXT_TELEMETRY_DISABLED: 1
@@ -281,6 +398,8 @@ jobs:
   example-laravel:
     name: example-laravel (bridge-cache ${{ matrix.bridge-cache }})
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     timeout-minutes: 30
     strategy:
       fail-fast: false
