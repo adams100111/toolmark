@@ -275,3 +275,33 @@ d691a793fa9f6cb807fe97ddd3a084b55e1740ddf6b9e8961c690daf0ec79985  toolmark-mcp-1
 PR #6 merged as `ffeb8c7`. `release.yml` on `ffeb8c7`: [run 36121368743](https://github.com/adams100111/toolmark/actions/runs/36121368743) —
 select-mode ✓, pack ✓, **publish skipped** (`TOOLMARK_PUBLISH_ENABLED` unset), version and
 release-dry-run skipped.
+
+## Task 7d — post-publish verification — 2026-09-25
+
+Published by `release.yml` run [36124419339](https://github.com/adams100111/toolmark/actions/runs/36124419339) (push, `main` @ `21dc573` = release commit `ffeb8c7` + wizard-only changes), owner-approved `npm-release` deployment. The earlier dispatch run 36123623558 (bootstrap token without "Bypass 2FA" → `EOTP`, nothing published) was cancelled.
+
+`npm view` per package (version, `dist-tags.latest`, provenance predicate):
+
+```text
+core             v=1.0.0 latest=1.0.0 prov=https://slsa.dev/provenance/v1
+react            v=1.0.0 latest=1.0.0 prov=https://slsa.dev/provenance/v1
+inertia          v=1.0.0 latest=1.0.0 prov=https://slsa.dev/provenance/v1
+testing          v=1.0.0 latest=1.0.0 prov=https://slsa.dev/provenance/v1
+tour             v=1.0.0 latest=1.0.0 prov=https://slsa.dev/provenance/v1
+mcp              v=1.0.0 latest=1.0.0 prov=https://slsa.dev/provenance/v1
+lint             v=1.0.0 latest=1.0.0 prov=https://slsa.dev/provenance/v1
+judge-typesafe   v=1.0.0 latest=1.0.0 prov=https://slsa.dev/provenance/v1
+```
+
+Fresh temp dir: `npm i @toolmark/{core,react,inertia,testing,tour,mcp,lint,judge-typesafe}@1.0.0 react@19.3.0 react-dom@19.3.0 && npm audit signatures`:
+
+```text
+audited 29 packages in 2s
+29 packages have verified registry signatures
+18 packages have verified attestations
+(use --json --include-attestations to view attestation details)
+```
+
+Tags `@toolmark/<pkg>@1.0.0` (8) all point at `21dc573`; 8 GitHub releases created by the run. Docs site: `https://adams100111.github.io/toolmark/policies/versioning` → 200. Spec-watch: scheduled runs switched to live (this PR).
+
+Owner, still open: O-j `npm trust` for the 8 packages; O-k delete `NPM_BOOTSTRAP_TOKEN` (still present) and revoke both npm tokens; umbrella tag `v1.0.0` needs the owner's go-ahead.

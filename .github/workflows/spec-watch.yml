@@ -22,12 +22,8 @@ concurrency:
   group: spec-watch-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  # Dry-run until Task 7d flips this (the PR-triggered `validate` job always sets it itself):
-  # spec-watch.mjs opens/updates no issue and writes no state, git-commit-and-PR is skipped,
-  # canary/audit issue-opening still runs (those aren't gated by this — they only fire
-  # `on: failure()`, which a dry run of `watch` doesn't affect).
-  SPEC_WATCH_DRY_RUN: '1'
+# Live since 1.0.0 (M5 Task 7d): scheduled and manual runs open/update issues and write state.
+# The PR-triggered `validate` job still sets SPEC_WATCH_DRY_RUN itself.
 
 # Third-party and GitHub actions are pinned to full commit SHAs (version in the trailing comment),
 # each dereferenced with `gh api repos/<owner>/<repo>/commits/<tag>` on 2026-09-25.

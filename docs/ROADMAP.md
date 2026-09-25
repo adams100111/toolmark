@@ -37,7 +37,7 @@ Post-1.0 consumer track:          └─► Innov P0 ─► P1 ─► P2 ─► 
 | T-M2 Forms | toolmark | `…-m2-forms.md` | T-M1 | round budget `wizard_within_5_rounds`; tarball smoke | done | `feat/m2-forms` (PR #3) | 2026-09-25 |
 | T-M3 Reach | toolmark | `…-m3-reach.md` | T-M2 | same tool via WebMCP + MCP + Playwright (`reach.spec.ts`); tarball smoke incl. `toolmark-mcp` | done | `feat/m3-reach` (PR #4) | 2026-09-25 |
 | T-M4 Tours & tooling | toolmark | `…-m4-tours-tooling.md` | T-M3 | authored + planned tours (3 browsers, axe-clean); Laravel authored tour; same-tools e2e; Laravel + Next.js suites; `docs:build`; lint clean; tarball smoke | done | `feat/m4-tours` (PR #5) | 2026-09-25 |
-| T-M5 Release | toolmark | `…-m5-release.md` | T-M4 | all §21 gates (incl. round budget + smoke on the RC); publish (owner) | owner (publish) | `main` @ `ffeb8c7` (PR #6) | 2026-09-25 |
+| T-M5 Release | toolmark | `…-m5-release.md` | T-M4 | all §21 gates (incl. round budget + smoke on the RC); publish (owner) | done (owner hardening O-j/O-k open) | `main` @ `21dc573`; npm `1.0.0` | 2026-09-25 |
 
 **Current focus:** Toolmark M1 → M5 (release). Innovation is post-1.0. Within Toolmark, units are
 sequential; parallelism is lane-level inside a unit (see
@@ -82,8 +82,8 @@ its exit check passes. Task numbers refer to the unit's plan.
 - [x] W1 · B (T3, T3b) TSDoc gap-fill + strict TypeDoc, policies/community/docs deploy · C (T4, high, **security**) security review · D (T6) spec-watch
 - [x] W2 · E (T5, high, **security**) security fixes
 - [x] W3 · F (T7a–T7c, high) release workflow + dry run, RC + in-repo evidence, 1.0.0 + owner hand-off → **stop for owner**
-- [ ] After owner: T7d (controller) post-publish verification
-- [ ] Unit exit: `1.0.0` on npm with provenance (T7d)
+- [x] After owner: T7d (controller) post-publish verification
+- [x] Unit exit: `1.0.0` on npm with provenance (T7d)
 
 ## Owner actions and open decisions
 
@@ -249,3 +249,9 @@ also record progress in Innovation's own branch history.
   round budget simple 3 ≤ 3, wizard 4 ≤ 5. M5 rulings in spec §23. **Stopped for the owner:** run
   `bash scripts/owner-publish-wizard.sh` (steps O-a…O-k in `docs/release/owner-handoff.md`), then
   say "1.0.0 published" → T7d.
+- 2026-09-25 — **Toolmark 1.0.0 published** (T-M5 done): all 8 `@toolmark/*` packages on npm at
+  `1.0.0` (`latest`) with SLSA provenance, published by `release.yml` run 36124419339 on `21dc573`;
+  `npm audit signatures` verifies registry signatures and attestations; 8 tags and GitHub releases;
+  docs site live; spec-watch live. First attempt failed with `EOTP` (bootstrap token lacked "Bypass
+  2FA"). Owner still open: O-j `npm trust` ×8, O-k delete `NPM_BOOTSTRAP_TOKEN` and revoke the npm
+  tokens.
