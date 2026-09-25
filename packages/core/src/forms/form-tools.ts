@@ -1250,7 +1250,9 @@ export function createFormTools<V extends Record<string, unknown>>(
     ...title,
     ...(opts.origin !== undefined ? { origin: opts.origin } : {}),
     ...(opts.nativeName?.fill !== undefined ? { nativeName: opts.nativeName.fill } : {}),
-    ...(opts.hints?.fill !== undefined ? { hints: { ...opts.hints.fill } } : {}),
+    // SEC-6: a fill returns values the user typed or the page loaded (`changes`, issues), so it
+    // is always `untrustedContent`, whatever `hints.fill` says.
+    hints: { ...opts.hints?.fill, untrustedContent: true },
     description:
       `${opts.description} Fill form fields: pass a partial object in "values" (null clears a ` +
       `field). Fields the user edited are skipped unless "overwrite" is true.` +

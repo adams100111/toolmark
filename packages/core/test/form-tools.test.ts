@@ -87,7 +87,7 @@ describe('form tools', () => {
     const { tm, tools } = setup()
     const fill = tm.describe('challenge.fill')!
     const submit = tm.describe('challenge.submit')!
-    expect(fill.hints).toEqual({})
+    expect(fill.hints).toEqual({ untrustedContent: true }) // SEC-6
     expect(submit.hints).toEqual({ consequential: true })
     expect(fill.inputSchema).toMatchObject({
       type: 'object',

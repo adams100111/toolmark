@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import {
   createFormTools,
+  createStepwiseWizardTools,
   createWizardTools,
   fromJsonSchema,
   ok,
@@ -432,5 +433,48 @@ describe('SEC-5: confirmation payloads redact sensitive input', () => {
     const r = await tm.call('pay', input, { caller: 'inapp' })
     expect(r.status).toBe('needs_confirmation')
     expect(JSON.stringify(tm.pendingConfirmations())).not.toContain('4111')
+  })
+})
+
+describe('SEC-6: fills that return page/user values are marked untrustedContent', () => {
+  it('sec_6_form_fill_is_untrusted_content_by_default', () => {
+    const tm = createTestRegistry()
+    createFormTools(tm, memoryForm(), {
+      name: 'f',
+      description: 'Form.',
+      input: z.object({ name: z.string() }),
+      hints: { fill: { untrustedContent: false } },
+    })
+    expect(tm.describe('f.fill')?.hints).toMatchObject({ untrustedContent: true })
+  })
+
+  it('sec_6_wizard_fill_is_untrusted_content', () => {
+    const tm = createTestRegistry()
+    createWizardTools(tm, {
+      name: 'w',
+      description: 'Wizard.',
+      steps: [{ name: 'one', input: z.object({ name: z.string() }) }],
+      getData: () => ({ one: {} }),
+      setData: () => undefined,
+      getCurrent: () => 'one',
+      goTo: () => undefined,
+      submit: () => Promise.resolve(ok(null)),
+    })
+    expect(tm.describe('w.fill')?.hints).toMatchObject({ untrustedContent: true })
+  })
+
+  it('sec_6_stepwise_step_fill_is_untrusted_content', () => {
+    const tm = createTestRegistry()
+    const form = memoryForm()
+    createStepwiseWizardTools(tm, {
+      name: 'w',
+      description: 'Wizard.',
+      currentAdapter: () => form,
+      currentStep: () => ({ name: 'one', input: z.object({ name: z.string() }) }),
+      next: () => Promise.resolve(ok({ step: 'one' })),
+      previous: () => undefined,
+      submit: () => Promise.resolve(ok(null)),
+    })
+    expect(tm.describe('w.step.fill')?.hints).toMatchObject({ untrustedContent: true })
   })
 })

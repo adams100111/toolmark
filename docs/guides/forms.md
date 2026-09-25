@@ -42,8 +42,9 @@ export function ChallengeForm({ save }: { save: (v: Challenge) => Promise<void> 
 }
 ```
 
-This registers `challenge.fill`, `challenge.submit` (consequential) and `challenge.options`
-(read-only, `untrustedContent`). `createFormTools(tm, adapter, opts)` from `@toolmark/core` does the
+This registers `challenge.fill` (`untrustedContent`: its result carries values the user typed or
+the page loaded), `challenge.submit` (consequential) and `challenge.options` (read-only,
+`untrustedContent`). `createFormTools(tm, adapter, opts)` from `@toolmark/core` does the
 same outside React and returns `{ dispose() }`.
 
 ## Fill rules (M1 rules plus M2 rulings)
