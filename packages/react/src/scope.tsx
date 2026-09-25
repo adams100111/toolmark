@@ -24,9 +24,14 @@ export interface ToolScopeProps {
  * and forces one more render so the subtree re-registers into the live scope.
  *
  * Under SSR (`renderToString`/`renderToStaticMarkup`, no `document`) effects never run, so nothing
- * would ever dispose a scope created during render; unlike `register`, `Scope.scope()` isn't itself
- * a no-op there (I2), so this skips creating one server-side and provides `undefined` instead — a
- * repeated `renderToString` against one module-level registry never accumulates child scopes.
+ * would ever dispose a scope created during render, so this skips creating one server-side and
+ * provides `undefined` instead (core's server-side `Scope.scope()` also returns a detached node,
+ * so a repeated `renderToString` against one module-level registry never accumulates child
+ * scopes).
+ *
+ * Known limit: a render React discards before commit (a suspended or interrupted concurrent render)
+ * may leave the scope it created behind. Such a node is empty — its children never mounted, so no
+ * tool is registered in it — and stays attached to its parent until the parent is disposed.
  * @param props - See {@link ToolScopeProps}.
  */
 export function ToolScope(props: ToolScopeProps): JSX.Element {

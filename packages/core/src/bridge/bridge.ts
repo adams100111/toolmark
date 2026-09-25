@@ -180,7 +180,9 @@ function serializableCopy(result: ToolResult<unknown>): ToolResult<unknown> | nu
  * messages.
  * @param options - Transport and behaviour; see {@link BridgeOptions}.
  * @returns A consumer for `tm.use`; its disposer unsubscribes everything, aborts in-flight calls
- * and closes the transport.
+ * and closes the transport. A closed transport is not reopened, so attach the bridge outside React
+ * effects (StrictMode runs an effect's cleanup and then the effect again), or create a new
+ * transport for every attach.
  * @throws TypeError when `maxMessageBytes` is not a positive integer, or `caller` is anything
  * other than `'inapp'`.
  */
