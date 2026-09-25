@@ -9,7 +9,8 @@ permissions:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # Every push to main gets a full run; superseded runs on other refs are cancelled.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 # Third-party actions are pinned to full commit SHAs (version in the trailing comment).
 jobs:
@@ -101,6 +102,26 @@ jobs:
       - name: Re-install after version swap
         if: matrix.react != '19.3.0' || matrix.inertia != '3.7.1'
         run: pnpm install --no-frozen-lockfile
+      # Fails the cell when the resolved versions are not the matrix ones (a silent no-op swap).
+      - name: Assert React ${{ matrix.react }} / Inertia ${{ matrix.inertia }} are resolved
+        env:
+          REACT_VERSION: ${{ matrix.react }}
+          INERTIA_VERSION: ${{ matrix.inertia }}
+        run: |
+          set -euo pipefail
+          major="${REACT_VERSION%%.*}"
+          for pkg in @toolmark/react @toolmark/inertia; do
+            out="$(pnpm -F "$pkg" list react @types/react --depth 0)"
+            echo "$out"
+            grep -qF " react@${REACT_VERSION}" <<<"$out" \
+              || { echo "::error::$pkg does not resolve react@${REACT_VERSION}"; exit 1; }
+            grep -qF " @types/react@${major}." <<<"$out" \
+              || { echo "::error::$pkg does not resolve @types/react@${major}"; exit 1; }
+          done
+          out="$(pnpm -F @toolmark/inertia list @inertiajs/react --depth 0)"
+          echo "$out"
+          grep -qF " @inertiajs/react@${INERTIA_VERSION}" <<<"$out" \
+            || { echo "::error::@toolmark/inertia does not resolve @inertiajs/react@${INERTIA_VERSION}"; exit 1; }
       - name: Playwright version
         id: playwright
         run: echo "version=$(pnpm exec playwright --version | awk '{print $2}')" >> "$GITHUB_OUTPUT"
