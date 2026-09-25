@@ -45,11 +45,17 @@ observe it; the overlay unmounts itself when the tour is `done` or `stopped`.
 | `guide` | Waits for the user's own input on the step's field and validates it through `tm.state()` (400 ms after the last input, or when focus leaves the field); `waitFor: 'submit'` waits for a submit. While the input has issues the status is `waiting` and `message` shows the first issue. | Not modal; the anchor gets focus   |
 | `do`    | Calls the step's tool **as caller `tour`** with the step's `input` (policy and inline confirmation apply), then highlights each changed field for 600 ms and advances.                                                                                                                  | Modal (focus trap, `aria-modal`)   |
 
-- In `do` mode the status is `busy` while the call is in flight (Next/Back are `aria-disabled`)
-  and `confirming` for the whole call of a consequential or destructive tool: the overlay then
-  releases its focus trap and backdrop and lets pointer input through, so the app's inline
-  confirmation stays usable. Caller `tour` is always inline, so the app needs a `confirm` handler
-  for tours that submit (see [Confirmation modes](../concepts/confirmation.md)).
+- In `do` mode `busy` is `true` while the step's call is in flight (Next/Back are
+  `aria-disabled` and the status line says so). `busy` is a flag on the state, not a `status`
+  value: the status stays `running` (or `confirming`, below) meanwhile.
+- The status is `confirming` while **any** inline confirmation is pending. It is driven by the
+  registry's `confirm` events, so it covers a consequential or destructive tool, `ctx.confirm`
+  inside a tool's `run`, and another tool's confirmation raised by any caller (an MCP or WebMCP
+  agent, say) while the tour runs. It clears as soon as every pending confirmation is answered
+  (approved, rejected or expired), returning to `running` or `waiting` (with its message). While
+  `confirming` the overlay releases its focus trap and backdrop and lets pointer input through, so
+  the app's inline confirmation stays usable. Caller `tour` is always inline, so the app needs a
+  `confirm` handler for tours that submit (see [Confirmation modes](../concepts/confirmation.md)).
 - `show`/`guide`: `F6` or `Alt+T` moves focus between the dialog and the anchor.
 - Keyboard: arrow keys move between steps, `Esc` stops the tour (focus in the dialog); on close,
   focus returns to where it was before the overlay mounted.

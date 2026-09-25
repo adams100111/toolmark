@@ -52,10 +52,18 @@ toolmark lint [--manifest file]... [--url url]... [--storage-state file]
   `manifest({ detail: 'full', caller: 'inapp' })` from the page's test hook
   (`installTestHook(tm)` from `@toolmark/testing/page`, installed only outside production builds).
   Needs `@playwright/test` (an optional peer; missing → exit `2`) and Chromium
-  (`pnpm exec playwright install chromium`). A page without the hook exits `2` within 5 s.
+  (`pnpm exec playwright install chromium`). A page without the hook exits `2` within 5 s. The
+  collected manifest is validated against the same schema as `--manifest` (a malformed page tool
+  exits `2` with `invalid manifest collected from <url>`).
 - **`--storage-state <file>`**: a Playwright storage state for pages behind a login (the Laravel
   example saves one from a logged-in browser context).
-- **`--budget <n>`**: the per-page tool budget (default `40`).
+- **`--budget <n>`**: the `tool-budget` threshold — the most tools a page may expose before
+  `tool-budget` warns (positive integer, default `40`).
+
+At least one `--manifest` or `--url` is required; with neither, lint prints the usage and exits
+`2`. Tool names, titles and descriptions come from the page, so control characters (including
+ESC) and bidi marks are stripped from every printed field in both formats.
+
 - **`--format pretty|json`**: output format (default `pretty`).
 
 ## Rules
@@ -88,14 +96,14 @@ warn description-short challenges challenges.search: …
 `json` prints `{ "findings": Finding[], "summary": { "errors": n, "warnings": m } }` where
 `Finding` is `{ rule, severity, tool?, page?, message, score? }`.
 
-| Exit | Meaning                                                                                                           |
-| ---- | ----------------------------------------------------------------------------------------------------------------- |
-| `0`  | No `error` findings                                                                                               |
-| `1`  | At least one `error` finding                                                                                      |
-| `2`  | Usage or runtime failure (bad arguments, invalid manifest file, missing Playwright or test hook, judge not found) |
+| Exit | Meaning                                                                                                                |
+| ---- | ---------------------------------------------------------------------------------------------------------------------- |
+| `0`  | No `error` findings                                                                                                    |
+| `1`  | At least one `error` finding                                                                                           |
+| `2`  | Usage or runtime failure (bad arguments, no input, invalid manifest, missing Playwright or test hook, judge not found) |
 
 In CI, run it against the running app in your e2e job (each Toolmark example has a `lint_clean`
-spec that spawns the CLI with `--url` and expects exit `0`).
+spec that spawns the CLI with `--url` and expects exit `0` and the `0 error(s)` summary line).
 
 ## Judges
 
@@ -139,9 +147,13 @@ TYPESAFE_API_KEY=… pnpm exec toolmark lint --url http://localhost:5173/ --judg
 - **Key.** `TYPESAFE_API_KEY` (or the `apiKey` option). Without a key the judge prints
   `toolmark lint: TYPESAFE_API_KEY not set; judge-typesafe disabled` to stderr once, returns no
   findings and makes no network call; lint still runs. Keep the key in CI secrets.
-- **Data sent to `api.typesafe.ai`:** tool names, titles, descriptions and the paths and
-  descriptions of schema properties. Never values, `default`, `enum`, `examples`, `const` or any
-  other application data.
+- **Data sent to `api.typesafe.ai`:** the page's origin and path (for `--url` pages; the query
+  string, hash and any `user:pass@` are stripped) or the manifest file's `page` name; tool names,
+  titles, descriptions; and the paths and descriptions of schema properties. Never values,
+  `default`, `enum`, `examples`, `const` or any other application data.
+- **Time bound.** Each page's requests are bounded by `pageTimeoutMs` (default 120 s) and each
+  request is retried at most once; a page that runs out of time gets one `judge/timeout` warning,
+  so the judge never hangs a lint run.
 - **Findings** (all `warn` by default — a probabilistic model never fails CI on its own):
 
 | Finding                     | When                                                                                                                                   | Option (default)           |
@@ -151,6 +163,7 @@ TYPESAFE_API_KEY=… pnpm exec toolmark lint --url http://localhost:5173/ --judg
 | `judge/overlap`             | Two tools in the same scope (form/wizard siblings excluded) are likely to be confused                                                  | `overlapThreshold` (`0.8`) |
 | `judge/overlap-truncated`   | More pairs than `maxPairs` on a page; the rest were skipped                                                                            | `maxPairs` (`200`)         |
 | `judge/unavailable`         | The API failed (error, connection, timeout); names the error class                                                                     | —                          |
+| `judge/timeout`             | The page's requests did not finish within the overall per-page bound; the page is skipped                                              | `pageTimeoutMs` (`120000`) |
 
 To change options from the CLI, point `--judge` at a small local module:
 
