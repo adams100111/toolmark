@@ -2,7 +2,7 @@ import type { ToolResult } from '@toolmark/core'
 import { cancelled, invalid, ok } from '@toolmark/core'
 
 /**
- * @internal Callbacks accepted by an Inertia visit (`router.visit` / `useForm().submit`),
+ * Callbacks accepted by an Inertia visit (`router.visit` / `useForm().submit`),
  * structurally covering both Inertia 2's callback names (`onInvalid`, `onException`) and Inertia
  * 3's renamed ones (`onHttpException`, `onNetworkError`). Passing every name is harmless: whichever
  * major is installed simply never calls the names it doesn't recognize.
