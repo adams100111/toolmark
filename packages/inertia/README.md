@@ -32,6 +32,9 @@ export function CreateProject() {
 
 Protocol and server contract: [docs/protocol-v1.md](https://github.com/adams100111/toolmark/blob/main/docs/protocol-v1.md).
 
+Docs: [Inertia guide](https://adams100111.github.io/toolmark/guides/inertia) ·
+[API reference](https://adams100111.github.io/toolmark/api/@toolmark/inertia/).
+
 ## License
 
 MIT

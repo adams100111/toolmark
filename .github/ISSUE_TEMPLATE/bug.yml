@@ -1,0 +1,52 @@
+name: Bug report
+description: Something in a published @toolmark/* package doesn't work as documented.
+labels: ['bug']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. **If this is a security vulnerability, please
+        do not file it here** — use [private vulnerability reporting](https://github.com/adams100111/toolmark/security/advisories/new)
+        instead (see [SECURITY.md](https://github.com/adams100111/toolmark/blob/main/SECURITY.md)).
+  - type: input
+    id: packages
+    attributes:
+      label: Affected package(s) and version(s)
+      description: e.g. "@toolmark/core@1.0.0, @toolmark/react@1.0.0"
+      placeholder: '@toolmark/core@1.0.0'
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened
+      description: A clear description of the bug. What did you expect instead?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproduction
+      description: >
+        A minimal code sample, a link to a repository/StackBlitz, or exact steps. Bugs without a
+        reproduction are much slower to fix.
+      render: ts
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Node version, browser + version (if relevant), React/Inertia version (if relevant), OS.
+      placeholder: |
+        - Node: 22.12.0
+        - Browser: Chrome 130
+        - React: 19.3.0
+        - OS: macOS 15
+    validations:
+      required: true
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Logs, screenshots, links to related issues.

@@ -41,6 +41,11 @@ per-transport subpaths `/bridge/echo`, `/bridge/websocket`, `/bridge/post-messag
 
 Protocol and server contract: [docs/protocol-v1.md](https://github.com/adams100111/toolmark/blob/main/docs/protocol-v1.md).
 
+Docs: [Getting started](https://adams100111.github.io/toolmark/getting-started) ·
+[API reference](https://adams100111.github.io/toolmark/api/@toolmark/core/). The `./webmcp` entry
+is **experimental** (D28) — see the
+[WebMCP guide](https://adams100111.github.io/toolmark/guides/webmcp).
+
 ## License
 
 MIT

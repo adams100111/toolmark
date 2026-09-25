@@ -61,6 +61,14 @@ export default defineConfig({
         text: 'Reference',
         items: [{ text: 'Error, refusal and event codes', link: '/reference/codes' }],
       },
+      {
+        text: 'Policies',
+        items: [
+          { text: 'Versioning', link: '/policies/versioning' },
+          { text: 'Deprecation', link: '/policies/deprecation' },
+          { text: 'Tool name stability', link: '/policies/tool-names' },
+        ],
+      },
       { text: 'API', link: '/api/', collapsed: true, items: typedocSidebar },
     ],
     socialLinks: [{ icon: 'github', link: repo }],

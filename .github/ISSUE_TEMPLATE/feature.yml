@@ -1,0 +1,52 @@
+name: Feature request
+description: Propose new behaviour, a new API, or a change to an existing one.
+labels: ['enhancement']
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve
+      description: What are you trying to do that Toolmark doesn't support today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed API or behaviour
+      description: >
+        Sketch the shape you'd want — a new option, a new export, a new tool hint, etc. It's fine
+        if it's rough; maintainers will refine it.
+      render: ts
+    validations:
+      required: false
+  - type: dropdown
+    id: package
+    attributes:
+      label: Which package(s) would this affect
+      multiple: true
+      options:
+        - '@toolmark/core'
+        - '@toolmark/react'
+        - '@toolmark/inertia'
+        - '@toolmark/testing'
+        - '@toolmark/tour'
+        - '@toolmark/mcp'
+        - '@toolmark/lint'
+        - '@toolmark/judge-typesafe'
+        - Not sure / new package
+    validations:
+      required: false
+  - type: checkboxes
+    id: semver
+    attributes:
+      label: Semver impact
+      description: See docs/policies/versioning.md.
+      options:
+        - label: This would be a breaking change to the public API (major)
+        - label: This is additive / backwards compatible (minor)
+        - label: This only affects the experimental WebMCP adapter (may ship in a minor per D28)
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What are you doing today instead, and why doesn't it work well enough?
