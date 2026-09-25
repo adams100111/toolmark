@@ -7,7 +7,9 @@ import type { StandardSchemaV1 } from '../standard-schema.js'
 import type { JsonSchema, ToolDefinition } from '../tool.js'
 import { CONFIRM_SNAPSHOT, type ConfirmSnapshotHook } from '../confirm-snapshot.js'
 import {
+  applyArrayOp,
   deepEqual,
+  extractArrayOps,
   flatten,
   flattenWithRejected,
   getPath,
@@ -84,9 +86,95 @@ function declaredPaths(root: JsonSchema): Set<string> {
   return out
 }
 
-/** The `fill` manifest schema (M1 rulings): input schema without `required`, `$defs` hoisted. */
+/** Shape of an array-only node (arrays allowed, objects not), else `undefined`. */
+function arrayOnlyShape(node: unknown, root: JsonSchema): Shape | undefined {
+  const arr = collect(node, 'array', root)
+  if (arr === undefined || arr === 'open' || collect(node, 'object', root) !== undefined) {
+    return undefined
+  }
+  return arr
+}
+
+/**
+ * The array-op `anyOf` (M2 pass-2 ruling): the stripped property `P`, `{ $append }` whose items
+ * come from the unstripped schema (so their `required` survives), and `{ $remove }`.
+ */
+function arrayOpSchema(stripped: unknown, items: unknown): JsonSchema {
+  const append: JsonSchema = { type: 'array' }
+  if (items !== undefined) append.items = structuredClone(items)
+  return {
+    anyOf: [
+      stripped,
+      {
+        type: 'object',
+        properties: { $append: append },
+        required: ['$append'],
+        additionalProperties: false,
+      },
+      {
+        type: 'object',
+        properties: {
+          $remove: { type: 'array', items: { type: 'integer', minimum: 0 }, uniqueItems: true },
+        },
+        required: ['$remove'],
+        additionalProperties: false,
+      },
+    ],
+  }
+}
+
+/**
+ * Wraps every array-only property reachable through `properties` and `allOf`/`anyOf`/`oneOf` of
+ * the stripped schema in {@link arrayOpSchema}, walking the unstripped schema in parallel. Array
+ * items and `$defs` are not descended into (ops on arrays nested inside arrays stay accepted at
+ * runtime but are not advertised).
+ */
+function wrapArrayOps(
+  stripped: unknown,
+  original: unknown,
+  roots: { stripped: JsonSchema; original: JsonSchema },
+  depth = 0,
+): unknown {
+  if (!isRecord(stripped) || !isRecord(original) || depth > 32) return stripped
+  const out: Record<string, unknown> = { ...stripped }
+  if (isRecord(stripped.properties) && isRecord(original.properties)) {
+    const props: Record<string, unknown> = {}
+    for (const [key, child] of Object.entries(stripped.properties)) {
+      const orig = Object.hasOwn(original.properties, key) ? original.properties[key] : undefined
+      const shape = arrayOnlyShape(child, roots.stripped)
+      const origShape = orig === undefined ? undefined : arrayOnlyShape(orig, roots.original)
+      Object.defineProperty(props, key, {
+        value:
+          shape !== undefined
+            ? arrayOpSchema(child, (origShape ?? shape).items)
+            : wrapArrayOps(child, orig, roots, depth + 1),
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      })
+    }
+    out.properties = props
+  }
+  for (const key of ['allOf', 'anyOf', 'oneOf'] as const) {
+    const a = stripped[key]
+    const b = original[key]
+    if (Array.isArray(a) && Array.isArray(b) && a.length === b.length) {
+      out[key] = a.map((branch, i) => wrapArrayOps(branch, b[i], roots, depth + 1))
+    }
+  }
+  return out
+}
+
+/**
+ * The `fill` manifest schema (M1 rulings): input schema without `required`, then every array
+ * property wrapped in the array-op `anyOf` (M2), `$defs` hoisted.
+ */
 function fillJsonSchema(inputSchema: JsonSchema): JsonSchema {
-  const values = stripRequired(inputSchema)
+  const stripped = stripRequired(inputSchema)
+  const values = wrapArrayOps(stripped, inputSchema, {
+    stripped,
+    original: inputSchema,
+  }) as JsonSchema
   const schema: JsonSchema = {
     type: 'object',
     properties: { values, overwrite: { type: 'boolean' } },
@@ -555,21 +643,64 @@ export function createFormTools<V extends Record<string, unknown>>(
       return false
     })
 
+  /** Array rule (M2): a dirty path at or under `path` and the array differs from the agent's. */
+  const isArrayUserEdited = (path: string, values: unknown, dirty: string[]): boolean =>
+    dirty.some((d) => isSafePath(d) && (isUnder(d, path) || isUnder(path, d))) &&
+    differsFromAgent(values, path)
+
   async function fill(
     input: FillInput,
     registerUndo: (restore: () => ToolResult<unknown>) => void,
   ) {
-    const { values: flat, rejected } = flattenWithRejected(input.values)
-    if (rejected.length > 0) {
-      return invalid(rejected.sort().map((path) => ({ path, message: 'Invalid field path' })))
-    }
     const current = adapter.getValues()
+    // Array ops (M2): a `$`-keyed object, or any object where the schema declares only an array.
+    const nodeFor = (path: string): unknown => {
+      const at = nodeAt(inputSchema, path, current)
+      return typeof at === 'object' ? at.node : undefined
+    }
+    const { rest, ops } = extractArrayOps(input.values, (path) => {
+      const node = nodeFor(path)
+      return node !== undefined && arrayOnlyShape(node, inputSchema) !== undefined
+    })
+    const { values: flat, rejected } = flattenWithRejected(rest)
+    const issues = rejected.map((path) => ({ path, message: 'Invalid field path' }))
+    const opKinds = new Map<string, 'append' | 'remove'>()
+    for (const [path, op] of ops) {
+      const node = nodeFor(path)
+      const conflict = Object.keys(flat).find((p) => isUnder(p, path) || isUnder(path, p))
+      if (node === undefined || collect(node, 'array', inputSchema) === undefined) {
+        issues.push({ path, message: 'Array operations apply to array fields only' })
+      } else if (conflict !== undefined) {
+        issues.push({ path: conflict, message: 'Conflicts with an array operation' })
+      } else {
+        const applied = applyArrayOp(op, getPath(current, path), path)
+        if ('error' in applied) {
+          issues.push({ path, message: applied.error })
+        } else {
+          opKinds.set(path, applied.kind)
+          Object.defineProperty(flat, path, {
+            value: applied.next,
+            enumerable: true,
+            writable: true,
+            configurable: true,
+          })
+        }
+      }
+    }
+    if (issues.length > 0) return invalid(issues.sort(byPath))
     const dirty = adapter.dirtyPaths()
     const skipped: string[] = []
     const touched: string[] = []
     for (const path of Object.keys(flat)) {
       if (flat[path] === undefined) continue
-      if (input.overwrite !== true && isUserEdited(path, current, dirty)) {
+      const kind = opKinds.get(path)
+      const edited =
+        kind === 'append'
+          ? false // `$append` keeps existing items untouched, so it is applied even when edited.
+          : kind === 'remove' || Array.isArray(flat[path])
+            ? isArrayUserEdited(path, current, dirty)
+            : isUserEdited(path, current, dirty)
+      if (input.overwrite !== true && edited) {
         skipped.push(path)
       } else {
         touched.push(path)

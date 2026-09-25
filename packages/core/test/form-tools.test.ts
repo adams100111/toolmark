@@ -97,9 +97,12 @@ describe('form tools', () => {
       },
       required: ['values'],
     })
-    expect(
-      JSON.stringify((fill.inputSchema.properties as Record<string, unknown>).values),
-    ).not.toContain('"required"')
+    // M2: array-op branches keep their own `required` (pass-2 ruling); nothing else does.
+    const values = (fill.inputSchema.properties as Record<string, JsonSchema>).values!
+    const withoutOps = JSON.stringify(values, (key, v: unknown) =>
+      key === 'anyOf' && Array.isArray(v) && v.length === 3 ? [v[0]] : v,
+    )
+    expect(withoutOps).not.toContain('"required"')
     tools.dispose()
     expect(tm.manifest().tools).toEqual([])
   })

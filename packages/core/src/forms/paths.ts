@@ -52,29 +52,45 @@ function unsafeInside(
   return null
 }
 
+/** Options for {@link flatten}. */
+export interface FlattenOptions {
+  /**
+   * `true` (default): arrays are leaves (`{ tags: [{ n: 1 }] }` → `{ tags: [...] }`). `false`:
+   * arrays are expanded into index paths (`{ 'tags.0.n': 1 }`); an empty array produces no path.
+   */
+  arraysAsLeaves?: boolean
+}
+
 /**
  * @internal Like {@link flatten}, also returning the paths it refused: prototype keys and empty
  * segments anywhere (including inside array / object leaves, reported with their full path, e.g.
  * `tags.0.__proto__`), cycles and values nested deeper than 64 levels. A refused subtree is not
  * emitted.
  */
-export function flattenWithRejected(obj: unknown): {
+export function flattenWithRejected(
+  obj: unknown,
+  opts?: FlattenOptions,
+): {
   values: Record<string, unknown>
   rejected: string[]
 } {
+  const expandArrays = opts?.arraysAsLeaves === false
   const values: Record<string, unknown> = {}
   const rejected: string[] = []
   const ancestors = new WeakSet<object>()
-  const walk = (node: Record<string, unknown>, prefix: string, depth: number): void => {
+  const isContainer = (v: unknown): v is Record<string, unknown> | unknown[] =>
+    isPlainObject(v) || (expandArrays && Array.isArray(v))
+  const walk = (node: Record<string, unknown> | unknown[], prefix: string, depth: number): void => {
     ancestors.add(node)
-    for (const key of Object.keys(node)) {
+    const keys = Array.isArray(node) ? node.map((_, i) => String(i)) : Object.keys(node)
+    for (const key of keys) {
       const path = prefix === '' ? key : `${prefix}.${key}`
       if (!isSafePath(key) || !isSafePath(path)) {
         rejected.push(path)
         continue
       }
-      const value = node[key]
-      if (isPlainObject(value)) {
+      const value = (node as Record<string, unknown>)[key]
+      if (isContainer(value)) {
         if (depth >= MAX_DEPTH || ancestors.has(value)) rejected.push(path)
         else walk(value, path, depth + 1)
         continue
@@ -118,16 +134,26 @@ export function snapshotValue<T>(value: T, depth = 0): T {
 }
 
 /**
- * Flattens a plain object into leaf dot paths (`{ a: { b: 1 } }` → `{ 'a.b': 1 }`). Arrays and
- * non-plain objects (e.g. `Date`, `File`) are leaves; empty objects produce no path. Keys that are
- * `__proto__`, `prototype` or `constructor` (at any depth, including inside array leaves), cycles
- * and values nested deeper than 64 levels are never emitted. Only own properties are read.
+ * Flattens a plain object into leaf dot paths (`{ a: { b: 1 } }` → `{ 'a.b': 1 }`). Arrays are
+ * leaves unless `arraysAsLeaves: false`; non-plain objects (e.g. `Date`, `File`) are always
+ * leaves; empty objects produce no path. Keys that are `__proto__`, `prototype` or `constructor`
+ * (at any depth, including inside array leaves), cycles and values nested deeper than 64 levels
+ * are never emitted. Only own properties are read.
  * @param obj - The value to flatten (non-objects yield `{}`).
+ * @param opts - See {@link FlattenOptions}; arrays are leaves by default.
  * @returns A record keyed by dot path.
  */
-export function flatten(obj: unknown): Record<string, unknown> {
-  return flattenWithRejected(obj).values
+export function flatten(obj: unknown, opts?: FlattenOptions): Record<string, unknown> {
+  return flattenWithRejected(obj, opts).values
 }
+
+/**
+ * A `fill` operation on an array field (spec §8.3), given instead of a replacement array:
+ * `{ $append: items }` adds items at the end (allowed even when the user edited the array);
+ * `{ $remove: indexes }` removes items by their index in the current array (unique, in range,
+ * applied in descending order).
+ */
+export type ArrayOp = { $append: unknown[] } | { $remove: number[] }
 
 /**
  * Reads a dot path using own properties only.
@@ -188,4 +214,79 @@ export function deepEqual(a: unknown, b: unknown): boolean {
   const ka = Object.keys(a)
   const kb = Object.keys(b)
   return ka.length === kb.length && ka.every((k) => hasOwn(b, k) && deepEqual(a[k], b[k]))
+}
+
+/**
+ * @internal Splits `fill` values into plain values and array operations. A plain object at `path`
+ * is taken as an array-op candidate when one of its keys starts with `$` or `isArrayField(path)`
+ * says the schema declares only an array there; candidates are returned raw (validated by
+ * {@link applyArrayOp}). Every other value is copied as-is (unsafe keys are kept, so the caller's
+ * flatten still refuses them).
+ */
+export function extractArrayOps(
+  values: Record<string, unknown>,
+  isArrayField: (path: string) => boolean,
+): { rest: Record<string, unknown>; ops: Map<string, Record<string, unknown>> } {
+  const ops = new Map<string, Record<string, unknown>>()
+  const walk = (node: Record<string, unknown>, prefix: string, depth: number) => {
+    const out: Record<string, unknown> = {}
+    for (const key of Object.keys(node)) {
+      const path = prefix === '' ? key : `${prefix}.${key}`
+      let value = node[key]
+      if (isPlainObject(value) && isSafePath(path) && depth < MAX_DEPTH) {
+        if (Object.keys(value).some((k) => k.startsWith('$')) || isArrayField(path)) {
+          ops.set(path, value)
+          continue
+        }
+        value = walk(value, path, depth + 1)
+      }
+      Object.defineProperty(out, key, {
+        value,
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      })
+    }
+    return out
+  }
+  return { rest: walk(values, '', 0), ops }
+}
+
+/**
+ * @internal Applies an array-op candidate to the current array value (`undefined`/`null` count as
+ * `[]`). Returns the new array, or the reason the op is invalid: not exactly one of
+ * `$append`/`$remove`, a non-array operand, unsafe keys inside appended items, or a duplicate,
+ * negative, non-integer or out-of-range `$remove` index.
+ */
+export function applyArrayOp(
+  op: Record<string, unknown>,
+  current: unknown,
+  path: string,
+): { kind: 'append' | 'remove'; next: unknown[] } | { error: string } {
+  const keys = Object.keys(op)
+  if (keys.length !== 1 || (keys[0] !== '$append' && keys[0] !== '$remove')) {
+    return { error: 'Expected an array, { $append: [...] } or { $remove: [indexes] }' }
+  }
+  const base = current === undefined || current === null ? [] : current
+  if (!Array.isArray(base)) return { error: 'The current value is not an array' }
+  const operand = op[keys[0]]
+  if (keys[0] === '$append') {
+    if (!Array.isArray(operand)) return { error: '$append expects an array of items' }
+    if (unsafeInside(operand, path, 1, new WeakSet()) !== null) {
+      return { error: 'Invalid field path inside appended items' }
+    }
+    return { kind: 'append', next: [...(base as unknown[]), ...(operand as unknown[])] }
+  }
+  if (!Array.isArray(operand)) return { error: '$remove expects an array of indexes' }
+  const seen = new Set<number>()
+  for (const i of operand as unknown[]) {
+    if (typeof i !== 'number' || !Number.isInteger(i) || i < 0 || i >= base.length) {
+      return { error: `$remove index ${JSON.stringify(i)} is not an index of the current array` }
+    }
+    if (seen.has(i)) return { error: `$remove index ${i} is repeated` }
+    seen.add(i)
+  }
+  const next = (base as unknown[]).slice()
+  for (const i of [...seen].sort((a, b) => b - a)) next.splice(i, 1)
+  return { kind: 'remove', next }
 }

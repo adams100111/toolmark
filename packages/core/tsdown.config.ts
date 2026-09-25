@@ -9,6 +9,7 @@ export default defineConfig({
     'bridge/websocket': 'src/bridge/websocket.ts',
     'bridge/post-message': 'src/bridge/post-message.ts',
     'bridge/in-page': 'src/bridge/in-page.ts',
+    dom: 'src/dom/index.ts',
   },
   format: ['esm'],
   dts: true,

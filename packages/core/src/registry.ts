@@ -29,8 +29,15 @@ import {
 } from './policy.js'
 import type { FieldChange, ToolResult } from './result.js'
 import { resolveJsonSchema, type JsonSchemaConverter } from './schema.js'
-import { ScopeNode, type Scope } from './scope.js'
-import type { Caller, ConfirmOutcome, JsonSchema, ToolDefinition, ToolHints } from './tool.js'
+import { ScopeNode, type Scope, type ScopeOptions } from './scope.js'
+import type {
+  Caller,
+  ConfirmOutcome,
+  JsonSchema,
+  ToolDefinition,
+  ToolHints,
+  ToolOrigin,
+} from './tool.js'
 import { createCallRuntime } from './call.js'
 import type { PendingConfirmation } from './confirm.js'
 
@@ -97,6 +104,14 @@ export interface Registration {
   dispose(): void
 }
 
+/** Registry-only facts about a tool, returned by {@link Toolmark.info} (never in a manifest). */
+export interface ToolInfo {
+  /** Where the tool came from (`'code'` unless its definition says otherwise). */
+  origin: ToolOrigin
+  /** The native `toolname` of a `'native-form'` tool. */
+  nativeName?: string
+}
+
 /** The tool registry (spec §5). */
 export interface Toolmark {
   /** Random id of this page load (D17). */
@@ -112,8 +127,12 @@ export interface Toolmark {
     tool: ToolDefinition<I, O>,
     opts?: { scope?: Scope; signal?: AbortSignal },
   ): Registration
-  /** Creates a root-level scope (nest with `scope.scope()`). */
-  scope(name: string, opts?: { when?: boolean }): Scope
+  /**
+   * Creates a root-level scope (nest with `scope.scope()`).
+   * @param name - Scope name (the path segment its tools are prefixed with).
+   * @param opts - `when: false` hides its tools; `transparent: true` adds no name segment.
+   */
+  scope(name: string, opts?: ScopeOptions): Scope
   /** Summary manifest, sorted by name; filtered by policy when `caller` is given. */
   manifest(opts?: { caller?: Caller; detail?: 'summary' }): {
     rev: number
@@ -123,6 +142,13 @@ export interface Toolmark {
   manifest(opts: { caller?: Caller; detail: 'full' }): { rev: number; tools: ToolManifest[] }
   /** Full manifest entry of one tool, or `undefined` when unknown/hidden for `caller`. */
   describe(name: string, opts?: { caller?: Caller }): ToolManifest | undefined
+  /**
+   * Registry-only facts about a registered tool (including one hidden by `when`), or `undefined`
+   * when no tool has that full name. Not policy-filtered and never part of `manifest()`,
+   * `describe()` or protocol messages.
+   * @param name - Full tool name.
+   */
+  info(name: string): ToolInfo | undefined
   /** Calls a tool. Never throws; every outcome is a {@link ToolResult}. */
   call(
     name: string,
@@ -156,6 +182,8 @@ export interface Entry {
   readonly scope: ScopeNode
   readonly cls: HintClass
   readonly source: ManifestSource
+  /** Registry-only facts (`tm.info`). */
+  readonly info: ToolInfo
   alive: boolean
   readonly registration: Registration
   /** Detaches the registration's abort listener (I5). */
@@ -232,6 +260,7 @@ export function registryState(tm: Toolmark): RegistryState | undefined {
   return stateOf.get(tm)
 }
 
+const ORIGINS: readonly ToolOrigin[] = ['code', 'native-form', 'dom', 'server']
 const INLINE_ONLY: readonly PolicyCaller[] = ['webmcp', 'mcp', 'tour']
 const DEFAULT_BUDGET = 40
 
@@ -468,9 +497,14 @@ export function createToolmark(options: ToolmarkOptions = {}): Toolmark {
       name: fullName,
       dispose: () => removeEntry(entry),
     }
+    const info: ToolInfo = {
+      origin: ORIGINS.includes(def.origin as ToolOrigin) ? (def.origin as ToolOrigin) : 'code',
+    }
+    if (typeof def.nativeName === 'string') info.nativeName = def.nativeName
     const entry: Entry = {
       fullName,
       tool: def,
+      info,
       scope,
       cls,
       alive: true,
@@ -481,6 +515,7 @@ export function createToolmark(options: ToolmarkOptions = {}): Toolmark {
         title: def.title,
         description: def.description,
         hints: def.hints,
+        ...(def.mode === 'stepwise' ? { mode: 'stepwise' as const } : {}),
         inputSchema,
         outputSchema: outputJsonSchema(def),
       },
@@ -540,6 +575,11 @@ export function createToolmark(options: ToolmarkOptions = {}): Toolmark {
       const entry = entries.get(name)
       if (!entry || !visible(entry, opts?.caller)) return undefined
       return buildManifestEntry(entry.source)
+    },
+    info(name) {
+      if (!browser) return undefined
+      const entry = entries.get(name)
+      return entry?.alive === true ? { ...entry.info } : undefined
     },
     call: (name, input, opts) => runtime.call(name, input, opts),
     pendingConfirmations: () => (browser ? runtime.pendingConfirmations() : []),
