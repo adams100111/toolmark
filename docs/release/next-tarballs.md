@@ -68,23 +68,25 @@ Packed from commit `1f75289` (`chore(release): version 0.1.0-next.1`) on branch 
   `strict`, `skipLibCheck: false`, `types: ['node']`, no `customConditions`: 4/4 pass.
 - Bins: none declared in M2.
 
-## M3 — `0.1.0-next.1` (2026-09-25)
+## M3 — `0.1.0-next.2` (2026-09-25)
 
-Packed from commit `ad3fb62` (`chore(release): version 0.1.0-next.1`) on branch `m3/task-7`.
-`@toolmark/mcp` joins the fixed version group (from its unreleased `0.0.0`).
+Packed from commit `68a6cee` (`chore(release): version 0.1.0-next.2`) on branch `feat/m3-reach`,
+after merging `main` (M2, `0.1.0-next.1`). M3's own earlier `0.1.0-next.1` tarballs (branch
+`m3/task-7`, before the merge) are superseded: the M3 changeset was re-applied on top of M2's
+versions, so the fixed group moves to `0.1.0-next.2`. `@toolmark/mcp` joins the fixed group.
 
 | Tarball                             | Bytes  | SHA-256                                                            |
 | ----------------------------------- | ------ | ------------------------------------------------------------------ |
-| `toolmark-core-0.1.0-next.1.tgz`    | 254914 | `e14db4fa25d11fa880a9c9296524e1511a58bbd518c0a54768b9d7a8994fc4b8` |
-| `toolmark-inertia-0.1.0-next.1.tgz` | 28583  | `32e0686977c2a763430e7dea765bc87c6d135d19b2a64437dc9b96f326ae75d2` |
-| `toolmark-mcp-0.1.0-next.1.tgz`     | 51060  | `d721a5ee532b1d064deb7ea03d60f9d8116f002e5e8fdd674a3a4fc185140174` |
-| `toolmark-react-0.1.0-next.1.tgz`   | 31015  | `77e2b3e53d1f1102c8bd79f6ce8414c435b5d078c6cc0b6f09f100d160d395a6` |
-| `toolmark-testing-0.1.0-next.1.tgz` | 8605   | `df142a7acacad73cee27f018ebfeb1cab5ab55d94a2d26a6f14954dab75e7a39` |
+| `toolmark-core-0.1.0-next.2.tgz`    | 263777 | `8f71fdd6541c99ee58e241618ec7cf0687cf2db91084a45527cb7e21bc29c7e7` |
+| `toolmark-inertia-0.1.0-next.2.tgz` | 29634  | `a5c8289f4b3876a4d96a6ce00c10b6d5cd8c6f184d216cdc13da315cade73954` |
+| `toolmark-mcp-0.1.0-next.2.tgz`     | 53542  | `e7bc34bf319f7963944fdd2a2b9bf6c60173668c916cf630746f5d8c22d93b8b` |
+| `toolmark-react-0.1.0-next.2.tgz`   | 31184  | `04ab7c03a94d4debe2da1837da94c7af8d6967ad0da8307ec3b30a74899236a5` |
+| `toolmark-testing-0.1.0-next.2.tgz` | 8607   | `40c505beb9766e2c6895b865e388dbd6fb7d5a4ed87e892c9b683a651b8ea44d` |
 
 **Smoke result: pass** — `tarball-smoke: 74 passed, 0 failed` (Node 22.23.2, pnpm 12.6.0, macOS):
 
 - `pnpm install` of the five tarballs in a temp project outside the workspace.
-- `exports`: 25 entries, every target present; 18 JS entries (now including
+- `exports`: 25 entries, every target present; 18 JS entries (M2's `@toolmark/core/dom` plus M3's
   `@toolmark/core/webmcp`, `@toolmark/core/otel`, `@toolmark/mcp` and `@toolmark/mcp/client`)
   dynamically imported by `node` without a DOM (browser-only list still empty); 7 JSON entries
   parsed.
