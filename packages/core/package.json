@@ -1,0 +1,72 @@
+{
+  "name": "@toolmark/core",
+  "version": "0.1.0-next.0",
+  "description": "Framework-agnostic tool registry, policy, confirmation, form tools and bridge protocol for agent-operable web apps.",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/adams100111/toolmark.git",
+    "directory": "packages/core"
+  },
+  "engines": {
+    "node": ">=22.12"
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "exports": {
+    ".": {
+      "@toolmark/source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./protocol": {
+      "@toolmark/source": "./src/protocol/index.ts",
+      "types": "./dist/protocol/index.d.ts",
+      "import": "./dist/protocol/index.js"
+    },
+    "./protocol/v1/*.json": "./dist/protocol/v1/*.json",
+    "./bridge": {
+      "@toolmark/source": "./src/bridge/index.ts",
+      "types": "./dist/bridge/index.d.ts",
+      "import": "./dist/bridge/index.js"
+    },
+    "./bridge/echo": {
+      "@toolmark/source": "./src/bridge/echo.ts",
+      "types": "./dist/bridge/echo.d.ts",
+      "import": "./dist/bridge/echo.js"
+    },
+    "./bridge/websocket": {
+      "@toolmark/source": "./src/bridge/websocket.ts",
+      "types": "./dist/bridge/websocket.d.ts",
+      "import": "./dist/bridge/websocket.js"
+    },
+    "./bridge/post-message": {
+      "@toolmark/source": "./src/bridge/post-message.ts",
+      "types": "./dist/bridge/post-message.d.ts",
+      "import": "./dist/bridge/post-message.js"
+    },
+    "./bridge/in-page": {
+      "@toolmark/source": "./src/bridge/in-page.ts",
+      "types": "./dist/bridge/in-page.d.ts",
+      "import": "./dist/bridge/in-page.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "tsdown && tsx scripts/emit-protocol-schemas.ts",
+    "typecheck": "tsc -p tsconfig.test.json",
+    "lint": "eslint ."
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "ajv": "catalog:",
+    "ajv-formats": "catalog:",
+    "tsx": "catalog:",
+    "zod": "catalog:",
+    "zod-to-json-schema": "catalog:"
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "direction": "toAgent",
+  "message": {
+    "protocol": 1,
+    "type": "manifest",
+    "clientId": "k7c1e0de-0000-4000-8000-000000000001",
+    "rev": 7,
+    "tools": [
+      {
+        "name": "challenges.create.fill",
+        "llmName": "challenges__create__fill",
+        "title": "Create challenge",
+        "description": "Fill the form",
+        "hints": {}
+      },
+      {
+        "name": "challenges.create.submit",
+        "llmName": "challenges__create__submit",
+        "description": "Submit",
+        "hints": {
+          "consequential": true,
+          "futureHint": "x"
+        },
+        "mode": "stepwise",
+        "futureField": {
+          "a": 1
+        }
+      }
+    ]
+  }
+}

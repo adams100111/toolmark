@@ -1,0 +1,16 @@
+{
+  "direction": "toAgent",
+  "message": {
+    "protocol": 1,
+    "type": "manifest",
+    "clientId": "k7c1e0de-0000-4000-8000-000000000001",
+    "rev": 1,
+    "tools": [
+      {
+        "name": "a",
+        "llmName": "a",
+        "description": "d"
+      }
+    ]
+  }
+}

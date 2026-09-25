@@ -1,0 +1,19 @@
+{
+  "direction": "toAgent",
+  "message": {
+    "protocol": 1,
+    "type": "result",
+    "clientId": "k7c1e0de-0000-4000-8000-000000000001",
+    "id": "c1",
+    "result": {
+      "status": "invalid",
+      "issues": [
+        {
+          "path": "a",
+          "message": "b",
+          "code": 1
+        }
+      ]
+    }
+  }
+}

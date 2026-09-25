@@ -1,0 +1,212 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  # Every push to main gets a full run; superseded runs on other refs are cancelled.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+# Third-party actions are pinned to full commit SHAs (version in the trailing comment).
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0 (version from packageManager)
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.x
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm format:check
+
+  typecheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0 (version from packageManager)
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.x
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0 (version from packageManager)
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.x
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+
+  test:
+    name: test (node ${{ matrix.node }}, react ${{ matrix.react }}, inertia ${{ matrix.inertia }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # Spec §21 / R6: React 18.3 × Inertia 3 is never included (Inertia 3 requires React 19).
+        # Chromium only in M1; the zod 3 axis and Firefox/WebKit arrive in M5.
+        include:
+          - { node: 22.x, react: 19.3.0, inertia: 3.7.1 }
+          - { node: 24.x, react: 19.3.0, inertia: 3.7.1 }
+          - { node: 24.x, react: 19.3.0, inertia: 2.3.28 }
+          - { node: 24.x, react: 18.3.1, inertia: 2.3.28 }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0 (version from packageManager)
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # Non-default cells swap the React / Inertia dev versions in place (never committed).
+      - name: Use React ${{ matrix.react }}
+        if: matrix.react != '19.3.0'
+        env:
+          REACT_VERSION: ${{ matrix.react }}
+        run: |
+          major="${REACT_VERSION%%.*}"
+          pnpm -F @toolmark/react -F @toolmark/inertia add -D \
+            "react@${REACT_VERSION}" "react-dom@${REACT_VERSION}" \
+            "@types/react@${major}" "@types/react-dom@${major}"
+      - name: Use Inertia ${{ matrix.inertia }}
+        if: matrix.inertia != '3.7.1'
+        env:
+          INERTIA_VERSION: ${{ matrix.inertia }}
+        run: pnpm -F @toolmark/inertia add -D "@inertiajs/react@${INERTIA_VERSION}"
+      - name: Re-install after version swap
+        if: matrix.react != '19.3.0' || matrix.inertia != '3.7.1'
+        run: pnpm install --no-frozen-lockfile
+      # Fails the cell when the resolved versions are not the matrix ones (a silent no-op swap).
+      - name: Assert React ${{ matrix.react }} / Inertia ${{ matrix.inertia }} are resolved
+        env:
+          REACT_VERSION: ${{ matrix.react }}
+          INERTIA_VERSION: ${{ matrix.inertia }}
+        run: |
+          set -euo pipefail
+          major="${REACT_VERSION%%.*}"
+          for pkg in @toolmark/react @toolmark/inertia; do
+            out="$(pnpm -F "$pkg" list react @types/react --depth 0)"
+            echo "$out"
+            grep -qF " react@${REACT_VERSION}" <<<"$out" \
+              || { echo "::error::$pkg does not resolve react@${REACT_VERSION}"; exit 1; }
+            grep -qF " @types/react@${major}." <<<"$out" \
+              || { echo "::error::$pkg does not resolve @types/react@${major}"; exit 1; }
+          done
+          out="$(pnpm -F @toolmark/inertia list @inertiajs/react --depth 0)"
+          echo "$out"
+          grep -qF " @inertiajs/react@${INERTIA_VERSION}" <<<"$out" \
+            || { echo "::error::@toolmark/inertia does not resolve @inertiajs/react@${INERTIA_VERSION}"; exit 1; }
+      - name: Playwright version
+        id: playwright
+        run: echo "version=$(pnpm exec playwright --version | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}-chromium
+      - name: Install Chromium
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Install Chromium system dependencies
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: pnpm exec playwright install-deps chromium
+      # Resolves workspace sources via the @toolmark/source condition: no build needed.
+      - run: pnpm test
+
+  types-ts7:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0 (version from packageManager)
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.x
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Pack tarballs
+        run: pnpm -r --filter "./packages/*" pack --pack-destination "$PWD/dist-tarballs"
+      # TypeScript 6.0.3 and 7.0.2 over the packed types (nodenext + bundler), imports, JSON, bins.
+      - name: Tarball smoke test
+        run: node scripts/tarball-smoke.mjs dist-tarballs
+      - name: Script tests
+        run: node --test "scripts/*.test.mjs"
+
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0 (version from packageManager)
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.x
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Playwright version
+        id: playwright
+        run: echo "version=$(pnpm exec playwright --version | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}-chromium
+      - name: Install Chromium
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Install Chromium system dependencies
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: pnpm exec playwright install-deps chromium
+      # Playwright spec files load in Node (no @toolmark/source): @toolmark/testing resolves to dist.
+      - run: pnpm --filter "@toolmark/testing..." build
+      - run: pnpm -F @toolmark-examples/react-vite typecheck
+      - name: Playwright (react-vite, Chromium, port 5173)
+        run: pnpm -F @toolmark-examples/react-vite exec playwright test
+        env:
+          ROUND_BUDGET_REPORT: round-budget.json
+      - run: pnpm -F @toolmark-examples/react-vite build
+      - name: Production build has no test hook
+        run: |
+          if grep -rqE "__toolmark_(test|agent)__" examples/react-vite/dist; then
+            echo "::error::examples/react-vite/dist contains a test-only global"
+            exit 1
+          fi
+      - name: Upload round-budget report
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: round-budget
+          path: examples/react-vite/round-budget.json
+          if-no-files-found: error

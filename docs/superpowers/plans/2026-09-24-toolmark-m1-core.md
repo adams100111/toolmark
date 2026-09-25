@@ -149,6 +149,16 @@ scope, TSDoc-with-every-export and the CI matrix).
   which ignores `@toolmark/source`, so the import resolves to `dist` — cost if wrong: a few seconds of
   build per e2e run.
 
+## Rulings made during the M1 final review
+
+- Ruling (FR): script tests run with `node --test "scripts/*.test.mjs"`, not `node --test scripts/`
+  — Node takes a directory argument as a module path (`Cannot find module '…/scripts'`, verified on
+  Node 22.23), so the plan's command ran no tests; CI already used the glob — cost if wrong: none.
+- Ruling (FR): the tarball smoke fails a packed JS entry that has no `types` condition (test
+  `smoke_fails_js_entry_without_types_condition`); previously such an entry was imported and
+  silently skipped by the type check — cost if wrong: a package that intentionally ships an untyped
+  entry must list it explicitly.
+
 ## Review focus
 
 1. **React StrictMode double mount** → tools are present after the remount and no `duplicate_name`
@@ -1129,7 +1139,7 @@ required.
     commits; `pnpm install --no-frozen-lockfile` follows). Chromium only in M1; the zod 3 axis and
     Firefox/WebKit are added in M5.
   - `types-ts7` — runs `pnpm build`, the pack command below and `node scripts/tarball-smoke.mjs dist-tarballs`
-    (which includes the TypeScript 7.0.2 check of the packed types), plus `node --test scripts/`.
+    (which includes the TypeScript 7.0.2 check of the packed types), plus `node --test "scripts/*.test.mjs"`.
   - `e2e` — `examples/react-vite`: install chromium, `pnpm --filter "@toolmark/testing..." build`
     (the specs import `@toolmark/testing`, which Node resolves to `dist`), `typecheck`, `playwright test` with
     `ROUND_BUDGET_REPORT=round-budget.json`, prod `build` + the no-test-hook grep; uploads
@@ -1189,13 +1199,13 @@ required.
   courtesy, never a gate.
 
 **Tests (write first):** `scripts/tarball-smoke.test.mjs` (`node:test`, run with
-`node --test scripts/`):
+`node --test "scripts/*.test.mjs"`):
 - `smoke_detects_missing_export_file` — a fixture package whose `exports` points at a missing file,
   packed with `pnpm pack` into a temp dir → smoke exits 1 and names the entry.
 - `smoke_passes_minimal_valid_package` — a fixture with one valid entry and types → exit 0.
 The reviewer checks the Laravel reference against §12.2 line by line.
 
-**Task gate:** `pnpm lint && pnpm typecheck && pnpm test && pnpm build` (lane gate), `node --test scripts/`,
+**Task gate:** `pnpm lint && pnpm typecheck && pnpm test && pnpm build` (lane gate), `node --test "scripts/*.test.mjs"`,
 then CI green on push, then the tarballs exist in `dist-tarballs/`,
 `node scripts/tarball-smoke.mjs dist-tarballs` exits 0, and `docs/release/next-tarballs.md` and
 `docs/release/round-budget.md` carry the M1 entries.

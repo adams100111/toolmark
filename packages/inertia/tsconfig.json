@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "jsx": "react-jsx",
+    // @inertiajs/react/core ship extensionless relative re-exports in their .d.ts (e.g. `from
+    // './useForm'`), which NodeNext's ESM resolution cannot follow (it requires exact
+    // extensions), silently degrading those imports to `any`. Bundler resolution follows them
+    // correctly; `module: "Preserve"` keeps our own emitted output as real ESM. customConditions
+    // (@toolmark/source) still applies under Bundler resolution.
+    "module": "Preserve",
+    "moduleResolution": "Bundler"
+  },
+  "include": ["src"]
+}
