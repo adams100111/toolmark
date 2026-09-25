@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import {
   createFormTools,
+  createToolmark,
   getPath,
   ok,
   setPath,
@@ -709,6 +710,148 @@ describe('form tools', () => {
       })
       expect((await g.fill({ list: ['a', 'b'] })).status).toBe('ok')
       expect(await g.fill({ list: [{ a: 1 }] })).toEqual(undeclared('list.0'))
+    })
+  })
+
+  describe('final review fixes', () => {
+    /** A record-field form that is either valid (`title` set) or incomplete (`title` empty). */
+    function recordForm(title: string) {
+      const tm = createTestRegistry()
+      let values: Record<string, unknown> = { title, meta: {} }
+      const writes: Record<string, unknown>[] = []
+      createFormTools(
+        tm,
+        {
+          getValues: () => values,
+          setValues: (v) => {
+            writes.push(v)
+            for (const [p, x] of Object.entries(v)) values = setPath(values, p, x)
+          },
+          dirtyPaths: () => [],
+          submit: () => Promise.resolve(ok(null)),
+          fields: () => [],
+        },
+        {
+          name: 'f',
+          description: 'd',
+          input: z.object({
+            title: z.string().min(1),
+            meta: z.record(z.string(), z.string()),
+            nested: z.record(z.string(), z.object({ name: z.string() })).optional(),
+          }),
+        },
+      )
+      return {
+        writes,
+        values: () => values,
+        fill: (v: Record<string, unknown>) => tm.call('f.fill', { values: v }, { caller: 'inapp' }),
+      }
+    }
+
+    it('record_field_fill_same_on_valid_and_incomplete_form', async () => {
+      const valid = recordForm('filled')
+      const incomplete = recordForm('')
+      const a = await valid.fill({ meta: { color: 'red' } })
+      const b = await incomplete.fill({ meta: { color: 'red' } })
+      expect(a.status).toBe('ok')
+      expect(b).toEqual(a)
+      expect(incomplete.values()).toEqual({ title: '', meta: { color: 'red' } })
+      // Record entries resolve through additionalProperties; closed entry objects stay closed.
+      for (const form of [valid, incomplete]) {
+        expect((await form.fill({ nested: { k: { name: 'n' } } })).status).toBe('ok')
+        expect(form.writes.at(-1)).toEqual({ 'nested.k.name': 'n' })
+        expect(await form.fill({ nested: { k: { secret: 1 } } })).toEqual({
+          status: 'invalid',
+          issues: [{ path: 'nested.k.secret', message: 'Unknown field' }],
+        })
+      }
+    })
+
+    it('union_fallback_sanitizes_against_matching_branch_only', async () => {
+      const tm = createTestRegistry()
+      let values: Record<string, unknown> = { title: '' }
+      const writes: Record<string, unknown>[] = []
+      createFormTools(
+        tm,
+        {
+          getValues: () => values,
+          setValues: (v) => {
+            writes.push(v)
+            for (const [p, x] of Object.entries(v)) values = setPath(values, p, x)
+          },
+          dirtyPaths: () => [],
+          submit: () => Promise.resolve(ok(null)),
+          fields: () => [],
+        },
+        {
+          name: 'f',
+          description: 'd',
+          input: z.object({
+            title: z.string().min(1),
+            either: z
+              .union([
+                z.object({ kind: z.literal('x'), x: z.string() }),
+                z.object({ kind: z.literal('y'), y: z.string() }),
+              ])
+              .optional(),
+            plain: z.union([z.object({ a: z.string() }), z.object({ b: z.string() })]).optional(),
+            list: z
+              .array(
+                z.union([
+                  z.object({ kind: z.literal('x'), x: z.string() }),
+                  z.object({ kind: z.literal('y'), y: z.string() }),
+                ]),
+              )
+              .optional(),
+          }),
+        },
+      )
+      const fill = (v: Record<string, unknown>) =>
+        tm.call('f.fill', { values: v }, { caller: 'inapp' })
+      // `values` flattens to leaf paths (`either.kind`, `either.x`, `either.y`); `either.y` is
+      // declared only by the other branch, so it is unknown for this value and nothing is written.
+      const unknownY = {
+        status: 'invalid',
+        issues: [{ path: 'either.y', message: 'Unknown field' }],
+      }
+      expect(await fill({ either: { kind: 'x', x: 'q', y: 'smuggled' } })).toEqual(unknownY)
+      expect(writes).toEqual([])
+      // Same on a valid form (title filled in the same call).
+      expect(await fill({ title: 't', either: { kind: 'x', x: 'q', y: 'smuggled' } })).toEqual(
+        unknownY,
+      )
+      expect(writes).toEqual([])
+      expect(await fill({ either: { kind: 'y', y: 'ok', x: 'smuggled' } })).toEqual({
+        status: 'invalid',
+        issues: [{ path: 'either.x', message: 'Unknown field' }],
+      })
+      expect((await fill({ either: { kind: 'x', x: 'q' } })).status).toBe('ok')
+      expect(values.either).toEqual({ kind: 'x', x: 'q' })
+      // Inside an array the fallback sanitize keeps only the matching branch's keys.
+      expect((await fill({ list: [{ kind: 'x', x: 'q', y: 'smuggled' }] })).status).toBe('ok')
+      expect(values.list).toEqual([{ kind: 'x', x: 'q' }])
+      expect(JSON.stringify(writes)).not.toContain('smuggled')
+      // Undiscriminated union: the branch declaring the value's keys wins.
+      expect((await fill({ plain: { b: 'kept' } })).status).toBe('ok')
+      expect(values.plain).toEqual({ b: 'kept' })
+    })
+
+    it('production_half_pair_is_disposed_when_one_registration_fails', () => {
+      const errors: string[] = []
+      const tm = createToolmark({
+        __environment: 'browser',
+        onError: (e) => errors.push(e.code),
+      })
+      const adapter = new FakeAdapter()
+      // `submit` is taken: the form's fill must not stay behind alone.
+      tm.register({ name: 'a.submit', description: 'x', run: () => ok(null) })
+      createFormTools(tm, adapter, { name: 'a', description: 'd', input: schema })
+      expect(errors).toContain('duplicate_name')
+      expect(tm.describe('a.fill', { caller: 'inapp' })).toBeUndefined()
+      // `fill` is taken: submit must not be registered either.
+      tm.register({ name: 'b.fill', description: 'x', run: () => ok(null) })
+      createFormTools(tm, adapter, { name: 'b', description: 'd', input: schema })
+      expect(tm.describe('b.submit', { caller: 'inapp' })).toBeUndefined()
     })
   })
 })

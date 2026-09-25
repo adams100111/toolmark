@@ -28,6 +28,34 @@ interface AdapterState {
   snapshot: Record<string, unknown>
 }
 
+/**
+ * Structural equality for flattened leaves. Inertia's keyed `setData` deep-clones the whole form,
+ * so an untouched array, nested plain object or `Date` gets a new identity on every user edit;
+ * comparing by `Object.is` would report it dirty and fills would skip it. Arrays and plain
+ * objects compare element-wise, Dates by time, and anything else (Files, Blobs, class instances)
+ * by identity.
+ */
+function sameValue(a: unknown, b: unknown, depth = 0): boolean {
+  if (Object.is(a, b)) return true
+  if (depth > 64 || typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) {
+    return false
+  }
+  if (a instanceof Date && b instanceof Date) return Object.is(a.getTime(), b.getTime())
+  if (Array.isArray(a)) {
+    if (!Array.isArray(b) || a.length !== b.length) return false
+    return a.every((item, i) => sameValue(item, b[i], depth + 1))
+  }
+  if (!isPlainObject(a) || !isPlainObject(b)) return false
+  const keys = Object.keys(a)
+  if (keys.length !== Object.keys(b).length) return false
+  return keys.every((k) => Object.hasOwn(b, k) && sameValue(a[k], b[k], depth + 1))
+}
+
+function isPlainObject(v: object): v is Record<string, unknown> {
+  const proto = Object.getPrototypeOf(v) as unknown
+  return proto === Object.prototype || proto === null
+}
+
 /** Per-form adapter state, keyed by a render-stable identity of the form (`form.setData`). */
 const stateByForm = new WeakMap<object, AdapterState>()
 
@@ -81,7 +109,7 @@ export function inertiaAdapter<V extends Record<string, unknown>>(
       const paths = new Set([...Object.keys(st.snapshot), ...Object.keys(currentFlat)])
       const dirty: string[] = []
       for (const path of paths) {
-        if (!Object.is(currentFlat[path], st.snapshot[path])) dirty.push(path)
+        if (!sameValue(currentFlat[path], st.snapshot[path])) dirty.push(path)
       }
       return dirty
     },

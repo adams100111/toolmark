@@ -131,30 +131,26 @@ export function rhfAdapter<V extends FieldValues>(
       return out
     },
 
+    /**
+     * Runs react-hook-form's `handleSubmit`. A throwing `onSubmit` is deliberately not caught:
+     * the rejection propagates to core, which returns the generic `error` "Tool failed" plus a
+     * `tool_threw` event, so the app's exception message never reaches the agent.
+     */
     async submit(): Promise<ToolResult<unknown>> {
       let outcome: ToolResult<unknown> = { status: 'ok', data: {} }
-      try {
-        // Let a thrown `onSubmit` propagate out of `onValid` (and out of the `handleSubmit(...)()`
-        // call below) rather than swallowing it here: react-hook-form's `handleSubmit` "will not
-        // swallow errors that occurred inside your onSubmit callback" and only marks
-        // `formState.isSubmitSuccessful` true when `onValid` resolves without throwing — catching
-        // the error inside `onValid` (and merely recording an `error` outcome) would make RHF think
-        // the submission succeeded even though it failed.
-        await form.handleSubmit(
-          async (values) => {
-            const result: unknown = await opts.onSubmit(values)
-            outcome = { status: 'ok', data: isJsonSafe(result) ? result : {} }
-          },
-          (errors) => {
-            outcome = { status: 'invalid', issues: errorsToIssues(errors) }
-          },
-        )()
-      } catch (cause) {
-        outcome = {
-          status: 'error',
-          message: cause instanceof Error ? cause.message : String(cause),
-        }
-      }
+      // Let a thrown `onSubmit` propagate out of `onValid` (and out of the `handleSubmit(...)()`
+      // call below) rather than swallowing it: react-hook-form's `handleSubmit` "will not swallow
+      // errors that occurred inside your onSubmit callback" and only marks
+      // `formState.isSubmitSuccessful` true when `onValid` resolves without throwing (M6).
+      await form.handleSubmit(
+        async (values) => {
+          const result: unknown = await opts.onSubmit(values)
+          outcome = { status: 'ok', data: isJsonSafe(result) ? result : {} }
+        },
+        (errors) => {
+          outcome = { status: 'invalid', issues: errorsToIssues(errors) }
+        },
+      )()
       return outcome
     },
 

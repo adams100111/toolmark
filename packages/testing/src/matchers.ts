@@ -39,8 +39,11 @@ export const expect = baseExpect.extend({
     }
   },
 
-  /** Asserts a manifest entry has `hints.consequential === true`. */
-  toBeConsequential(entry: ToolManifestSummary) {
+  /**
+   * Asserts a manifest entry has `hints.consequential === true`; an `undefined` entry (e.g. from
+   * `tools.get` of an unknown tool) fails.
+   */
+  toBeConsequential(entry: ToolManifestSummary | undefined) {
     const pass = entry?.hints?.consequential === true
     return {
       pass,
@@ -50,8 +53,11 @@ export const expect = baseExpect.extend({
     }
   },
 
-  /** Asserts a manifest entry has `hints.readOnly === true`. */
-  toBeReadOnly(entry: ToolManifestSummary) {
+  /**
+   * Asserts a manifest entry has `hints.readOnly === true`; an `undefined` entry (e.g. from
+   * `tools.get` of an unknown tool) fails.
+   */
+  toBeReadOnly(entry: ToolManifestSummary | undefined) {
     const pass = entry?.hints?.readOnly === true
     return {
       pass,

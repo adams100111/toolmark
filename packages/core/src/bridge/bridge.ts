@@ -13,7 +13,10 @@ export interface BridgeOptions {
    * `changed` message.
    */
   onChange?: 'manifest' | 'changed'
-  /** The caller identity used for policy, manifests and calls (default `'inapp'`). */
+  /**
+   * The caller identity used for policy, manifests and calls (default `'inapp'`). Validated at
+   * runtime: only `'inapp'` is accepted in this version.
+   */
   caller?: 'inapp'
   /**
    * Largest accepted inbound message, in UTF-8 bytes of its JSON serialization (default
@@ -96,45 +99,71 @@ function utf8Exceeds(s: string, limit: number): boolean {
   return false
 }
 
+/** Marks a value that has no JSON representation the bridge accepts. */
+const UNSAFE: unique symbol = Symbol('unsafe')
+
 /**
- * Whether `value` is JSON-safe data: plain objects (`undefined` property values are allowed, JSON
- * drops them), arrays, strings, finite numbers, booleans and `null`, nested at most
- * {@link MAX_DEPTH} deep, with no cycles.
+ * Converts `value` to JSON-safe data with `JSON.stringify` semantics: a `toJSON` method is
+ * honoured (a `Date` becomes its ISO string), `undefined` object properties are dropped. Plain
+ * objects, arrays, strings, finite numbers, booleans and `null` are accepted, nested at most
+ * {@link MAX_DEPTH} deep with no cycles; functions, symbols, bigints, non-finite numbers, `undefined`
+ * array items and class instances without `toJSON` yield {@link UNSAFE}. Objects are rebuilt with
+ * a `null` prototype, so no key (not even `__proto__`) can alter a prototype.
  */
-function isJsonSafe(value: unknown, depth: number, ancestors: Set<object>): boolean {
-  if (value === null || typeof value === 'string' || typeof value === 'boolean') return true
-  if (typeof value === 'number') return Number.isFinite(value)
-  if (typeof value !== 'object') return false
-  if (depth > MAX_DEPTH || ancestors.has(value)) return false
+function toJsonData(value: unknown, key: string, depth: number, ancestors: Set<object>): unknown {
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') return value
+  if (typeof value === 'number') return Number.isFinite(value) ? value : UNSAFE
+  if (typeof value !== 'object') return UNSAFE
+  if (depth > MAX_DEPTH || ancestors.has(value)) return UNSAFE
+  const toJSON = (value as { toJSON?: unknown }).toJSON
+  if (typeof toJSON === 'function') {
+    ancestors.add(value)
+    try {
+      const replaced: unknown = (toJSON as (k: string) => unknown).call(value, key)
+      // depth + 1: a toJSON that keeps returning fresh objects with toJSON stays bounded.
+      return toJsonData(replaced, key, depth + 1, ancestors)
+    } finally {
+      ancestors.delete(value)
+    }
+  }
   ancestors.add(value)
   try {
     if (Array.isArray(value)) {
-      if (Object.getPrototypeOf(value) !== Array.prototype) return false
-      for (const item of value as unknown[]) {
-        if (!isJsonSafe(item, depth + 1, ancestors)) return false
+      if (Object.getPrototypeOf(value) !== Array.prototype) return UNSAFE
+      const out: unknown[] = []
+      const items = value as unknown[]
+      for (let i = 0; i < items.length; i++) {
+        const item = toJsonData(items[i], String(i), depth + 1, ancestors)
+        if (item === UNSAFE) return UNSAFE
+        out.push(item)
       }
-      return true
+      return out
     }
     const proto: unknown = Object.getPrototypeOf(value)
-    if (proto !== Object.prototype && proto !== null) return false
-    for (const item of Object.values(value)) {
-      if (item === undefined) continue
-      if (!isJsonSafe(item, depth + 1, ancestors)) return false
+    if (proto !== Object.prototype && proto !== null) return UNSAFE
+    const out = Object.create(null) as Record<string, unknown>
+    for (const [k, v] of Object.entries(value)) {
+      if (v === undefined) continue
+      const item = toJsonData(v, k, depth + 1, ancestors)
+      if (item === UNSAFE) return UNSAFE
+      out[k] = item
     }
-    return true
+    return out
   } finally {
     ancestors.delete(value)
   }
 }
 
 /**
- * A detached JSON copy of a tool result, or `null` when the result is not JSON-safe. Sending a
- * copy keeps live page objects away from the agent side of in-page transports.
+ * A detached JSON copy of a tool result (JSON semantics, `toJSON` honoured), or `null` when the
+ * result is not JSON-safe. Sending a copy keeps live page objects away from the agent side of
+ * in-page transports.
  */
 function serializableCopy(result: ToolResult<unknown>): ToolResult<unknown> | null {
   try {
-    if (!isJsonSafe(result, 1, new Set())) return null
-    return JSON.parse(JSON.stringify(result)) as ToolResult<unknown>
+    const data = toJsonData(result, '', 1, new Set())
+    if (data === UNSAFE) return null
+    return JSON.parse(JSON.stringify(data)) as ToolResult<unknown>
   } catch {
     return null
   }
@@ -151,8 +180,11 @@ function serializableCopy(result: ToolResult<unknown>): ToolResult<unknown> | nu
  * messages.
  * @param options - Transport and behaviour; see {@link BridgeOptions}.
  * @returns A consumer for `tm.use`; its disposer unsubscribes everything, aborts in-flight calls
- * and closes the transport.
- * @throws TypeError when `maxMessageBytes` is not a positive integer.
+ * and closes the transport. A closed transport is not reopened, so attach the bridge outside React
+ * effects (StrictMode runs an effect's cleanup and then the effect again), or create a new
+ * transport for every attach.
+ * @throws TypeError when `maxMessageBytes` is not a positive integer, or `caller` is anything
+ * other than `'inapp'`.
  */
 export function bridge(options: BridgeOptions): (tm: Toolmark) => () => void {
   const maxBytes = options.maxMessageBytes ?? DEFAULT_MAX_MESSAGE_BYTES
@@ -160,7 +192,11 @@ export function bridge(options: BridgeOptions): (tm: Toolmark) => () => void {
     throw new TypeError('maxMessageBytes must be a positive integer')
   }
   const { transport } = options
-  const caller = options.caller ?? 'inapp'
+  // Runtime check: an untyped caller (e.g. 'human') would inherit approval-level trust.
+  const caller: unknown = options.caller ?? 'inapp'
+  if (caller !== 'inapp') {
+    throw new TypeError("bridge caller must be 'inapp'")
+  }
   const onChange = options.onChange === 'changed' ? 'changed' : 'manifest'
 
   return (tm) => {

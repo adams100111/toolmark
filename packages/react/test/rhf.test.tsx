@@ -182,7 +182,7 @@ describe('rhfAdapter', () => {
     expect(result).toEqual({ status: 'ok', data: {} })
   })
 
-  it('submit_on_submit_throws_becomes_error_and_leaves_is_submit_successful_false', async () => {
+  it('submit_on_submit_throws_rejects_and_leaves_is_submit_successful_false', async () => {
     const captured: { current?: Captured } = {}
 
     function Harness(): null {
@@ -192,7 +192,7 @@ describe('rhfAdapter', () => {
       })
       const adapter = rhfAdapter(form, {
         onSubmit: () => {
-          throw new Error('boom')
+          throw new Error('boom: secret-internal-detail')
         },
       })
       captured.current = { form, adapter }
@@ -200,13 +200,48 @@ describe('rhfAdapter', () => {
     }
 
     render(<Harness />)
-    const result = await act(() => captured.current!.adapter.submit())
-
-    expect(result).toEqual({ status: 'error', message: 'boom' })
+    // The adapter must not turn the app's exception into a result carrying its message (that
+    // would leak it to the agent); it rejects, and core's runTool maps that to `Tool failed`.
+    await expect(act(() => captured.current!.adapter.submit())).rejects.toThrow(
+      'boom: secret-internal-detail',
+    )
     // A thrown `onSubmit` must propagate out of `onValid` so react-hook-form itself sees the
     // submission fail (M6): otherwise `handleSubmit` would resolve `onValid` "successfully" and
     // mark the form as having submitted OK even though the caller's callback threw.
     expect(captured.current!.form.formState.isSubmitSuccessful).toBe(false)
+  })
+
+  it('submit_on_submit_throws_yields_tool_failed_without_leaking_message', async () => {
+    const tm = createToolmark({ dev: true })
+    const errors: { code: string }[] = []
+    tm.events.on('error', (e) => errors.push(e))
+
+    function Harness(): null {
+      const form = useForm<Values>({ defaultValues: { title: 'ok' } })
+      const adapter = rhfAdapter(form, {
+        onSubmit: () => {
+          throw new Error('boom: secret-internal-detail')
+        },
+      })
+      useFormTool(adapter, { name: 'x', description: 'A form', input: schema })
+      return null
+    }
+
+    render(
+      <ToolmarkProvider toolmark={tm}>
+        <Harness />
+      </ToolmarkProvider>,
+    )
+
+    const submitResult = await act(() => tm.call('x.submit', {}, { caller: 'test' }))
+    if (submitResult.status !== 'needs_confirmation') {
+      throw new Error('expected needs_confirmation')
+    }
+    const result = await act(() => tm.confirmPending(submitResult.confirmId, { approved: true }))
+
+    expect(result).toEqual({ status: 'error', message: 'Tool failed' })
+    expect(JSON.stringify(result)).not.toContain('secret-internal-detail')
+    expect(errors.map((e) => e.code)).toContain('tool_threw')
   })
 
   it('end_to_end_fill_skips_user_typed_field', async () => {

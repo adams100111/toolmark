@@ -2,6 +2,8 @@ import { PendingStore, type PendingConfirmation } from './confirm.js'
 import { confirmRequestSignals } from './confirm-queue.js'
 import { snapshotHookOf } from './confirm-snapshot.js'
 import { ToolmarkError } from './errors.js'
+import { safeCall } from './events.js'
+import { isPlainObject } from './forms/paths.js'
 import { newId } from './ids.js'
 import { isAllowed, needsConfirmation } from './policy.js'
 import { SerialQueue } from './queue.js'
@@ -138,6 +140,14 @@ export function createCallRuntime(state: RegistryState): CallRuntime {
     entry: Entry,
     value: unknown,
   ): Promise<{ ok: true; value: unknown } | { ok: false; result: ToolResult<unknown> }> {
+    if (entry.tool.input === undefined && entry.tool.jsonSchema === undefined) {
+      // m7: the advertised schema is `{ type: 'object', properties: {}, additionalProperties:
+      // false }`, so only "no input" or an empty plain object is accepted.
+      const empty = value === undefined || (isPlainObject(value) && Object.keys(value).length === 0)
+      return empty
+        ? { ok: true, value }
+        : { ok: false, result: invalid([{ path: '', message: 'This tool takes no input' }]) }
+    }
     try {
       const v = await validateInput(entry.tool.input, value)
       return v.ok ? v : { ok: false, result: invalid(v.issues) }
@@ -514,6 +524,7 @@ export function createCallRuntime(state: RegistryState): CallRuntime {
   ): Promise<ToolResult<unknown>> {
     const stored = pending.take(confirmId)
     if (!stored) return expiredResult()
+    for (const fn of [...state.pendingConsumed]) safeCall(fn, 'pending confirmation listener')
     const entry = stored.owner
     if (outcome.approved !== true) {
       const r = cancelled('operator')

@@ -81,7 +81,8 @@ interface Connection {
  * Reconnects with exponential backoff (500 ms doubling, capped at `maxDelayMs`) until a terminal
  * close code, a rejecting `onOpen` or `close()`. Non-JSON, binary and oversized (> 4 MiB of text)
  * frames are ignored. The socket
- * opens on the first `send` or `onMessage`.
+ * opens on the first `send` or `onMessage`. A reconnect does not re-send the manifest: the bridge
+ * sends one on the next registry revision, and protocol pairing (M3) handles a full resync.
  * @param o - Connection options; see {@link WebSocketTransportOptions}.
  * @returns A {@link BridgeTransport}. `send` resolves once the frame is written to an open socket;
  * it rejects with `Error('buffer overflow')` when evicted from the 100-message buffer (oldest

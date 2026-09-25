@@ -18,6 +18,8 @@ export interface Scope {
 
 /** @internal Hooks the registry installs on every scope node. */
 export interface ScopeHooks {
+  /** `false` under SSR: child scopes are detached (never added to `children`), m6. */
+  readonly attach: boolean
   onWhenChange(node: ScopeNode): void
   onDispose(node: ScopeNode): void
 }
@@ -46,7 +48,9 @@ export class ScopeNode implements Scope {
     const path = this.path === '' ? name : `${this.path}.${name}`
     const child = new ScopeNode(path, this, opts?.when ?? true, this.#hooks)
     if (this.#disposed) child.#disposed = true
-    else this.children.add(child)
+    // Under SSR the registry is inert: a detached child keeps no reference from its parent, so a
+    // long-lived server registry does not accumulate one node per render.
+    else if (this.#hooks.attach) this.children.add(child)
     return child
   }
 

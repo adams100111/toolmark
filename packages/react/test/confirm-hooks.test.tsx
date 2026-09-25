@@ -60,6 +60,55 @@ describe('confirm hooks', () => {
     expect(screen.getByTestId('summary').textContent).toBe('')
   })
 
+  it('pending_item_disappears_as_soon_as_approval_consumes_it', async () => {
+    const tm = createToolmark({ dev: true })
+    let release!: () => void
+    const running = new Promise<void>((r) => {
+      release = r
+    })
+    tm.register({
+      name: 'slow',
+      description: 'slow consequential tool',
+      hints: { consequential: true },
+      summary: () => 'Do the slow thing',
+      run: async () => {
+        await running
+        return ok('done')
+      },
+    })
+
+    function Probe(): JSX.Element {
+      const { items } = usePendingConfirmations()
+      return <span data-testid="count">{items.length}</span>
+    }
+
+    render(
+      <ToolmarkProvider toolmark={tm}>
+        <Probe />
+      </ToolmarkProvider>,
+    )
+    const first = await act(() => tm.call('slow', undefined, { caller: 'inapp' }))
+    if (first.status !== 'needs_confirmation') throw new Error('expected needs_confirmation')
+    expect(screen.getByTestId('count').textContent).toBe('1')
+
+    let approval!: Promise<ToolResult<unknown>>
+    act(() => {
+      approval = tm.confirmPending(first.confirmId, { approved: true })
+    })
+    // The tool is still running, but the id is consumed: the card must be gone already.
+    expect(tm.pendingConfirmations()).toEqual([])
+    expect(screen.getByTestId('count').textContent).toBe('0')
+    // A second (double-click) approval is refused, never a second run.
+    await expect(tm.confirmPending(first.confirmId, { approved: true })).resolves.toMatchObject({
+      status: 'refused',
+      code: 'confirmation_expired',
+    })
+    release()
+    await act(async () => {
+      await expect(approval).resolves.toEqual({ status: 'ok', data: 'done' })
+    })
+  })
+
   it('pending_confirmations_list_and_approve', async () => {
     const tm = createToolmark({ dev: true })
     tm.register({

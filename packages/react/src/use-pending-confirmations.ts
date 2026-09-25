@@ -1,5 +1,10 @@
 import { useCallback, useSyncExternalStore } from 'react'
-import type { PendingConfirmation, ToolResult, Toolmark } from '@toolmark/core'
+import {
+  onPendingConsumed,
+  type PendingConfirmation,
+  type ToolResult,
+  type Toolmark,
+} from '@toolmark/core'
 import { useToolmark } from './provider.js'
 
 /** Snapshot + actions returned by {@link usePendingConfirmations}. */
@@ -29,10 +34,14 @@ function pendingStoreOf(tm: Toolmark): PendingStore {
   let snapshot: PendingConfirmation[] = EMPTY_ITEMS
   let dirty = true
 
-  tm.events.on('confirm', () => {
+  const invalidate = (): void => {
     dirty = true
     for (const fn of [...listeners]) fn()
-  })
+  }
+  tm.events.on('confirm', invalidate)
+  // A consumed id leaves the list before the approved tool settles (its `confirm` event comes
+  // later): refresh immediately so the card disappears and a double click finds no stale item.
+  onPendingConsumed(tm, invalidate)
 
   const store: PendingStore = {
     subscribe(fn) {

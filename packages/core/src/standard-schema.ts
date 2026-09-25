@@ -3,7 +3,9 @@
  *
  * Copied verbatim from `@standard-schema/spec` 1.1.0 (`dist/index.d.ts`,
  * https://github.com/standard-schema/standard-schema, MIT), which permits copying the interfaces
- * so that libraries need no runtime dependency. Only `export` keywords were added.
+ * so that libraries need no runtime dependency. Only `export` keywords and doc comments (on the
+ * three namespaces and `StandardSchemaV1.Options`, which upstream leaves undocumented) were added;
+ * every type is unchanged.
  *
  * @packageDocumentation
  */
@@ -14,6 +16,7 @@ export interface StandardTypedV1<Input = unknown, Output = Input> {
     /** The Standard properties. */
     readonly "~standard": StandardTypedV1.Props<Input, Output>;
 }
+/** Companion types of {@link StandardTypedV1}: its properties, types and inference helpers. */
 export declare namespace StandardTypedV1 {
     /** The Standard Typed properties interface. */
     interface Props<Input = unknown, Output = Input> {
@@ -41,6 +44,10 @@ export interface StandardSchemaV1<Input = unknown, Output = Input> {
     /** The Standard Schema properties. */
     readonly "~standard": StandardSchemaV1.Props<Input, Output>;
 }
+/**
+ * Companion types of {@link StandardSchemaV1}: its properties, the `validate` result and issue
+ * shapes, options and inference helpers.
+ */
 export declare namespace StandardSchemaV1 {
     /** The Standard Schema properties interface. */
     interface Props<Input = unknown, Output = Input> extends StandardTypedV1.Props<Input, Output> {
@@ -56,6 +63,7 @@ export declare namespace StandardSchemaV1 {
         /** A falsy value for `issues` indicates success. */
         readonly issues?: undefined;
     }
+    /** The options interface of the validate function. */
     interface Options {
         /** Explicit support for additional vendor-specific parameters, if needed. */
         readonly libraryOptions?: Record<string, unknown> | undefined;
@@ -90,6 +98,10 @@ export interface StandardJSONSchemaV1<Input = unknown, Output = Input> {
     /** The Standard JSON Schema properties. */
     readonly "~standard": StandardJSONSchemaV1.Props<Input, Output>;
 }
+/**
+ * Companion types of {@link StandardJSONSchemaV1}: its properties, the JSON Schema converter, its
+ * target and options, and inference helpers.
+ */
 export declare namespace StandardJSONSchemaV1 {
     /** The Standard JSON Schema properties interface. */
     interface Props<Input = unknown, Output = Input> extends StandardTypedV1.Props<Input, Output> {
