@@ -41,8 +41,14 @@ By default no input or result value is recorded, only the names, ids, statuses a
 
 - Values at the tool's sensitive paths (`tm.info(tool).sensitivePaths`: the form's declared
   `sensitive` list, fields the adapter reports as sensitive, and password / `cc-*` / secret
-  `autocomplete` inputs) are replaced with `'[redacted]'` in the input, in an `ok` result's
-  `data.changes` and in a `needs_confirmation` result's `changes`.
+  `autocomplete` inputs) are replaced with `'[redacted]'` in an `ok` result's `data.changes` and
+  in a `needs_confirmation` result's `changes`.
+- In the input, the same paths are redacted where they sit in the tool's input shape: under
+  `values.` for a form `fill` (`values.password`) and under `steps.<step>.` for a wizard `fill`
+  (`steps.account.password`); a hand-written tool's `sensitivePaths` are input paths as-is. `[]`
+  matches every array index, dotted keys (`{ "profile.ssn": … }`) and `$append` array ops are
+  followed, and everything at or under a sensitive path is redacted. The input is redacted when
+  the call starts.
 - Redaction works on a copy; other consumers see the original values.
 - Truncation is by UTF-16 code unit, so a truncated attribute may not be valid JSON.
 

@@ -20,6 +20,7 @@ import type { Scope } from '../scope.js'
 import type { StandardSchemaV1 } from '../standard-schema.js'
 import type { AnchorSpec, JsonSchema, ToolDefinition, ToolState } from '../tool.js'
 import { CONFIRM_SNAPSHOT, type ConfirmSnapshotHook } from '../confirm-snapshot.js'
+import { INPUT_SENSITIVE_PATHS } from '../input-redaction.js'
 import {
   applyArrayOp,
   deepEqual,
@@ -1163,6 +1164,11 @@ export function createFormTools<V extends Record<string, unknown>>(
     resolve: (path) => fieldElement(safeFields(adapter), path),
   }
   const hooks = { state: readState, sensitivePaths: publishedSensitive }
+  // The fill's input is `{ values, overwrite? }`: its sensitive input paths live under `values`
+  // (C1; `[]` patterns are expanded against the input by the consumer).
+  const fillInputSensitive = {
+    [INPUT_SENSITIVE_PATHS]: (): string[] => currentSensitive().map((p) => `values.${p}`),
+  }
 
   const optionKeys = opts.options ? Object.keys(opts.options) : []
   const title = opts.title !== undefined ? { title: opts.title } : {}
@@ -1185,6 +1191,7 @@ export function createFormTools<V extends Record<string, unknown>>(
       ),
       anchors: fillAnchors,
       ...hooks,
+      ...fillInputSensitive,
       run: (input, ctx) => fill(input, (restore) => ctx.registerUndo(restore), ctx.signal),
     },
     opts.scope ? { scope: opts.scope } : undefined,
