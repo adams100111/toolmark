@@ -90,12 +90,12 @@ $ gh run watch 36114346855 --exit-status   → rc=0
 Firefox and WebKit last ran on CI in the `main` run for `b755b50` (M4, run `36109316593`, job
 `e2e`, 64 passed, including all six `[firefox] tour.spec.ts` tests).
 
-| Evidence (M5 PR to `main`, full matrix)                                                    | Status              | Run                    |
-| ------------------------------------------------------------------------------------------ | ------------------- | ---------------------- |
-| `ci.yml` full matrix (Node 22/24, React 18.3/19 × Inertia 2/3, zod3)                       | pending CI evidence | _fill with PR run URL_ |
-| `ci.yml` `browser (firefox)`: Vitest DOM projects on Firefox and react-vite e2e on Firefox | pending CI evidence | _fill with PR run URL_ |
-| `ci.yml` `browser (webkit)`                                                                | pending CI evidence | _fill with PR run URL_ |
-| `release.yml` `release-dry-run`                                                            | pending CI evidence | _fill with PR run URL_ |
+| Evidence (M5 PR to `main`, full matrix)                                                    | Status                             | Run                                                                                      |
+| ------------------------------------------------------------------------------------------ | ---------------------------------- | ---------------------------------------------------------------------------------------- |
+| `ci.yml` full matrix (Node 22/24, React 18.3/19 × Inertia 2/3, zod3)                       | pass (PR #6 @ af98d4d, 2026-09-25) | [run 36120901093](https://github.com/adams100111/toolmark/actions/runs/36120901093)      |
+| `ci.yml` `browser (firefox)`: Vitest DOM projects on Firefox and react-vite e2e on Firefox | pass (PR #6 @ af98d4d, 2026-09-25) | [job](https://github.com/adams100111/toolmark/actions/runs/36120901093/job/108025915934) |
+| `ci.yml` `browser (webkit)`                                                                | pass (PR #6 @ af98d4d, 2026-09-25) | [job](https://github.com/adams100111/toolmark/actions/runs/36120901093/job/108025915887) |
+| `release.yml` `release-dry-run`                                                            | pass (PR #6 @ af98d4d, 2026-09-25) | [job](https://github.com/adams100111/toolmark/actions/runs/36120901075/job/108025891469) |
 
 ## Gate 2 — bundle budgets; core has zero runtime dependencies
 
@@ -150,8 +150,8 @@ rc=0
 
 ## Gate 6 — changesets release with provenance; changelog and deprecation policy
 
-The `release-dry-run` job runs only on `pull_request`/`workflow_dispatch`: **pending CI evidence**
-from the M5 PR run (gate 1 table; fill with the PR run URL). Since the M5 final review it also runs
+The `release-dry-run` job runs only on `pull_request`/`workflow_dispatch`: **passed** on
+PR #6 @ `af98d4d` ([job](https://github.com/adams100111/toolmark/actions/runs/36120901075/job/108025891469)). Since the M5 final review it also runs
 the publish job's checks and its publish loop in `--dry-run`, on a synthetic plan when the publish
 plan is empty (`docs/release/release-workflow.md`, "The dry run on every PR"). Its steps were run
 locally on the RC (2026-09-25T08:59Z, HEAD `3aa8d2f`); nothing was published:
@@ -238,8 +238,8 @@ WebMCP leg needs Chromium). Firefox: the tours ran green on CI in run `361093165
 source build). On built `dist`, the `ci.yml` `browser` job's step "Playwright on built dist
 (react-vite, firefox)" runs `dist-resolution`, `same-tools` and `tour` with `TOOLMARK_DIST=1` on
 Firefox (and WebKit); `dist-resolution.spec.ts` fails unless `@toolmark/core` was served from
-`dist/`. **Pending CI evidence:** the M5 PR's `browser (firefox)` job (gate 1 table; fill with the
-PR run URL). `release-dry-run` runs the same dist e2e on Chromium.
+`dist/`. **Passed:** the M5 PR's `browser (firefox)` job
+([job](https://github.com/adams100111/toolmark/actions/runs/36120901093/job/108025915934), PR #6 @ `af98d4d`). `release-dry-run` runs the same dist e2e on Chromium.
 
 ## Gates 8–9, SC4, D28 (supporting)
 
@@ -269,3 +269,9 @@ d691a793fa9f6cb807fe97ddd3a084b55e1740ddf6b9e8961c690daf0ec79985  toolmark-mcp-1
 02689eb70e7a44fde6d7bdc44f5638a18e334b7d074ab86e126044a85f1615f4  toolmark-testing-1.0.0.tgz
 122e5877f2a9776620f30439dd5bc49e9c869d8319a6360bdc171c25e5a512ea  toolmark-tour-1.0.0.tgz
 ```
+
+## Merge to `main` — nothing published (Task 7c step 2) — 2026-09-25
+
+PR #6 merged as `ffeb8c7`. `release.yml` on `ffeb8c7`: [run 36121368743](https://github.com/adams100111/toolmark/actions/runs/36121368743) —
+select-mode ✓, pack ✓, **publish skipped** (`TOOLMARK_PUBLISH_ENABLED` unset), version and
+release-dry-run skipped.

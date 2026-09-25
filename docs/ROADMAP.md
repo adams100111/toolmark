@@ -37,7 +37,7 @@ Post-1.0 consumer track:          └─► Innov P0 ─► P1 ─► P2 ─► 
 | T-M2 Forms | toolmark | `…-m2-forms.md` | T-M1 | round budget `wizard_within_5_rounds`; tarball smoke | done | `feat/m2-forms` (PR #3) | 2026-09-25 |
 | T-M3 Reach | toolmark | `…-m3-reach.md` | T-M2 | same tool via WebMCP + MCP + Playwright (`reach.spec.ts`); tarball smoke incl. `toolmark-mcp` | done | `feat/m3-reach` (PR #4) | 2026-09-25 |
 | T-M4 Tours & tooling | toolmark | `…-m4-tours-tooling.md` | T-M3 | authored + planned tours (3 browsers, axe-clean); Laravel authored tour; same-tools e2e; Laravel + Next.js suites; `docs:build`; lint clean; tarball smoke | done | `feat/m4-tours` (PR #5) | 2026-09-25 |
-| T-M5 Release | toolmark | `…-m5-release.md` | T-M4 | all §21 gates (incl. round budget + smoke on the RC); publish (owner) | active | `feat/m5-release` | 2026-09-25 |
+| T-M5 Release | toolmark | `…-m5-release.md` | T-M4 | all §21 gates (incl. round budget + smoke on the RC); publish (owner) | owner (publish) | `main` @ `ffeb8c7` (PR #6) | 2026-09-25 |
 
 **Current focus:** Toolmark M1 → M5 (release). Innovation is post-1.0. Within Toolmark, units are
 sequential; parallelism is lane-level inside a unit (see
@@ -78,10 +78,10 @@ its exit check passes. Task numbers refer to the unit's plan.
 - [x] Unit exit: tours (3 browsers) + Laravel authored tour + same-tools + example suites + `docs:build` + lint clean + smoke
 
 ### T-M5 Release (toolmark)
-- [ ] W0 · A (T1–T2) CI matrix + quality gates + package metadata
-- [ ] W1 · B (T3, T3b) TSDoc gap-fill + strict TypeDoc, policies/community/docs deploy · C (T4, high, **security**) security review · D (T6) spec-watch
-- [ ] W2 · E (T5, high, **security**) security fixes
-- [ ] W3 · F (T7a–T7c, high) release workflow + dry run, RC + in-repo evidence, 1.0.0 + owner hand-off → **stop for owner**
+- [x] W0 · A (T1–T2) CI matrix + quality gates + package metadata
+- [x] W1 · B (T3, T3b) TSDoc gap-fill + strict TypeDoc, policies/community/docs deploy · C (T4, high, **security**) security review · D (T6) spec-watch
+- [x] W2 · E (T5, high, **security**) security fixes
+- [x] W3 · F (T7a–T7c, high) release workflow + dry run, RC + in-repo evidence, 1.0.0 + owner hand-off → **stop for owner**
 - [ ] After owner: T7d (controller) post-publish verification
 - [ ] Unit exit: `1.0.0` on npm with provenance (T7d)
 
@@ -89,10 +89,10 @@ its exit check passes. Task numbers refer to the unit's plan.
 
 | # | Item | Needed by | Status |
 | --- | --- | --- | --- |
-| O1 | npm org `toolmark` (account 2FA); first-publish bootstrap with a short-lived granular token; `npm trust` (OIDC) for each of the 8 packages after the first publish; revoke the token | T-M5 T7c hand-off (O-b, O-g…O-k) | open |
+| O1 | npm org `toolmark` (account 2FA); first-publish bootstrap with a short-lived granular token; `npm trust` (OIDC) for each of the 8 packages after the first publish; revoke the token | T-M5 T7c hand-off (O-b, O-g…O-k) — `docs/release/owner-handoff.md`, `scripts/owner-publish-wizard.sh` | open (owner) |
 | O2 | Confirm code ownership / employment IP terms before going public | T-M5 | open |
 | O6 | GitHub Actions budget for the private-repo CI matrix (3 browsers × Node × React/Inertia/zod), or self-hosted runners | T-M1 T16 / T-M5 T1 | open |
-| O7 | Go public: make the repo public; create environment `npm-release` (owner the only reviewer); enable Pages (GitHub Actions), private vulnerability reporting, "Allow GitHub Actions to create and approve pull requests", branch protection on `main`; set `TOOLMARK_PUBLISH_ENABLED`; approve the publish run | T-M5 T7c hand-off (O-c…O-i) | open |
+| O7 | Go public: make the repo public; create environment `npm-release` (owner the only reviewer); enable Pages (GitHub Actions), private vulnerability reporting, "Allow GitHub Actions to create and approve pull requests", branch protection on `main`; set `TOOLMARK_PUBLISH_ENABLED`; approve the publish run | T-M5 T7c hand-off (O-c…O-i) — `docs/release/owner-handoff.md`, `scripts/owner-publish-wizard.sh` | open (owner) |
 
 ## Post-1.0 consumer track (Innovation)
 
@@ -242,3 +242,10 @@ also record progress in Innovation's own branch history.
   (axe-clean), Laravel + Next.js examples, docs site, lint + judge; smoke 108/108; CI green (first
   Firefox evidence). M4 rulings in spec §23. **T-M5 started** on `feat/m5-release`: T6 spec-watch
   merged; T1→T2 (CI matrix, quality gates), T3→T3b (TSDoc strict, policies), T4 security review running.
+- 2026-09-25 — **T-M5 at owner (publish)** (PR #6 → `main` @ `ffeb8c7`): all 8 packages at `1.0.0`
+  (pre mode exited); full CI matrix green incl. Firefox/WebKit and `release-dry-run`; `release.yml`
+  on `main` skipped `publish` (nothing published). Security review SEC-1…SEC-30 all resolved with
+  regression tests (incl. release-pipeline hardening); RC `1.0.0-next.4` evidence: smoke 108/0,
+  round budget simple 3 ≤ 3, wizard 4 ≤ 5. M5 rulings in spec §23. **Stopped for the owner:** run
+  `bash scripts/owner-publish-wizard.sh` (steps O-a…O-k in `docs/release/owner-handoff.md`), then
+  say "1.0.0 published" → T7d.
