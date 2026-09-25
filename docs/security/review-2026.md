@@ -769,3 +769,56 @@ All are resolved on the M5 release branch. Their regression tests are in
   (`schema_conversion_failed`: invalid or non-object schema, unresolvable local `$ref`, a pattern
   that does not compile or is unsafe) and the checked `fromJsonSchema` subset, and says that other
   keywords are ignored, so validation can be looser than the advertised schema (commit `66764fd`).
+
+## Release pipeline review
+
+The release pipeline review (checklist items 13 and 14, over `release.yml`,
+`check-release-versions.mjs`, `check-workflows.mjs`, `docs/release/release-workflow.md` and their
+interaction with `ci.yml`, `docs-deploy.yml` and `spec-watch.yml`) approved the pipeline with
+fixes: one Important and seven Minor findings, all resolved on the M5 release branch. Regression
+tests are in `scripts/check-workflows.test.mjs`, `scripts/check-release-versions.test.mjs` and
+`scripts/release-workflow.test.mjs`.
+
+| id     | severity  | item | summary                                                                                                                                               | resolution | commit    | regression test                                                 |
+| ------ | --------- | ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- | --------- | --------------------------------------------------------------- |
+| SEC-14 | Important | 13   | The release build restored a pnpm-store cache that a default-branch job running unpinned third-party code (spec-watch `wpt` at `master`) could poison | fixed      | `28ba345` | `sec_14_jobs_feeding_publish_restore_no_cache`                  |
+| SEC-15 | Minor     | 13   | `gh release create` trusted a pre-existing `<name>@<version>` tag, which could point at a different commit                                            | fixed      | `28ba345` | `sec_15_release_step_refuses_a_tag_at_another_commit`           |
+| SEC-16 | Minor     | 13   | `publish` did not check a tarball's own manifest against its plan entry, and plan paths were unconstrained                                            | fixed      | `aaa7022` | `check_release_versions_plan_rejects_manifest_version_mismatch` |
+| SEC-17 | Minor     | 13   | The release doc omitted the `npm-release` deployment-branch policy (`main` only), the real branch control, from its gate list                         | fixed      | `e4e30e1` | `sec_17_doc_lists_main_only_deployment_branches_as_a_gate`      |
+| SEC-18 | Minor     | 13   | The publish job did not refuse private-repo runs, where required reviewers are not enforced on the Free plan                                          | fixed      | `28ba345` | `sec_18_publish_refuses_private_repositories`                   |
+| SEC-19 | Minor     | 13   | `check-workflows` did not flag `workflow_run`, `${{ }}` of untrusted or step-output contexts in `run:`, or caches in privileged jobs                  | fixed      | `acf5efb` | `check_workflows_rejects_cache_in_privileged_jobs`              |
+| SEC-20 | Minor     | 13   | spec-watch interpolated `steps.spec-watch.outputs.changed-keys` into a `run:` script in a job with a write token                                      | fixed      | `28ba345` | `check_workflows_passes_repository_workflows`                   |
+| SEC-21 | Minor     | 13   | The setup-php pin comment named `v2.37.2`, a tag that does not exist (the tag is `2.37.2`)                                                            | fixed      | `28ba345` | `check_workflows_accepts_version_comment_without_v`             |
+
+- SEC-14: `select-mode` and `pack` (the jobs that feed `publish`) and docs-deploy `build` (feeds
+  `deploy`) set `package-manager-cache: false`; spec-watch `watch`, `canary` and `audit` (write
+  token) restore no pnpm or browser cache. spec-watch `wpt` checks out wpt at commit
+  `ece2d7fdc436d4b9a3856877163b07ec15c05354` (bumped by hand after review) with `contents: read`
+  only, no secret and no cache. `check-workflows` now enforces the cache rule
+  (`check_workflows_rejects_cache_in_privileged_jobs`) and SHA-pinned foreign checkouts
+  (`check_workflows_rejects_unpinned_foreign_checkout`).
+- SEC-15: before and after each `gh release create`, the step resolves the tag through
+  `git/ref/tags/<tag>` (annotated tags dereferenced through `git/tags/<sha>`) and fails unless an
+  existing tag points at `$GITHUB_SHA`; any API error other than 404 fails closed. A tag ruleset
+  restricting `@toolmark/*` tag creation remains an owner option after the repository goes public.
+- SEC-16: `check-release-versions --plan dist-pack` runs before `npm publish`: each entry is a
+  `publish` of `@toolmark/<name>` with `tarball.path` matching `^packages/[a-z0-9-]+-[0-9A-Za-z.-]+\.tgz$`
+  and no traversal, a matching `sha256` integrity, a packed `name`/`version` equal to the plan's,
+  and no `preinstall`/`install`/`postinstall` script. The publish loop re-checks the path. Also
+  covered by `check_release_versions_plan_rejects_manifest_name_mismatch`,
+  `…_rejects_install_scripts`, `…_rejects_unsafe_paths`, `…_rejects_integrity_mismatch` and
+  `sec_16_publish_checks_plan_against_packed_manifests_first`.
+- SEC-17: `docs/release/release-workflow.md` lists "deployment branches: `main` only" as the
+  required fifth gate, explains why the in-file `if:` is only a guard, and gives the read-only
+  `gh api` check to run before setting `TOOLMARK_PUBLISH_ENABLED`.
+- SEC-18: the `publish` `if:` ends with `&& !github.event.repository.private`, like docs-deploy.
+- SEC-19: `workflow_run` is banned alongside `pull_request_target`; `${{ }}` over `github.head_ref`,
+  `github.event.*`, `inputs.*`, `steps.<id>.outputs.*` or `needs.<id>.outputs.*` inside `run:`
+  fails (`check_workflows_rejects_untrusted_expressions_in_run`,
+  `check_workflows_accepts_env_passed_values_in_run`); a job with any `write` permission,
+  `id-token`, `secrets.*` or `github.token`, and every job it needs, may not use `actions/cache`,
+  a `cache:` input on `actions/setup-*`, or `actions/setup-node` without
+  `package-manager-cache: false`.
+- SEC-20: the value reaches the script as `CHANGED_KEYS` through the step's `env:`.
+- SEC-21: the comment reads `# 2.37.2`; `check-workflows` already accepted a version comment
+  without `v`, and a fixture now pins that.

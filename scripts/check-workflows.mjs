@@ -7,9 +7,19 @@
 // Every workflow must:
 //   - set top-level `permissions: {}` (jobs grant what they need);
 //   - set top-level `concurrency`;
-//   - never trigger on `pull_request_target`;
+//   - never trigger on `pull_request_target` or `workflow_run`;
 //   - pin every non-local action (`uses:`) to a full 40-char commit SHA with a trailing
-//     `# vX.Y.Z` comment;
+//     `# vX.Y.Z` (or `# X.Y.Z`, for tags without a `v`) comment;
+//   - check out another repository (`actions/checkout` with `repository:`) only at a `ref:` that
+//     is a full 40-char commit SHA;
+//   - never interpolate `${{ ... }}` over an untrusted or step-derived context (`github.head_ref`,
+//     `github.event.*`, `inputs.*`, `steps.<id>.outputs.*`, `needs.<id>.outputs.*`) inside a
+//     `run:` script; pass it through the step's `env:` and use "$VAR" instead;
+//   - restore no cache in a privileged job — one with any `write` permission (including
+//     `id-token: write`) or that uses `secrets.*` / `github.token` — or in any job it `needs`,
+//     directly or transitively: no `actions/cache` (or `cache/restore`), no `cache:` input on an
+//     `actions/setup-*` step, and `actions/setup-node` sets `package-manager-cache: false`
+//     (a cache entry written by any other default-branch job could plant code in the build);
 //   - run `actions/checkout` with `persist-credentials: false`, except in a job that must push:
 //     that job sets `persist-credentials: true` explicitly and names the exception in a comment
 //     inside the job that mentions "push" (for example `# Exception ...: this job pushes ...`);
@@ -86,6 +96,23 @@ function readOnlyPermissions(perms) {
   return Object.entries(perms).every(([k, v]) => k === 'contents' && v === 'read')
 }
 
+/** `${{ }}` contexts that must reach a `run:` script through `env:` (attacker- or step-derived). */
+const UNTRUSTED_EXPR =
+  /\b(?:github\.head_ref|github\.event\.|inputs\.|steps\.[\w-]+\.outputs|needs\.[\w-]+\.outputs)/
+
+/** Whether job permissions grant any `write` (including `id-token: write`, `write-all`). */
+function hasWritePermission(perms) {
+  if (typeof perms === 'string') return /write/.test(perms)
+  if (!perms || typeof perms !== 'object') return false
+  return Object.values(perms).some((v) => v === 'write')
+}
+
+/** Whether a job's source (comments stripped) uses a secret or the `GITHUB_TOKEN`. */
+function usesToken(source) {
+  const text = stripComments(source ?? '')
+  return USES_SECRETS.test(text) || /\bgithub\.token\b/.test(text)
+}
+
 /** `uses:` lines with their trailing comment, from the raw text (the parser drops comments). */
 function usesLines(text) {
   const out = []
@@ -116,8 +143,10 @@ function checkFile(file) {
   if (doc.concurrency === undefined || doc.concurrency === null) {
     problems.push('needs top-level `concurrency`')
   }
-  if (events(doc.on ?? doc[true]).includes('pull_request_target')) {
-    problems.push('must not trigger on `pull_request_target`')
+  for (const banned of ['pull_request_target', 'workflow_run']) {
+    if (events(doc.on ?? doc[true]).includes(banned)) {
+      problems.push(`must not trigger on \`${banned}\``)
+    }
   }
 
   for (const { line, ref, comment } of usesLines(text)) {
@@ -153,6 +182,70 @@ function checkFile(file) {
     }
   }
 
+  const jobs = Object.entries(doc.jobs ?? {})
+  for (const [jobId, job] of jobs) {
+    for (const step of job?.steps ?? []) {
+      if (typeof step?.uses === 'string' && /^actions\/checkout@/.test(step.uses)) {
+        const repo = step.with?.repository
+        if (
+          typeof repo === 'string' &&
+          repo !== '' &&
+          !/^[0-9a-f]{40}$/.test(String(step.with?.ref ?? ''))
+        ) {
+          problems.push(
+            `job "${jobId}": checkout of ${repo} needs \`ref:\` pinned to a full 40-char commit SHA`,
+          )
+        }
+      }
+      if (typeof step?.run !== 'string') continue
+      for (const m of step.run.matchAll(/\$\{\{\s*([\s\S]*?)\s*\}\}/g)) {
+        if (UNTRUSTED_EXPR.test(m[1])) {
+          problems.push(
+            `job "${jobId}": \`\${{ ${m[1]} }}\` inside \`run:\`; pass it through the step's ` +
+              '`env:` and use "$VAR"',
+          )
+        }
+      }
+    }
+  }
+
+  // Privileged jobs and every job they need (transitively) restore no cache.
+  const privileged = jobs
+    .filter(
+      ([jobId, job]) => hasWritePermission(job?.permissions) || usesToken(jobSource.get(jobId)),
+    )
+    .map(([jobId]) => jobId)
+  const guarded = new Set()
+  const visit = (jobId) => {
+    if (guarded.has(jobId)) return
+    guarded.add(jobId)
+    const needs = doc.jobs?.[jobId]?.needs
+    for (const dep of Array.isArray(needs) ? needs : needs ? [needs] : []) visit(String(dep))
+  }
+  privileged.forEach(visit)
+  for (const jobId of guarded) {
+    const why = privileged.includes(jobId) ? 'is privileged' : 'feeds a privileged job'
+    for (const step of doc.jobs?.[jobId]?.steps ?? []) {
+      const uses = typeof step?.uses === 'string' ? step.uses : ''
+      if (/^actions\/cache(\/restore)?@/.test(uses)) {
+        problems.push(
+          `job "${jobId}" ${why} (write permission, id-token or secrets) and must not restore a cache (${uses.split('@')[0]})`,
+        )
+      } else if (/^actions\/setup-[\w-]+@/.test(uses) && step.with?.cache) {
+        problems.push(
+          `job "${jobId}" ${why} (write permission, id-token or secrets) and must not restore a cache (\`cache: ${step.with.cache}\`)`,
+        )
+      } else if (/^actions\/setup-node@/.test(uses)) {
+        const pmc = step.with?.['package-manager-cache']
+        if (pmc !== false && pmc !== 'false') {
+          problems.push(
+            `job "${jobId}" ${why} (write permission, id-token or secrets): actions/setup-node needs \`package-manager-cache: false\``,
+          )
+        }
+      }
+    }
+  }
+
   const prTriggers = events(doc.on ?? doc[true]).filter((e) => PR_EVENTS.has(e))
   if (prTriggers.length > 0) {
     if (doc.env !== undefined && USES_SECRETS.test(JSON.stringify(doc.env))) {
@@ -160,7 +253,7 @@ function checkFile(file) {
         `workflow-level \`env\` uses secrets, which jobs on \`${prTriggers[0]}\` would receive`,
       )
     }
-    for (const [jobId, job] of Object.entries(doc.jobs ?? {})) {
+    for (const [jobId, job] of jobs) {
       if (excludesPullRequests(job?.if, prTriggers)) continue
       if (!readOnlyPermissions(job?.permissions)) {
         problems.push(

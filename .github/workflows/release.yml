@@ -45,10 +45,12 @@ jobs:
         with:
           persist-credentials: false
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0 (version from packageManager)
+      # No package-manager cache in any job that feeds `publish` (SEC-14): a cache entry written
+      # by another default-branch job could plant a trojaned store that `pnpm build` then ships.
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24.x
-          cache: pnpm
+          package-manager-cache: false
       - run: pnpm install --frozen-lockfile
       - id: mode
         uses: changesets/action/select-mode@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
@@ -90,10 +92,11 @@ jobs:
         with:
           persist-credentials: false
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0 (version from packageManager)
+      # No package-manager cache (SEC-14, see select-mode): these tarballs are what `publish` ships.
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24.x
-          cache: pnpm
+          package-manager-cache: false
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - id: pack
@@ -104,9 +107,11 @@ jobs:
   # Owner-gated publish. GitHub-hosted runner (required for OIDC); `npm-release` is the protected
   # environment whose only reviewer is the owner. No `pnpm install` here: this job holds id-token
   # and the bootstrap token, so it runs no dependency code — only Node built-ins, npm and gh.
+  # Never from a private repository (SEC-18): required reviewers on `npm-release` are not enforced
+  # for private repos on the Free plan, so the owner's approval would be silently skipped.
   publish:
     needs: [select-mode, pack]
-    if: needs.select-mode.outputs.mode == 'publish' && vars.TOOLMARK_PUBLISH_ENABLED == 'true' && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    if: needs.select-mode.outputs.mode == 'publish' && vars.TOOLMARK_PUBLISH_ENABLED == 'true' && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && !github.event.repository.private
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: npm-release
@@ -141,6 +146,10 @@ jobs:
           path: dist-pack
       - name: Internal ranges in the packed manifests
         run: node scripts/check-release-versions.mjs --tarballs dist-pack
+      # npm publishes what each tarball's own package.json says, so the packed name/version must
+      # equal the plan entry's, with no install scripts and a plain packages/<file>.tgz path (SEC-16).
+      - name: Plan entries match their tarballs
+        run: node scripts/check-release-versions.mjs --plan dist-pack
       - name: Publish (npm, provenance)
         env:
           NPM_BOOTSTRAP_TOKEN: ${{ secrets.NPM_BOOTSTRAP_TOKEN }}
@@ -160,6 +169,7 @@ jobs:
             [ "$kind" = publish ] || { echo "::error::$name: unexpected plan entry kind '$kind'"; exit 1; }
             [[ "$name" =~ ^@toolmark/[a-z0-9-]+$ ]] || { echo "::error::unexpected package name '$name'"; exit 1; }
             [ "$tag" = latest ] || { echo "::error::$name@$version: dist-tag '$tag' is not latest"; exit 1; }
+            [[ "$path" =~ ^packages/[a-z0-9-]+-[0-9A-Za-z.-]+\.tgz$ ]] || { echo "::error::$name: unexpected tarball path '$path'"; exit 1; }
             dir="packages/${name#@toolmark/}"
             ws=$(node -p 'require("./'"$dir"'/package.json").version')
             [ "$ws" = "$version" ] || { echo "::error::$name: plan $version != workspace $ws"; exit 1; }
@@ -176,16 +186,44 @@ jobs:
       - name: Git tags and GitHub releases
         env:
           GH_TOKEN: ${{ github.token }}
+        # A tag that already exists must point at this run's commit (SEC-15): `gh release create`
+        # would otherwise attach the release to it and ignore --target. Checked before and after.
         run: |
           set -euo pipefail
+          # Prints the commit a tag points at (annotated tags dereferenced), or nothing if absent.
+          tag_commit() {
+            local out type sha
+            if ! out=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$1" --jq '.object.type + " " + .object.sha' 2> tag-err.txt); then
+              grep -q 'HTTP 404' tag-err.txt && return 0
+              cat tag-err.txt >&2
+              return 1
+            fi
+            read -r type sha <<< "$out"
+            while [ "$type" = tag ]; do
+              out=$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$sha" --jq '.object.type + " " + .object.sha')
+              read -r type sha <<< "$out"
+            done
+            [ "$type" = commit ] || { echo "tag $1 points at a $type" >&2; return 1; }
+            printf '%s\n' "$sha"
+          }
+          require_tag_at_sha() {
+            local at
+            at=$(tag_commit "$1")
+            if [ -n "$at" ] && [ "$at" != "$GITHUB_SHA" ]; then
+              echo "::error::tag $1 points at $at, not $GITHUB_SHA; refusing to release it"
+              exit 1
+            fi
+          }
           while IFS=$'\t' read -r name version dir; do
             tag="$name@$version"
+            require_tag_at_sha "$tag"
             if gh release view "$tag" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
               echo "release $tag exists"; continue
             fi
             awk -v h="## $version" '$0 == h {f=1; next} /^## / && f {exit} f' "$dir/CHANGELOG.md" > notes.md
             gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
               --title "$tag" --notes-file notes.md
+            require_tag_at_sha "$tag"
           done < released.tsv
 
   # PR and manual check of the whole publish path without publishing (spec §21): plan → pack →

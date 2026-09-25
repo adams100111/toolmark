@@ -1,0 +1,82 @@
+// Release pipeline review regression tests (SEC-14..SEC-18, docs/security/review-2026.md):
+// `.github/workflows/release.yml` keeps the publish-path guards the review asked for, and
+// docs/release/release-workflow.md lists the environment's deployment-branch policy as a gate.
+// Run with `node --test "scripts/*.test.mjs"`.
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { parse } from 'yaml'
+
+const root = join(dirname(fileURLToPath(import.meta.url)), '..')
+const workflow = parse(readFileSync(join(root, '.github', 'workflows', 'release.yml'), 'utf8'))
+const doc = readFileSync(join(root, 'docs', 'release', 'release-workflow.md'), 'utf8')
+
+/** Index of the first step of `job` whose `name`/`uses`/`run` matches `re`, or -1. */
+function stepIndex(job, re) {
+  return workflow.jobs[job].steps.findIndex((s) =>
+    re.test(`${s.name ?? ''} ${s.uses ?? ''} ${s.run ?? ''}`),
+  )
+}
+
+test('sec_14_jobs_feeding_publish_restore_no_cache', () => {
+  for (const job of ['select-mode', 'pack', 'version', 'publish']) {
+    for (const step of workflow.jobs[job].steps) {
+      if (!/^actions\/setup-node@/.test(step.uses ?? '')) continue
+      assert.equal(step.with?.cache, undefined, `${job}: setup-node has no cache input`)
+      assert.equal(
+        step.with?.['package-manager-cache'],
+        false,
+        `${job}: package-manager-cache false`,
+      )
+    }
+    assert.equal(stepIndex(job, /actions\/cache/), -1, `${job}: no actions/cache step`)
+  }
+})
+
+test('sec_15_release_step_refuses_a_tag_at_another_commit', () => {
+  const step = workflow.jobs.publish.steps.find((s) => s.name === 'Git tags and GitHub releases')
+  assert.ok(step, 'the tags-and-releases step exists')
+  const run = step.run
+  assert.match(run, /git\/ref\/tags\//, 'resolves the existing tag through the API')
+  assert.match(run, /git\/tags\//, 'dereferences annotated tags')
+  assert.match(run, /!= "\$GITHUB_SHA"/, 'compares the tag commit with the run commit')
+  const loop = run.slice(run.indexOf('while IFS'))
+  const create = loop.indexOf('gh release create')
+  const checks = [...loop.matchAll(/require_tag_at_sha "\$tag"/g)].map((m) => m.index)
+  assert.ok(
+    checks.some((i) => i < loop.indexOf('gh release view')),
+    'checked before the release',
+  )
+  assert.ok(
+    checks.some((i) => i > create),
+    'checked again after gh release create',
+  )
+})
+
+test('sec_16_publish_checks_plan_against_packed_manifests_first', () => {
+  const plan = stepIndex('publish', /check-release-versions\.mjs --plan dist-pack/)
+  const publish = stepIndex('publish', /npm publish/)
+  assert.ok(plan >= 0, 'publish runs check-release-versions --plan')
+  assert.ok(plan < publish, 'before any npm publish')
+  const run = workflow.jobs.publish.steps[publish].run
+  assert.match(
+    run,
+    /\^packages\/\[a-z0-9-\]\+-\[0-9A-Za-z\.-\]\+\\\.tgz\$/,
+    'the loop re-checks the path',
+  )
+})
+
+test('sec_17_doc_lists_main_only_deployment_branches_as_a_gate', () => {
+  const gates = doc.slice(doc.indexOf('## What stops a publish'), doc.indexOf('## Publish path'))
+  assert.match(gates, /Required owner gate/)
+  assert.match(gates, /deployment branch policy/)
+  assert.match(gates, /\*\*`main` only\*\*/)
+  assert.match(gates, /environments\/npm-release/)
+})
+
+test('sec_18_publish_refuses_private_repositories', () => {
+  assert.match(workflow.jobs.publish.if, /!github\.event\.repository\.private/)
+  assert.doesNotMatch(workflow.jobs.publish.if, /\|\|/)
+})

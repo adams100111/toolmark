@@ -2,7 +2,7 @@
 
 `.github/workflows/release.yml` is the only workflow that publishes to npm (spec §17, §21, §22).
 It follows the changesets split-job pattern (`changesets/action` v2.1.2 sub-actions) and keeps the
-publish step behind four gates, each controlled by the owner. This page records how the workflow
+publish step behind five gates, each controlled by the owner. This page records how the workflow
 behaves, the publish-path ruling with its sources, and the local dry run (M5 Task 7a).
 
 ## Jobs
@@ -12,7 +12,7 @@ behaves, the publish-path ruling with its sources, and the local dry run (M5 Tas
 | `select-mode`     | `push` to `main`, `workflow_dispatch`                          | `contents: read`                          |
 | `version`         | mode `version` on `main`: opens or updates the version PR      | `contents: write`, `pull-requests: write` |
 | `pack`            | mode `publish`: `pnpm build`, then `changesets/action/pack`    | `contents: read`                          |
-| `publish`         | the four gates below; environment `npm-release`                | `contents: write`, `id-token: write`      |
+| `publish`         | the five gates below; environment `npm-release`                | `contents: write`, `id-token: write`      |
 | `release-dry-run` | `pull_request` to `main`, `workflow_dispatch`: never publishes | `contents: read`                          |
 
 The top level sets `permissions: {}` and `concurrency: release-${{ github.ref }}` without
@@ -30,12 +30,32 @@ The `publish` job runs only if all of these hold:
    creating `npm-release`. This gate is needed because GitHub creates a missing environment on its
    first reference, and that new environment has no protection rules ([GitHub: managing
    environments][gh-env]).
-3. The event is not `pull_request`, and the ref is `refs/heads/main`.
+3. The event is not `pull_request`, the ref is `refs/heads/main`, and the repository is public
+   (`!github.event.repository.private`, SEC-18). This `if:` is only a guard, not a control: for
+   `push` and `workflow_dispatch` GitHub runs the workflow file from the triggering ref, so anyone
+   who can push a branch can dispatch a copy of `release.yml` without it. Gate 5 is the control.
 4. The owner approves the job in the protected `npm-release` environment, where the owner is the
    only required reviewer. Environment secrets such as `NPM_BOOTSTRAP_TOKEN` are not available to
    the job until a required reviewer approves it ([GitHub: deployments and environments][gh-deploy]).
    On the Free, Pro and Team plans, required reviewers work only in public repositories, so the
    repository must be public before this gate works.
+5. **Required owner gate (SEC-17):** the `npm-release` environment's deployment branch policy
+   allows **`main` only** (Settings → Environments → `npm-release` → Deployment branches and tags →
+   "Selected branches and tags" → `main`). npm trusted publishing binds only the repository, the
+   workflow file name and the environment, not the branch, so this policy and the reviewer are the
+   only things that stop a modified `release.yml` dispatched from another branch. Verify it
+   (read-only) before the first publish, and after any change to the environment:
+
+   ```sh
+   gh api repos/adams100111/toolmark/environments/npm-release \
+     --jq '{policy: .deployment_branch_policy, rules: [.protection_rules[].type]}'
+   gh api repos/adams100111/toolmark/environments/npm-release/deployment-branch-policies \
+     --jq '[.branch_policies[] | {name, type}]'
+   ```
+
+   Expect `policy` = `{"protected_branches": false, "custom_branch_policies": true}`, `rules`
+   containing `required_reviewers`, and exactly one branch policy `{"name": "main", "type":
+"branch"}`. Do not set `TOOLMARK_PUBLISH_ENABLED` until both hold.
 
 After approval, the job still refuses to publish if:
 
@@ -52,6 +72,18 @@ After approval, the job still refuses to publish if:
 - a plan entry is not a `publish` of an `@toolmark/*` package, its dist-tag is not `latest`, its
   version differs from the checked-out `package.json`, or the tarball fails its `sha256` integrity
   check from the plan.
+- a tarball's own `package/package.json` names a different `name` or `version` than its plan entry,
+  or declares a `preinstall`/`install`/`postinstall` script, or the plan's `tarball.path` is not a
+  plain `packages/<name>-<version>.tgz` (`check-release-versions --plan`, SEC-16). npm publishes
+  what the tarball says, not what the plan says.
+- an existing `<name>@<version>` git tag points at a commit other than `$GITHUB_SHA` (checked
+  before and after `gh release create`, which would otherwise attach the release to the existing
+  tag and ignore `--target`; SEC-15).
+
+No job that feeds `publish` (`select-mode`, `pack`) restores a package-manager or `actions/cache`
+cache (`package-manager-cache: false`, SEC-14): a cache entry written by any other default-branch
+job could plant a trojaned pnpm store that `pnpm build` would ship with valid provenance.
+`scripts/check-workflows.mjs` enforces this for every privileged job and every job it needs.
 
 The `publish` job runs no `pnpm install`. It holds `id-token: write` and possibly the bootstrap
 token, so it runs no dependency code: only the Node built-ins, npm and `gh`.

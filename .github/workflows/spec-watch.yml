@@ -25,7 +25,7 @@ concurrency:
 env:
   # Dry-run until Task 7d flips this (the PR-triggered `validate` job always sets it itself):
   # spec-watch.mjs opens/updates no issue and writes no state, git-commit-and-PR is skipped,
-  # canary/wpt/audit issue-opening still runs (those aren't gated by this — they only fire
+  # canary/audit issue-opening still runs (those aren't gated by this — they only fire
   # `on: failure()`, which a dry run of `watch` doesn't affect).
   SPEC_WATCH_DRY_RUN: '1'
 
@@ -72,10 +72,11 @@ jobs:
         with:
           persist-credentials: true
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0 (version from packageManager)
+      # No package-manager cache in a job with a write token (SEC-14; check-workflows enforces it).
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24.x
-          cache: pnpm
+          package-manager-cache: false
       - run: pnpm install --frozen-lockfile
       - name: spec-watch
         id: spec-watch
@@ -86,6 +87,7 @@ jobs:
         if: steps.spec-watch.outputs.changed == 'true' && env.SPEC_WATCH_DRY_RUN != '1'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CHANGED_KEYS: ${{ steps.spec-watch.outputs.changed-keys }}
         run: |
           set -euo pipefail
           if git diff --quiet -- .spec-watch/state.json; then
@@ -100,7 +102,7 @@ jobs:
           git commit -m "chore(spec-watch): record new WebMCP source hashes"
           git push -u origin "$branch"
           gh pr create \
-            --title "chore(spec-watch): WebMCP source(s) changed (${{ steps.spec-watch.outputs.changed-keys }})" \
+            --title "chore(spec-watch): WebMCP source(s) changed ($CHANGED_KEYS)" \
             --body "Opened by the weekly spec-watch workflow. See the linked \"WebMCP spec changed\" issue(s) for the diff." \
             --base main \
             --head "$branch"
@@ -122,31 +124,20 @@ jobs:
         with:
           persist-credentials: false
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0 (version from packageManager)
+      # No package-manager cache in a job with a write token (SEC-14; check-workflows enforces it).
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24.x
-          cache: pnpm
+          package-manager-cache: false
       - run: pnpm install --frozen-lockfile
       # Built output first: examples/react-vite's webmcp.spec.ts imports @toolmark/testing from
       # dist (M1 pass-4 ruling).
       - run: pnpm -r --filter "./packages/*" build
-      - name: Playwright version
-        id: playwright
-        run: echo "version=$(pnpm exec playwright --version | awk '{print $2}')" >> "$GITHUB_OUTPUT"
-      - name: Cache Chrome Dev
-        id: playwright-cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-canary-${{ runner.os }}-${{ steps.playwright.outputs.version }}-chrome-dev
       # Chrome Canary itself is not distributed for Linux (verified 2026-09-25); `chrome-dev` is
       # the closest continuously-updated Linux channel — see the two config files' header comments.
+      # Installed fresh each week, not from a browser cache (SEC-14: this job holds a write token).
       - name: Install Chrome Dev
-        if: steps.playwright-cache.outputs.cache-hit != 'true'
         run: pnpm exec playwright install --with-deps chrome-dev
-      - name: Install Chrome Dev system dependencies
-        if: steps.playwright-cache.outputs.cache-hit == 'true'
-        run: pnpm exec playwright install-deps chrome-dev
       - name: Vitest (browser-webmcp-polyfill.test.ts, Chrome Dev + WebMCPTesting)
         run: pnpm exec vitest run --config .spec-watch/vitest.canary.config.ts
       - name: Playwright (webmcp.spec.ts, Chrome Dev + WebMCPTesting)
@@ -175,6 +166,10 @@ jobs:
   # macOS only — same substitution problem as `canary`, but the WPT test runner's own `chrome_canary`
   # product does not accept a channel override the way Playwright does), which is fine: this job
   # never blocks and reports whatever it manages to run.
+  #
+  # SEC-14: this job runs third-party code (`./wpt`), so it is pinned to a wpt commit (bump it by
+  # hand after reviewing the diff: `git ls-remote https://github.com/web-platform-tests/wpt
+  # refs/heads/master`), holds only `contents: read`, uses no secret and restores no cache.
   wpt:
     if: github.event_name != 'pull_request'
     continue-on-error: true
@@ -182,13 +177,13 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: read
-      issues: write
     steps:
       - name: Sparse checkout web-platform-tests/wpt (webmcp/ only)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: web-platform-tests/wpt
-          ref: master # verified 2026-09-25: wpt's default branch is `master`, not `main`
+          # wpt `master` (its default branch) on 2026-09-25.
+          ref: ece2d7fdc436d4b9a3856877163b07ec15c05354
           sparse-checkout: |
             webmcp
           sparse-checkout-cone-mode: false
@@ -210,10 +205,11 @@ jobs:
         with:
           persist-credentials: false
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0 (version from packageManager)
+      # No package-manager cache in a job with a write token (SEC-14; check-workflows enforces it).
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24.x
-          cache: pnpm
+          package-manager-cache: false
       - run: pnpm install --frozen-lockfile
       - run: pnpm audit --prod --audit-level high
       - name: 'Open/update "Dependency audit: high severity" issue'
