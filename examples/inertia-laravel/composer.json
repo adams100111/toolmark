@@ -3,7 +3,10 @@
     "name": "laravel/laravel",
     "type": "project",
     "description": "The skeleton application for the Laravel framework.",
-    "keywords": ["laravel", "framework"],
+    "keywords": [
+        "laravel",
+        "framework"
+    ],
     "license": "MIT",
     "require": {
         "php": "^8.3",
@@ -72,6 +75,7 @@
         "toolmark:setup": [
             "@php -r \"file_exists('.env') || copy('.env.example', '.env');\"",
             "@php artisan key:generate --ansi",
+            "@php -r \"array_map('unlink', glob('database/database.sqlite*'));\"",
             "@php -r \"touch('database/database.sqlite');\"",
             "@php artisan migrate:fresh --seed --force"
         ]

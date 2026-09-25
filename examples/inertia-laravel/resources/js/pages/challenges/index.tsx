@@ -39,7 +39,9 @@ export default function ChallengesIndex(props: { challenges: ChallengeRow[] }): 
                 </td>
                 <td>{c.type}</td>
                 <td>{c.startsAt}</td>
-                <td data-testid={`challenge-${c.id}-status`}>{c.archived ? 'Archived' : 'Active'}</td>
+                <td data-testid={`challenge-${c.id}-status`}>
+                  {c.archived ? 'Archived' : 'Active'}
+                </td>
               </tr>
             ))}
           </tbody>

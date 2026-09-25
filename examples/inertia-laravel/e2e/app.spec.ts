@@ -105,9 +105,26 @@ test('wizard_one_call', async ({ page }) => {
 })
 
 test('archive_requires_confirmation', async ({ page }) => {
+  // A fresh challenge to archive, so reruns never run out of active ones.
+  await page.goto('/challenges')
+  const title = `Archive me ${Date.now()}`
+  const created = await page.request.post('/challenges', {
+    headers: await xsrfHeaders(page),
+    data: { title: { en: title, ar: 'أرشفني' }, type: 'workshop', startsAt: '2026-12-01' },
+  })
+  expect(created.ok(), await created.text()).toBe(true)
+  const bridgePosts: unknown[] = []
+  page.on('request', (request) => {
+    if (
+      request.method() === 'POST' &&
+      new URL(request.url()).pathname.startsWith('/toolmark/bridge/')
+    ) {
+      bridgePosts.push(JSON.parse(request.postData() ?? 'null'))
+    }
+  })
   const connected = await open(page, '/challenges')
-  const firstActive = page.getByRole('row').filter({ hasText: 'Active' }).first()
-  const id = Number(await firstActive.getByRole('cell').first().textContent())
+  const row = page.getByRole('row').filter({ hasText: title })
+  const id = Number(await row.getByRole('cell').first().textContent())
   const status = page.getByTestId(`challenge-${id}-status`)
 
   // Deferred: the agent only learns that a confirmation is waiting in the page.
@@ -115,7 +132,7 @@ test('archive_requires_confirmation', async ({ page }) => {
     { type: 'call', tool: 'challenges.archive', input: { challenge: id } },
   ])
   expect(results[0]).toMatchObject({ status: 'needs_confirmation' })
-  const confirmId = (results[0] as { confirmId: string }).confirmId
+  const confirmId = String(results[0]?.confirmId)
   await expect(status).toHaveText('Active')
 
   // The user approves; the page runs the visit and sends `confirmed`.
@@ -123,21 +140,33 @@ test('archive_requires_confirmation', async ({ page }) => {
   await expect(dialog).toBeVisible()
   await dialog.getByRole('button', { name: 'Approve' }).click()
   await expect(status).toHaveText('Archived')
+  await expect
+    .poll(() => bridgePosts.find((m) => (m as { type?: string }).type === 'confirmed'))
+    .toMatchObject({
+      type: 'confirmed',
+      clientId: connected.clientId,
+      confirmId,
+      result: { status: 'ok' },
+    })
+  const confirmed = bridgePosts.find((m) => (m as { type?: string }).type === 'confirmed')
+  expect(validateMessage(confirmed, 'toAgent')).toMatchObject({ ok: true })
 
   // The server appended the outcome and ran exactly one follow-up turn without page tools.
   type Turn = { role: string; meta: Record<string, unknown> | null; tools: string[] | null }
-  let turns: Turn[] = []
+  let after: Turn[] = []
   await expect
     .poll(async () => {
       const response = await page.request.get(`/testing/agent/turns/${connected.conversationId}`)
-      turns = (await response.json()) as Turn[]
-      return turns.length
+      const turns = (await response.json()) as Turn[]
+      const note = turns.findIndex((t) => t.meta?.confirm_id === confirmId)
+      after = note === -1 ? [] : turns.slice(note)
+      return after.length
     })
     .toBe(2)
-  expect(turns[0]).toMatchObject({ role: 'system', meta: { confirm_id: confirmId } })
-  expect(turns[1]!.role).toBe('assistant')
-  expect(turns[1]!.tools).not.toContain('page_call')
-  expect(turns[1]!.tools).not.toContain('page_describe')
+  expect(after[0]).toMatchObject({ role: 'system', meta: { confirm_id: confirmId } })
+  expect(after[1]!.role).toBe('assistant')
+  expect(after[1]!.tools).not.toContain('page_call')
+  expect(after[1]!.tools).not.toContain('page_describe')
 })
 
 test('navigation_then_new_page_tools', async ({ page }) => {
@@ -175,7 +204,10 @@ test('messages_conform_to_protocol_schemas', async ({ page }) => {
     })
   })
   page.on('request', (request) => {
-    if (request.method() === 'POST' && new URL(request.url()).pathname.startsWith('/toolmark/bridge/')) {
+    if (
+      request.method() === 'POST' &&
+      new URL(request.url()).pathname.startsWith('/toolmark/bridge/')
+    ) {
       toAgent.push(JSON.parse(request.postData() ?? 'null'))
     }
   })
@@ -204,7 +236,7 @@ test('messages_conform_to_protocol_schemas', async ({ page }) => {
 
 test('tour_authored_on_inertia_page', async ({ page }) => {
   await page.goto('/challenges/create?tour=authored')
-  const tour = page.locator('.toolmark-tour[role="dialog"]')
+  const tour = page.locator('.toolmark-tour [role="dialog"]')
 
   await expect(tour).toBeVisible()
   await expect(tour).toContainText('Step 1 of 3')
@@ -238,7 +270,7 @@ test('planned_tour_from_server_planner', async ({ page }) => {
   expect(body.goal).toBe('Create a challenge')
   expect(body.tools.map((t) => t.name)).toContain('challenges.create.fill')
 
-  const tour = page.locator('.toolmark-tour[role="dialog"]')
+  const tour = page.locator('.toolmark-tour [role="dialog"]')
   await expect(tour).toContainText('Step 1 of 3')
   await expect(tour).toContainText('Start with the English title of the challenge.')
   await tour.getByRole('button', { name: 'Next' }).click()

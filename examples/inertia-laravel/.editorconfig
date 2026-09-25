@@ -16,3 +16,10 @@ indent_size = 2
 
 [{compose,docker-compose}.{yml,yaml}]
 indent_size = 4
+
+# Frontend and docs follow the repository's Prettier style.
+[*.{js,jsx,mjs,ts,tsx,css,md}]
+indent_size = 2
+
+[{package.json,tsconfig.json}]
+indent_size = 2

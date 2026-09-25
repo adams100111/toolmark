@@ -65,7 +65,12 @@ function useCreateTour(): void {
       tm,
       which === 'authored'
         ? { mode: 'show', steps: authoredCreateTour, signal: abort.signal }
-        : { mode: 'show', goal: 'Create a challenge', planner: serverPlanner, signal: abort.signal },
+        : {
+            mode: 'show',
+            goal: 'Create a challenge',
+            planner: serverPlanner,
+            signal: abort.signal,
+          },
     ).then(
       (tour) => {
         if (abort.signal.aborted) return tour.stop()

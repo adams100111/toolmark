@@ -13,6 +13,9 @@ function hostHasPhp(): boolean {
 
 const bind = hostHasPhp() ? '127.0.0.1' : '0.0.0.0'
 
+// SIGTERM (not SIGKILL) so `docker run` forwards it and the `--rm` container goes away.
+const gracefulShutdown = { signal: 'SIGTERM', timeout: 10_000 } as const
+
 export default defineConfig({
   testDir: 'e2e',
   testMatch: '**/*.spec.ts',
@@ -32,11 +35,16 @@ export default defineConfig({
   },
   webServer: [
     {
-      command: 'scripts/php.sh php artisan serve --host=' + bind + ' --port=8010',
+      // `--no-reload`: without it `artisan serve` ignores PHP_CLI_SERVER_WORKERS (one worker
+      // deadlocks: the scripted agent's request waits for the page's POST) and passes only a
+      // whitelist of environment variables to its workers (CACHE_STORE, REDIS_HOST and the
+      // Docker REVERB_HOST would be dropped).
+      command: 'scripts/php.sh php artisan serve --no-reload --host=' + bind + ' --port=8010',
       env: { PHP_CLI_SERVER_WORKERS: '4', PHP_PORTS: '8010' },
       url: 'http://127.0.0.1:8010/up',
       reuseExistingServer: !process.env.CI,
       timeout: 180_000,
+      gracefulShutdown,
     },
     {
       command: 'scripts/php.sh php artisan reverb:start --host=' + bind + ' --port=8081',
@@ -44,6 +52,7 @@ export default defineConfig({
       port: 8081,
       reuseExistingServer: !process.env.CI,
       timeout: 180_000,
+      gracefulShutdown,
     },
   ],
   // Laravel example: Chromium only (overview CI matrix).

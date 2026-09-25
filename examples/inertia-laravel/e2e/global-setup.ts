@@ -8,17 +8,14 @@ export const BASE_URL = 'http://127.0.0.1:8010'
 export const STORAGE_STATE = path.join(ROOT, 'test-results', 'alice.json')
 
 /**
- * 1. Re-seeds the database, so reruns start from the same challenges (the archive test archives
- *    one).
- * 2. Builds the frontend in mode `e2e`: the gate's `pnpm build` is a production build, which by
+ * 1. Builds the frontend in mode `e2e`: the gate's `pnpm build` is a production build, which by
  *    design omits the test hook (spec §11.6); these tests and `toolmark lint --url` need it.
- * 3. Logs in as Alice and saves `test-results/alice.json`.
+ * 2. Logs in as Alice and saves `test-results/alice.json`.
+ *
+ * The database is seeded by `composer run toolmark:setup` before the servers start (never while
+ * they run: `migrate:fresh` truncates the SQLite file under them). Tests create what they change.
  */
 export default async function globalSetup(_config: FullConfig): Promise<void> {
-  execFileSync('scripts/php.sh', ['php', 'artisan', 'migrate:fresh', '--seed', '--force'], {
-    cwd: ROOT,
-    stdio: 'inherit',
-  })
   execFileSync('pnpm', ['exec', 'vite', 'build', '--mode', 'e2e'], { cwd: ROOT, stdio: 'inherit' })
 
   mkdirSync(path.dirname(STORAGE_STATE), { recursive: true })

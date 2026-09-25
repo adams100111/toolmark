@@ -35,11 +35,13 @@ export function Layout(props: { title: string; children: ReactNode }): JSX.Eleme
     <>
       <header>
         <nav aria-label="Main">
-          <Link href="/challenges">Challenges</Link> · <Link href="/challenges/create">New challenge</Link> ·{' '}
+          <Link href="/challenges">Challenges</Link> ·{' '}
+          <Link href="/challenges/create">New challenge</Link> ·{' '}
           <Link href="/wizard">Team wizard</Link> · <Link href="/feedback">Feedback</Link>
         </nav>
         <p>
-          Page client <output
+          Page client{' '}
+          <output
             data-testid="toolmark-client-id"
             data-bridge={bridge}
             data-conversation-id={agent?.conversationId ?? ''}

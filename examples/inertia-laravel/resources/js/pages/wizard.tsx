@@ -45,7 +45,10 @@ function submitWizard(data: Data): Promise<ToolResult<unknown>> {
       onError: (errors) =>
         resolve({
           status: 'invalid',
-          issues: Object.entries(errors).map(([path, message]) => ({ path, message: String(message) })),
+          issues: Object.entries(errors).map(([path, message]) => ({
+            path,
+            message: String(message),
+          })),
         }),
     })
   })
@@ -70,7 +73,11 @@ function Field(props: {
           type={type}
           value={value === undefined || value === null ? '' : String(value)}
           onChange={(e) =>
-            props.onChange(props.step, props.name, type === 'number' ? Number(e.target.value) : e.target.value)
+            props.onChange(
+              props.step,
+              props.name,
+              type === 'number' ? Number(e.target.value) : e.target.value,
+            )
           }
         />
       </label>
@@ -118,20 +125,52 @@ export default function Wizard(): JSX.Element {
         {current === 'team' && (
           <>
             <Field label="Team name" step="team" name="name" data={data} onChange={onChange} />
-            <Field label="Team size" step="team" name="size" type="number" data={data} onChange={onChange} />
+            <Field
+              label="Team size"
+              step="team"
+              name="size"
+              type="number"
+              data={data}
+              onChange={onChange}
+            />
           </>
         )}
         {current === 'schedule' && (
           <>
-            <Field label="First day" step="schedule" name="startsAt" type="date" data={data} onChange={onChange} />
-            <Field label="Days" step="schedule" name="days" type="number" data={data} onChange={onChange} />
+            <Field
+              label="First day"
+              step="schedule"
+              name="startsAt"
+              type="date"
+              data={data}
+              onChange={onChange}
+            />
+            <Field
+              label="Days"
+              step="schedule"
+              name="days"
+              type="number"
+              data={data}
+              onChange={onChange}
+            />
           </>
         )}
         {current === 'contact' && (
-          <Field label="Contact e-mail" step="contact" name="email" type="email" data={data} onChange={onChange} />
+          <Field
+            label="Contact e-mail"
+            step="contact"
+            name="email"
+            type="email"
+            data={data}
+            onChange={onChange}
+          />
         )}
         <p>
-          <button type="button" disabled={index === 0} onClick={() => setCurrent(steps[index - 1]!.name)}>
+          <button
+            type="button"
+            disabled={index === 0}
+            onClick={() => setCurrent(steps[index - 1]!.name)}
+          >
             Back
           </button>{' '}
           {index < steps.length - 1 ? (
