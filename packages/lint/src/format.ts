@@ -24,7 +24,8 @@ function formatPretty(findings: readonly Finding[]): string {
   const lines: string[] = []
   for (const [page, group] of byPage) {
     for (const f of group) {
-      lines.push(`${f.severity} ${f.rule} ${page} ${f.tool ?? ''}: ${f.message}`)
+      const toolPart = f.tool !== undefined ? ` ${f.tool}` : ''
+      lines.push(`${f.severity} ${f.rule} ${page}${toolPart}: ${f.message}`)
     }
   }
   const { errors, warnings } = summaryOf(findings)

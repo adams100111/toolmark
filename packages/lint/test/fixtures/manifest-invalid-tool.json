@@ -1,0 +1,10 @@
+{
+  "page": "checkout",
+  "tools": [
+    {
+      "name": "checkout.submit",
+      "llmName": "checkout_submit",
+      "description": "Submits the checkout form after validating shipping and payment details."
+    }
+  ]
+}

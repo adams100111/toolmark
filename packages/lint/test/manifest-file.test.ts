@@ -65,4 +65,28 @@ describe('manifest_file_shapes', () => {
       `invalid manifest file: ${FIXTURES}does-not-exist.json`,
     )
   })
+
+  it('i1_rejects_a_tool_missing_hints_and_inputSchema_instead_of_throwing_a_TypeError', async () => {
+    // Regression: the old shape check only looked at `page`/`tools`, so a tool object missing
+    // `hints`/`inputSchema` passed straight through and later crashed a rule (e.g. schema-invalid
+    // reading `tool.inputSchema['type']` off `undefined`) with an uncaught TypeError instead of
+    // the documented `invalid manifest file: <path>` message.
+    await expect(readManifestFile(`${FIXTURES}manifest-invalid-tool.json`)).rejects.toThrow(
+      `invalid manifest file: ${FIXTURES}manifest-invalid-tool.json`,
+    )
+
+    expect(() =>
+      parseManifestFile('inline.json', {
+        page: 'checkout',
+        tools: [
+          {
+            name: 'checkout.submit',
+            llmName: 'checkout_submit',
+            description: 'Submits the checkout form.',
+            // hints and inputSchema both missing
+          },
+        ],
+      }),
+    ).toThrow('invalid manifest file: inline.json')
+  })
 })
