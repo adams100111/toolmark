@@ -42,7 +42,10 @@ return [
             'busy_timeout' => 5000,
             'journal_mode' => 'wal',
             'synchronous' => null,
-            'transaction_mode' => 'DEFERRED',
+            // IMMEDIATE: a deferred transaction that reads and then writes (the database cache's
+            // increment behind `throttle`) fails at once with "database is locked" when another
+            // worker wrote meanwhile; IMMEDIATE takes the write lock up front and honours busy_timeout.
+            'transaction_mode' => 'IMMEDIATE',
         ],
 
         'mysql' => [
