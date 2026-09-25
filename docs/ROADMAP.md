@@ -36,8 +36,8 @@ Post-1.0 consumer track:          └─► Innov P0 ─► P1 ─► P2 ─► 
 | T-M1 Core | toolmark | `…-m1-core.md` | — | CI green; round budget `simple_form_within_3_rounds`; tarball smoke | done | `feat/m1-core` (PR #2) | 2026-09-25 |
 | T-M2 Forms | toolmark | `…-m2-forms.md` | T-M1 | round budget `wizard_within_5_rounds`; tarball smoke | done | `feat/m2-forms` (PR #3) | 2026-09-25 |
 | T-M3 Reach | toolmark | `…-m3-reach.md` | T-M2 | same tool via WebMCP + MCP + Playwright (`reach.spec.ts`); tarball smoke incl. `toolmark-mcp` | done | `feat/m3-reach` (PR #4) | 2026-09-25 |
-| T-M4 Tours & tooling | toolmark | `…-m4-tours-tooling.md` | T-M3 | authored + planned tours (3 browsers, axe-clean); Laravel authored tour; same-tools e2e; Laravel + Next.js suites; `docs:build`; lint clean; tarball smoke | active | `feat/m4-tours` | 2026-09-25 |
-| T-M5 Release | toolmark | `…-m5-release.md` | T-M4 | all §21 gates (incl. round budget + smoke on the RC); publish (owner) | todo | — | — |
+| T-M4 Tours & tooling | toolmark | `…-m4-tours-tooling.md` | T-M3 | authored + planned tours (3 browsers, axe-clean); Laravel authored tour; same-tools e2e; Laravel + Next.js suites; `docs:build`; lint clean; tarball smoke | done | `feat/m4-tours` (PR #5) | 2026-09-25 |
+| T-M5 Release | toolmark | `…-m5-release.md` | T-M4 | all §21 gates (incl. round budget + smoke on the RC); publish (owner) | active | `feat/m5-release` | 2026-09-25 |
 
 **Current focus:** Toolmark M1 → M5 (release). Innovation is post-1.0. Within Toolmark, units are
 sequential; parallelism is lane-level inside a unit (see
@@ -73,9 +73,9 @@ its exit check passes. Task numbers refer to the unit's plan.
 
 ### T-M4 Tours & tooling (toolmark)
 - [x] W0 · A (T0) skeletons + deps
-- [ ] W1 · B (T1–T2) tours · C (T3–T4) lint + judge · D (T5, high, **security**) Laravel example (PHP/Composer via Docker when not on PATH) · E (T6) Next.js example
-- [ ] W2 · F (T7–T8) docs site, CI, cross-cutting e2e + same-tools + planned tour, tarballs + smoke
-- [ ] Unit exit: tours (3 browsers) + Laravel authored tour + same-tools + example suites + `docs:build` + lint clean + smoke
+- [x] W1 · B (T1–T2) tours · C (T3–T4) lint + judge · D (T5, high, **security**) Laravel example (PHP/Composer via Docker when not on PATH) · E (T6) Next.js example
+- [x] W2 · F (T7–T8) docs site, CI, cross-cutting e2e + same-tools + planned tour, tarballs + smoke
+- [x] Unit exit: tours (3 browsers) + Laravel authored tour + same-tools + example suites + `docs:build` + lint clean + smoke
 
 ### T-M5 Release (toolmark)
 - [ ] W0 · A (T1–T2) CI matrix + quality gates + package metadata
@@ -238,3 +238,7 @@ also record progress in Innovation's own branch history.
 - 2026-09-25 — **T-M3 done** (PR #4): `0.1.0-next.2`, `same_declaration_webmcp_mcp_fixture` green,
   smoke 74/74, full CI matrix green (incl. a React 18 `useToolAnchor` fix). M3 rulings in spec §23.
   Docker restored (owner-approved colima restart); M4 T5 (Laravel) running; M4 T0–T4, T6 merged.
+- 2026-09-25 — **T-M4 done** (PR #5): all 8 packages at `0.1.0-next.3`, tours on three browsers
+  (axe-clean), Laravel + Next.js examples, docs site, lint + judge; smoke 108/108; CI green (first
+  Firefox evidence). M4 rulings in spec §23. **T-M5 started** on `feat/m5-release`: T6 spec-watch
+  merged; T1→T2 (CI matrix, quality gates), T3→T3b (TSDoc strict, policies), T4 security review running.
