@@ -1,4 +1,4 @@
-import { useRef, type JSX } from 'react'
+import { useRef, useState, type JSX } from 'react'
 import { act, cleanup, render, screen } from '@testing-library/react'
 import { userEvent } from 'vitest/browser'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -118,5 +118,42 @@ describe('rhfAdapter interaction events', () => {
       caller: 'human',
     })
     expect(events).toContainEqual({ tool: 'profile.submit', kind: 'submit', caller: 'human' })
+  })
+
+  it('rhf_show_password_toggle_keeps_redaction', async () => {
+    function Login(): JSX.Element {
+      const form = useForm<{ pw: string }>({ defaultValues: { pw: '' } })
+      const formRef = useRef<HTMLFormElement>(null)
+      const [shown, setShown] = useState(false)
+      const adapter = rhfAdapter(form, { onSubmit: () => ({}), root: () => formRef.current })
+      useFormTool(adapter, {
+        name: 'login',
+        description: 'Login.',
+        input: z.object({ pw: z.string() }),
+      })
+      return (
+        <form ref={formRef}>
+          <input data-testid="pw" type={shown ? 'text' : 'password'} {...form.register('pw')} />
+          <button type="button" onClick={() => setShown((v) => !v)}>
+            Show
+          </button>
+        </form>
+      )
+    }
+    const tm = createToolmark({ dev: true, confirm: () => Promise.resolve({ approved: true }) })
+    render(
+      <ToolmarkProvider toolmark={tm}>
+        <Login />
+      </ToolmarkProvider>,
+    )
+    await flush()
+    await userEvent.type(screen.getByTestId('pw'), 'hunter2')
+    expect(tm.state('login.fill')?.values).toEqual({ pw: '[redacted]' })
+    await userEvent.click(screen.getByText('Show'))
+    await flush()
+    expect(screen.getByTestId('pw').getAttribute('type')).toBe('text')
+    expect(tm.state('login.fill')?.values).toEqual({ pw: '[redacted]' })
+    expect(tm.info('login.fill')?.sensitivePaths).toEqual(['pw'])
+    expect(JSON.stringify(tm.state('login.fill'))).not.toContain('hunter2')
   })
 })

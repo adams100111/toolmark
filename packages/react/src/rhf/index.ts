@@ -15,6 +15,9 @@ export interface RhfAdapterOptions<V extends FieldValues> {
   /**
    * Resolves a field's mounted element, for anchors and sensitive-field redaction (spec §13, §14).
    * Defaults, when {@link root} is given, to the first `[name="<path>"]` under `root()`.
+   *
+   * Without `root` or `elementFor` there are no elements, hence no element rule: password /
+   * `cc-*` fields are not detected and must be declared in the form tool's `sensitive`.
    */
   elementFor?: (path: string) => Element | null
   /**
@@ -88,6 +91,15 @@ function isJsonSafe(value: unknown, depth = 0): boolean {
  * signal (`watch` with `type: 'change'`, never the adapter's `setValue` writes) and, when
  * `opts.root` is given, `focus` for trusted `focusin` on named elements inside `root()` and
  * `submit` for a trusted `submit` event inside it. Only paths are reported, never values.
+ *
+ * - `input` follows react-hook-form's own change signal, not the DOM event: a synthetic
+ *   `onChange` from page script (or a component library calling `field.onChange`) is reported as
+ *   a user `input` too. Only the DOM `focus` / `submit` reports check `isTrusted`.
+ * - Sensitivity (spec §14): with elements (`root` / `elementFor`), a path whose element was ever
+ *   seen as a password / `cc-*` / secret-`autocomplete` input stays redacted for the adapter's
+ *   lifetime, so a "show password" toggle (`type="password"` → `"text"`) never exposes it in
+ *   `state()`. A path is only known once its element has been seen that way; without `root` /
+ *   `elementFor` nothing is detected, so declare secret paths in the form tool's `sensitive`.
  * @param form - The `useForm()` return value.
  * @param opts - See {@link RhfAdapterOptions}.
  */
