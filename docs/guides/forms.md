@@ -55,6 +55,12 @@ result is `invalid` and **nothing** in that fill is written.
   node (`$ref`, `allOf`/`anyOf`/`oneOf` and `additionalProperties` are followed) is `invalid` with
   the message `"Undeclared field"`. Open nodes (`{}` / `true`) keep their value after the
   forbidden-key scan.
+- **Open schemas do not widen what a fill writes (spec §14).** On an object that declares
+  `properties`, a key it does not list is never written, even when the schema is open
+  (`additionalProperties` absent, `true` or `{}`, `z.looseObject`, `.passthrough()`). A key the
+  validator kept is `invalid` with `"Undeclared field"`; a key neither the validator nor the schema
+  knows is `"Unknown field"`. Only a record (an object with `additionalProperties` and no
+  `properties`, e.g. `z.record`) or a typed `additionalProperties` schema accepts other keys.
 - **Forbidden keys.** A path segment `__proto__`, `prototype` or `constructor` is refused
   anywhere, including inside array items.
 - **Duplicate paths.** The same path reached twice in one fill (`{ "a.b": 1, "a": { "b": 2 } }`,

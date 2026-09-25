@@ -1,6 +1,16 @@
 // Regression tests for the 2026 release security review (docs/security/review-2026.md).
 import { describe, expect, it } from 'vitest'
-import { ok, type ToolmarkErrorEvent } from '@toolmark/core'
+import { z } from 'zod'
+import {
+  createFormTools,
+  createWizardTools,
+  fromJsonSchema,
+  ok,
+  setPath,
+  type FieldInfo,
+  type StandardSchemaV1,
+  type ToolmarkErrorEvent,
+} from '@toolmark/core'
 import { createTestRegistry } from './helpers/create-test-registry.js'
 
 describe('SEC-1: a tool with only jsonSchema validates its input', () => {
@@ -65,5 +75,98 @@ describe('SEC-1: a tool with only jsonSchema validates its input', () => {
     expect(tm.manifest().tools).toEqual([])
     expect((await tm.call('bad', { a: 'x' }, { caller: 'inapp' })).status).toBe('refused')
     expect(ran).toBe(false)
+  })
+})
+
+/** In-memory form adapter. */
+function memoryForm(values: Record<string, unknown> = {}) {
+  return {
+    values,
+    getValues() {
+      return this.values
+    },
+    setValues(next: Record<string, unknown>) {
+      for (const [path, v] of Object.entries(next)) this.values = setPath(this.values, path, v)
+    },
+    dirtyPaths: (): string[] => [],
+    submit: () => Promise.resolve(ok(null)),
+    fields: (): FieldInfo[] => [],
+  }
+}
+
+function formWith(input: StandardSchemaV1<unknown, Record<string, unknown>>) {
+  const tm = createTestRegistry()
+  const adapter = memoryForm({ name: '' })
+  createFormTools(tm, adapter, { name: 'f', description: 'Form.', input })
+  const fill = (values: unknown) => tm.call('f.fill', { values }, { caller: 'inapp' })
+  return { adapter, fill }
+}
+
+const undeclared = (...paths: string[]) => ({
+  status: 'invalid',
+  issues: paths.map((path) => ({ path, message: 'Undeclared field' })),
+})
+
+describe('SEC-2: fill never writes an undeclared path, even under an open schema', () => {
+  it('sec_2_fill_open_json_schema_rejects_undeclared_key', async () => {
+    for (const addl of [undefined, true, {}]) {
+      const { adapter, fill } = formWith(
+        fromJsonSchema({
+          type: 'object',
+          properties: { name: { type: 'string' } },
+          ...(addl !== undefined ? { additionalProperties: addl } : {}),
+        }),
+      )
+      expect(await fill({ name: 'x', isAdmin: true })).toEqual(undeclared('isAdmin'))
+      expect(adapter.values).toEqual({ name: '' })
+    }
+  })
+
+  it('sec_2_fill_loose_standard_schema_rejects_undeclared_key', async () => {
+    const { adapter, fill } = formWith(z.looseObject({ name: z.string() }))
+    expect(await fill({ name: 'x', isAdmin: true })).toEqual(undeclared('isAdmin'))
+    expect(adapter.values).toEqual({ name: '' })
+  })
+
+  it('sec_2_fill_loose_nested_array_item_rejects_undeclared_key', async () => {
+    const { adapter, fill } = formWith(
+      z.object({ name: z.string(), tags: z.array(z.looseObject({ label: z.string() })) }),
+    )
+    const r = await fill({ tags: [{ label: 'a', isAdmin: true }] })
+    expect(r).toEqual(undeclared('tags.0.isAdmin'))
+    expect(adapter.values).toEqual({ name: '' })
+  })
+
+  it('sec_2_fill_records_still_accept_entries', async () => {
+    const { adapter, fill } = formWith(
+      z.object({ name: z.string(), meta: z.record(z.string(), z.string()) }),
+    )
+    expect((await fill({ meta: { anyKey: 'v' } })).status).toBe('ok')
+    expect(adapter.values).toEqual({ name: '', meta: { anyKey: 'v' } })
+  })
+
+  it('sec_2_wizard_fill_open_step_schema_rejects_undeclared_key', async () => {
+    const tm = createTestRegistry()
+    let data: Record<string, Record<string, unknown>> = { one: { name: '' } }
+    createWizardTools(tm, {
+      name: 'w',
+      description: 'Wizard.',
+      steps: [{ name: 'one', input: z.looseObject({ name: z.string() }) }],
+      getData: () => data,
+      setData: (next) => {
+        data = next
+      },
+      getCurrent: () => 'one',
+      goTo: () => undefined,
+      submit: () => Promise.resolve(ok(null)),
+    })
+    const r = await tm.call(
+      'w.fill',
+      { steps: { one: { name: 'x', isAdmin: true } } },
+      { caller: 'inapp' },
+    )
+    expect(r.status).toBe('invalid')
+    expect(JSON.stringify(r)).toContain('isAdmin')
+    expect(data).toEqual({ one: { name: '' } })
   })
 })
