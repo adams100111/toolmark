@@ -1,0 +1,17 @@
+# WebMCP (example fixture)
+
+This is a small fixture standing in for a WebMCP spec source, used only by
+scripts/spec-watch.test.mjs. It is never fetched over the network.
+
+## Section one
+
+The registerTool() method accepts a name, a description, an input schema and
+a handler.
+
+## Section two
+
+Tools are exposed to the agent through document.modelContext.
+
+## Section three
+
+New in this revision: tools may declare an `annotations` object.
