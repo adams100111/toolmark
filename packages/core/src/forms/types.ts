@@ -1,3 +1,4 @@
+import type { FileFieldSpec } from '../files.js'
 import type { ToolResult } from '../result.js'
 import type { StandardSchemaV1 } from '../standard-schema.js'
 import type { JsonSchema } from '../tool.js'
@@ -71,4 +72,16 @@ export interface FormToolOptions<V> {
    * registered (`readOnly`, `untrustedContent`) and the `fill` schema tells the agent to use it.
    */
   options?: Record<string, OptionsProvider>
+  /**
+   * File fields (spec §8.4, D27). Keys are dot paths; `[]` stands for any array index
+   * (`attachments[].file`). The agent fills them with a `FileRef` (`{ ref }` / `{ url }`, an array
+   * of them when `multiple`); each is resolved through the registry's `files` options, checked
+   * against the field limits (narrowed by `files.maxBytes`), and the resolved `File` (`File[]`) is
+   * written through `adapter.setValues`. Any failure refuses the whole fill `file_rejected` with
+   * nothing set. `changes` report files as `{ file: { name, size, type } }`. The form's JSON Schema
+   * is derived with `unrepresentable: 'any'` (so `z.instanceof(File)` converts) and each file path
+   * is advertised as `fileFieldSchema(spec)`. An invalid spec is `files_misconfigured` (dev throw;
+   * production: event, no tools registered).
+   */
+  files?: Record<string, FileFieldSpec>
 }

@@ -8,6 +8,8 @@ const schema = z.object({
   title: z.string(),
   tags: z.array(z.object({ name: z.string() })),
   meta: z.record(z.string(), z.any()).optional(),
+  group: z.object({ list: z.array(z.string()) }).optional(),
+  grid: z.array(z.object({ cells: z.array(z.string()) })).optional(),
 })
 
 function setup() {
@@ -27,6 +29,13 @@ function setup() {
   createFormTools(tm, adapter, { name: 'f', description: 'Form.', input: schema })
   const fill = (values: unknown) => tm.call('f.fill', { values }, { caller: 'inapp' })
   return { adapter, fill }
+}
+
+/** o0 = { a: o1, b: o1 }, o1 = { a: o2, b: o2 }, …: 2^depth paths through shared references. */
+const dag = (depth: number): Record<string, unknown> => {
+  let node: Record<string, unknown> = { leaf: 1 }
+  for (let i = 0; i < depth; i++) node = { a: node, b: node }
+  return node
 }
 
 const cyclic = (): Record<string, unknown> => {
@@ -81,5 +90,65 @@ describe('array ops hardening', () => {
   it('fill_rejects_unknown_dollar_op_on_array_field', async () => {
     const { fill } = setup()
     expect((await fill({ tags: { $prepend: [{ name: 'x' }] } })).status).toBe('invalid')
+  })
+
+  it('fill_record_field_accepts_dollar_keyed_data', async () => {
+    const { adapter, fill } = setup()
+    const res = await fill({ meta: { $schema: 'x', inner: { $ref: 'y' } } })
+    expect(res.status).toBe('ok')
+    expect(adapter.values.meta).toEqual({ $schema: 'x', inner: { $ref: 'y' } })
+  })
+
+  it('fill_duplicate_path_is_invalid_and_sets_nothing', async () => {
+    const { adapter, fill } = setup()
+    const before = adapter.values
+    const plain = await fill({ 'group.list': ['a'], group: { list: ['b'] } })
+    expect(plain).toEqual({
+      status: 'invalid',
+      issues: [{ path: 'group.list', message: 'Duplicate field path' }],
+    })
+    const twoOps = await fill({
+      'group.list': { $append: ['a'] },
+      group: { list: { $append: ['b'] } },
+    })
+    expect(twoOps).toEqual({
+      status: 'invalid',
+      issues: [{ path: 'group.list', message: 'Duplicate field path' }],
+    })
+    const opAndPlain = await fill({ 'group.list': ['a'], group: { list: { $append: ['b'] } } })
+    expect(opAndPlain).toEqual({
+      status: 'invalid',
+      issues: [{ path: 'group.list', message: 'Duplicate field path' }],
+    })
+    expect(adapter.values).toBe(before)
+  })
+
+  it('fill_op_on_array_nested_in_array_fails_closed', async () => {
+    const { adapter, fill } = setup()
+    adapter.values = { ...adapter.values, grid: [{ cells: ['a'] }] }
+    expect((await fill({ 'grid.0.cells': { $append: ['b'] } })).status).toBe('invalid')
+    expect(adapter.values.grid).toEqual([{ cells: ['a'] }])
+  })
+
+  it('walkers_bound_dag_input', () => {
+    const t0 = performance.now()
+    const flat = flattenWithRejected({ meta: dag(30) })
+    const extracted = extractArrayOps({ meta: dag(30) }, () => false)
+    expect(performance.now() - t0).toBeLessThan(100)
+    expect(flat.rejected.length).toBeGreaterThan(0)
+    expect(extracted.ops.size).toBe(0)
+  })
+
+  it('fill_with_dag_values_is_too_complex_fast', async () => {
+    const { adapter, fill } = setup()
+    const before = adapter.values
+    const t0 = performance.now()
+    const res = await fill({ meta: dag(30) })
+    const appended = await fill({ tags: { $append: [dag(30)] } })
+    expect(performance.now() - t0).toBeLessThan(100)
+    const tooComplex = { status: 'invalid', issues: [{ path: '', message: 'Input too complex' }] }
+    expect(res).toEqual(tooComplex)
+    expect(appended).toEqual(tooComplex)
+    expect(adapter.values).toBe(before)
   })
 })

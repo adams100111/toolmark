@@ -139,8 +139,9 @@ describe('call pipeline', () => {
     expect(errs).toEqual([])
   })
 
-  it('ctx_files_not_configured', async () => {
+  it('ctx_files_ref_without_resolver_rejected', async () => {
     const tm = createTestRegistry()
+    const errs = errorsOf(tm)
     let caught: unknown
     tm.register({
       name: 'x',
@@ -155,7 +156,26 @@ describe('call pipeline', () => {
       },
     })
     await tm.call('x', {}, { caller: 'inapp' })
-    expect(caught).toMatchObject({ name: 'ToolmarkError', code: 'files_not_configured' })
+    expect(caught).toMatchObject({
+      name: 'ToolmarkError',
+      code: 'file_rejected',
+      message: 'File references are not configured',
+    })
+    expect(errs.map((e) => e.code)).toEqual(['files_not_configured'])
+    // A tool that lets the rejection propagate is refused `file_rejected`.
+    tm.register({
+      name: 'y',
+      description: 'd',
+      run: async (_i, ctx) => {
+        await ctx.files.resolve({ ref: 'x' })
+        return ok(1)
+      },
+    })
+    expect(await tm.call('y', {}, { caller: 'inapp' })).toEqual({
+      status: 'refused',
+      code: 'file_rejected',
+      message: 'File references are not configured',
+    })
   })
 
   it('abort_before_run_cancelled_signal', async () => {

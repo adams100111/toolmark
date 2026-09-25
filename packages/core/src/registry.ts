@@ -39,6 +39,7 @@ import type {
   ToolOrigin,
 } from './tool.js'
 import { createCallRuntime } from './call.js'
+import { filesConfig, type FilesConfig, type FilesOptions } from './files.js'
 import type { PendingConfirmation } from './confirm.js'
 
 /** A confirmation request handed to the inline `confirm` handler. */
@@ -90,6 +91,11 @@ export interface ToolmarkOptions {
   abortGraceMs?: number
   /** Visible-tool budget; exceeding it emits `tool_budget_exceeded` in `dev` (default 40). */
   budget?: number
+  /**
+   * File references (spec §8.4, D27): the `{ ref }` resolver, URL origins (URL fetching is off
+   * unless `allowOrigins` is non-empty) and limits. Misconfiguration → `files_misconfigured`.
+   */
+  files?: FilesOptions
   /** Receives every `error` event (after `events.on('error')` listeners). */
   onError?: (e: ToolmarkErrorEvent) => void
   /** @internal Undocumented test hook; overrides the browser detection (SSR is inert). */
@@ -214,6 +220,8 @@ export interface RegistryState {
   modeOf(caller: Caller): ConfirmMode | undefined
   /** Listeners notified when `confirmPending` consumes a pending confirmation (m5). */
   readonly pendingConsumed: Set<() => void>
+  /** Validated file settings (`options.files`). */
+  readonly files: FilesConfig
 }
 
 const stateOf = new WeakMap<Toolmark, RegistryState>()
@@ -340,6 +348,18 @@ export function createToolmark(options: ToolmarkOptions = {}): Toolmark {
     }
   }
   const policy = resolvePolicy(options.policy, (message) => fail('invalid_policy', message))
+  const files = filesConfig(
+    options.files,
+    (message) => fail('files_misconfigured', message),
+    () => {
+      if (dev) {
+        report({
+          code: 'files_not_configured',
+          message: 'A file reference { ref } was given but no files.resolve is configured',
+        })
+      }
+    },
+  )
 
   const modeOf = (caller: Caller): ConfirmMode | undefined =>
     caller !== 'human' && isKnownCaller(caller) ? modes[caller] : undefined
@@ -621,6 +641,7 @@ export function createToolmark(options: ToolmarkOptions = {}): Toolmark {
     inlineWithoutHandler,
     modeOf,
     pendingConsumed: new Set(),
+    files,
   }
   const runtime = createCallRuntime(state)
   stateOf.set(tm, state)
