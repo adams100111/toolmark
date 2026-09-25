@@ -18,7 +18,7 @@ export interface OtelOptions {
   meter?: Meter
   /**
    * Record `toolmark.input`/`toolmark.result` span attributes (JSON, truncated to 4096 chars,
-   * with `tm.info(tool).sensitivePaths` redacted in the input and in `data.changes`). Off by
+   * with `tm.info(tool).sensitivePaths` redacted in the input and in the result's field changes). Off by
    * default (spec §14): OTel never records inputs or results unless explicitly opted in.
    */
   recordPayloads?: boolean
@@ -27,6 +27,13 @@ export interface OtelOptions {
 const INSTRUMENTATION_NAME = '@toolmark/core'
 const REDACTED = '[redacted]'
 const MAX_PAYLOAD_CHARS = 4096
+/**
+ * Fixed span-status message for every `error` result. `result.message` is never forwarded
+ * verbatim (see {@link otel}'s TSDoc): this is the simplest safe rule that guarantees a
+ * thrown-cause string can never reach an exported span, even if a future `errorResult` call
+ * site accidentally embeds one.
+ */
+const GENERIC_ERROR_MESSAGE = 'Tool failed'
 
 /** A span kept open between the `call` event and its matching `result`. */
 interface OpenSpan {
@@ -38,7 +45,12 @@ function isFieldChangeArray(v: unknown): v is FieldChange[] {
   return Array.isArray(v) && v.every((c) => isPlainObject(c) && typeof c['path'] === 'string')
 }
 
-/** JSON-serializes `value`, truncated to {@link MAX_PAYLOAD_CHARS} chars; `undefined` if it has no JSON form. */
+/**
+ * JSON-serializes `value`, truncated to {@link MAX_PAYLOAD_CHARS} chars; `undefined` if it has no
+ * JSON form. This attribute is best-effort truncated JSON, not guaranteed-valid JSON: `slice` cuts
+ * by UTF-16 code unit, so a truncation point that falls inside a surrogate pair (e.g. an emoji)
+ * can split it, leaving a lone surrogate in the resulting string.
+ */
 function truncatedJson(value: unknown): string | undefined {
   let json: string | undefined
   try {
@@ -69,9 +81,20 @@ function redactChanges(changes: FieldChange[], paths: readonly string[]): FieldC
   )
 }
 
-/** Redacts `data.changes` of an `ok` result carrying form-style changes; other results pass through. */
+/**
+ * Redacts field changes carried by a result: `data.changes` of an `ok` result carrying
+ * form-style changes, or the top-level `changes` of a `needs_confirmation` result (spec §6's
+ * confirmation card can carry the same sensitive-path field values as a completed form save).
+ * Other results pass through.
+ */
 function redactResult(result: ToolResult<unknown>, paths: readonly string[]): ToolResult<unknown> {
-  if (result.status !== 'ok' || paths.length === 0) return result
+  if (paths.length === 0) return result
+  if (result.status === 'needs_confirmation') {
+    return result.changes === undefined
+      ? result
+      : { ...result, changes: redactChanges(result.changes, paths) }
+  }
+  if (result.status !== 'ok') return result
   const data = result.data
   if (!isPlainObject(data) || !isFieldChangeArray(data['changes'])) return result
   return { ...result, data: { ...data, changes: redactChanges(data['changes'], paths) } }
@@ -82,7 +105,11 @@ function redactResult(result: ToolResult<unknown>, paths: readonly string[]): To
  * <tool>` (kind `INTERNAL`) on the registry's `call` event and ends it on the matching `result`
  * event, with `toolmark.tool`, `toolmark.caller`, `toolmark.call_id` and (at the end)
  * `toolmark.status`, plus `gen_ai.operation.name: 'execute_tool'` and `gen_ai.tool.name`. The span
- * status is `ERROR` only for an `error` result; every other status leaves it `UNSET`. A `result`
+ * status is `ERROR` only for an `error` result; every other status leaves it `UNSET`. The status
+ * message for an `error` result is always the fixed text `'Tool failed'` — never
+ * `result.message` — so a tool's thrown-cause text (e.g. `Error('secret')`, which core already
+ * normalizes to a generic `errorResult` before it ever reaches a consumer) can never leak into an
+ * exported span even if a future call site regresses that normalization. A `result`
  * with no matching open span (e.g. a consumer attached after the call already started) still
  * produces a span, of zero length. Every result also records a `toolmark.calls` counter (unit
  * `{call}`) and a `toolmark.call.duration` histogram (unit `ms`, from the event's `durationMs`),
@@ -90,7 +117,7 @@ function redactResult(result: ToolResult<unknown>, paths: readonly string[]): To
  *
  * Inputs and results are never recorded unless `recordPayloads` is `true` (spec §14); when it is,
  * `toolmark.input`/`toolmark.result` carry JSON truncated to 4096 chars, with
- * `tm.info(tool).sensitivePaths` replaced by `'[redacted]'` (in the input and in `data.changes`).
+ * `tm.info(tool).sensitivePaths` replaced by `'[redacted]'` (in the input and in the result's field changes).
  *
  * @param o - {@link OtelOptions}.
  * @returns A `tm.use` consumer. Its disposer ends every still-open span with
@@ -133,7 +160,7 @@ export function otel(o?: OtelOptions): (tm: Toolmark) => () => void {
 
       span.setAttribute('toolmark.status', e.result.status)
       if (e.result.status === 'error') {
-        span.setStatus({ code: SpanStatusCode.ERROR, message: e.result.message })
+        span.setStatus({ code: SpanStatusCode.ERROR, message: GENERIC_ERROR_MESSAGE })
       }
 
       if (recordPayloads) {
