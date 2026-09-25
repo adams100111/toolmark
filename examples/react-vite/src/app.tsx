@@ -1,6 +1,7 @@
 import type { JSX } from 'react'
 import { usePendingConfirmations } from '@toolmark/react'
 import { ChallengesPage } from './challenge-form.js'
+import { PairMcpPanel } from './pair-mcp.js'
 
 /** Renders every pending deferred confirmation as a card with Approve / Reject. */
 function ConfirmCards(): JSX.Element | null {
@@ -37,12 +38,16 @@ function ConfirmCards(): JSX.Element | null {
   )
 }
 
-/** The example app: the challenges page plus the confirm cards of pending agent actions. */
+/**
+ * The example app: the challenges page, the confirm cards of pending agent actions and the
+ * "Pair with desktop MCP" panel.
+ */
 export function App(): JSX.Element {
   return (
     <main>
       <ChallengesPage />
       <ConfirmCards />
+      <PairMcpPanel />
     </main>
   )
 }
