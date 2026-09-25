@@ -11,6 +11,9 @@ function errorOutcome(message: string): ToolResult<never> {
   return Object.freeze({ status: 'error' as const, message })
 }
 
+/** How long `submit()` waits for its visit's `start` event before settling `error`. */
+const SUBMIT_START_WINDOW_MS = 1000
+
 /**
  * @internal Extracts `{ path, message }` issues from a router `error` event's `CustomEvent.detail`
  * (shape `{ errors: Record<string, unknown> }` in both majors). Best-effort: a non-string message
@@ -67,7 +70,11 @@ function visitKey(detail: unknown): string | undefined {
  * fires the names it doesn't recognize — verified against the installed 3.7.1 and a packed 2.3.28),
  * and every listener is removed once the promise settles. A missing ref (`formRef.current` is
  * `null`, e.g. before the `<Form>` has mounted) settles immediately with `error`
- * `"Form is not mounted"`, without attaching any listener.
+ * `"Form is not mounted"`, without attaching any listener. If no `start` arrives within
+ * 1000 ms of `formRef.current.submit()` (e.g. an `onBefore`
+ * returned `false`, or the submit was swallowed), the call settles `error`
+ * `"Submit did not start a visit"` and its listeners are removed; once a visit has started it may
+ * take as long as it needs.
  *
  * **A bare `finish` maps to `ok` here.** A `finish` with no earlier failure event and no
  * `cancelled`/`interrupted` flag settles `ok({})` — unlike `visit-outcome.ts` (used by
@@ -119,7 +126,10 @@ export function inertiaFormComponentAdapter(o: {
       return new Promise((resolve) => {
         let settled = false
         const unsubscribers: Array<() => void> = []
+        let startTimer: ReturnType<typeof setTimeout> | undefined
         const teardown = (): void => {
+          if (startTimer !== undefined) clearTimeout(startTimer)
+          startTimer = undefined
           for (const off of unsubscribers.splice(0)) off()
         }
         const cancelOnDispose = (): void => settle(cancelled('signal'))
@@ -164,6 +174,8 @@ export function inertiaFormComponentAdapter(o: {
             if (armed) return
             armed = true
             ownKey = visitKey(e.detail)
+            if (startTimer !== undefined) clearTimeout(startTimer)
+            startTimer = undefined
           }),
         )
         unsubscribers.push(
@@ -216,6 +228,12 @@ export function inertiaFormComponentAdapter(o: {
         )
 
         form.submit()
+        if (!settled && !armed) {
+          startTimer = setTimeout(() => {
+            startTimer = undefined
+            if (!armed) settle(errorOutcome('Submit did not start a visit'))
+          }, SUBMIT_START_WINDOW_MS)
+        }
       })
     },
   }

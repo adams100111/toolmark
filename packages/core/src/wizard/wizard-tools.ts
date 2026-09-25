@@ -1,7 +1,7 @@
 import { CONFIRM_SNAPSHOT, type ConfirmSnapshotHook } from '../confirm-snapshot.js'
 import { INPUT_SENSITIVE_PATHS } from '../input-redaction.js'
-import type { FileFieldSpec } from '../files.js'
-import { createFormTools } from '../forms/form-tools.js'
+import { MAX_FILE_REFS_PER_FILL, TOO_MANY_FILES_PER_FILL, type FileFieldSpec } from '../files.js'
+import { createFormTools, FILE_REF_COUNT } from '../forms/form-tools.js'
 import { optionsToolDefinition } from '../forms/options.js'
 import { deepEqual, isPlainObject, isSafePath, setPath, snapshotValue } from '../forms/paths.js'
 import {
@@ -103,7 +103,12 @@ export interface WizardToolOptions {
   resetCurrent?: (values: Record<string, unknown>) => void
   /** Submits the wizard (`<name>.submit`, consequential, after every step validated). */
   submit(): Promise<ToolResult<unknown>>
-  /** User-facing submit confirmation summary (default `"Submit <title ?? name>"`). */
+  /**
+   * User-facing submit confirmation summary (default `"Submit <title ?? name>"`). Receives a copy of
+   * the parent data in which the current step is replaced by its live values (the mounted step
+   * form's values when {@link WizardToolOptions.currentAdapter} returns one), so edits the user made on
+   * the visible step but not yet synced into parent data are shown in the confirmation.
+   */
   submitSummary?: (data: Record<string, Record<string, unknown>>) => string
 }
 
@@ -609,6 +614,13 @@ export function createWizardTools(
     }
     if (issues.length > 0) return invalid(issues.sort(byPath))
     const ordered = runtimes.filter((rt) => work.has(rt))
+    // One total file-reference cap for the whole wizard fill, checked before any step resolves.
+    let fileRefs = 0
+    for (const rt of ordered) {
+      const count = (rt.fill as { [FILE_REF_COUNT]?: (values: unknown) => number })[FILE_REF_COUNT]
+      fileRefs += count?.(work.get(rt)) ?? 0
+    }
+    if (fileRefs > MAX_FILE_REFS_PER_FILL) return invalid([{ ...TOO_MANY_FILES_PER_FILL }])
     for (const rt of ordered) rt.port.begin()
     const undos: { rt: StepRuntime; restore: () => unknown }[] = []
     const changes: FieldChange[] = []
@@ -796,6 +808,11 @@ export function createWizardTools(
     sensitivePaths: wizardSensitive,
   }
 
+  /** Parent data with the current step replaced by its live values (what the user sees). */
+  const summaryData = (): Data => {
+    const current = opts.getCurrent()
+    return { ...opts.getData(), [current]: { ...currentValues(current) } }
+  }
   const submitInput = noInput<Record<string, never>>(async () => {
     const issues: { message: string; path: PropertyKey[] }[] = []
     for (const rt of runtimes) {
@@ -869,7 +886,7 @@ export function createWizardTools(
         hints: { consequential: true },
         input: submitInput,
         jsonSchema: NO_INPUT_SCHEMA,
-        summary: () => opts.submitSummary?.(opts.getData()) ?? `Submit ${opts.title ?? opts.name}`,
+        summary: () => opts.submitSummary?.(summaryData()) ?? `Submit ${opts.title ?? opts.name}`,
         run: () => opts.submit(),
         [CONFIRM_SNAPSHOT]: snapshotHook,
       }),

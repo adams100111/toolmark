@@ -120,9 +120,10 @@ export interface FormToolOptions<V> {
    */
   nativeName?: { fill?: string; submit?: string }
   /**
-   * @internal Hint overrides: `fill` is merged into the fill tool's hints; `submit` REPLACES the
-   * submit tool's default `{ consequential: true }` (the scanner uses it for `toolautosubmit`,
-   * `data-tool-destructive` and `untrustedContent`).
+   * @internal Hint overrides: `fill` is merged into the fill tool's hints; `submit` is merged into
+   * the submit tool's hints, which never drop below `consequential` (`destructive` is kept,
+   * `readOnly` is dropped) — so a submit always needs confirmation. Only the DOM scanner can lift
+   * that floor, for a `toolautosubmit` form, through an internal marker (no option does).
    */
   hints?: { fill?: ToolHints; submit?: ToolHints }
 }

@@ -3,10 +3,13 @@ import {
   effectiveSpec,
   fileFieldSchema,
   fileLimitIssues,
+  fileRefCount,
   filesConfig,
   fileSpecProblems,
   jsonSafeFiles,
+  MAX_FILE_REFS_PER_FILL,
   resolveFileRef,
+  TOO_MANY_FILES_PER_FILL,
   type FileFieldSpec,
   type FilesConfig,
   type FileRef,
@@ -18,7 +21,7 @@ import { invalid, ok, refuse, type FieldChange, type ToolResult } from '../resul
 import { resolveJsonSchema, stripRequired, validateInput } from '../schema.js'
 import type { Scope } from '../scope.js'
 import type { StandardSchemaV1 } from '../standard-schema.js'
-import type { AnchorSpec, JsonSchema, ToolDefinition, ToolState } from '../tool.js'
+import type { AnchorSpec, JsonSchema, ToolDefinition, ToolHints, ToolState } from '../tool.js'
 import { CONFIRM_SNAPSHOT, type ConfirmSnapshotHook } from '../confirm-snapshot.js'
 import { INPUT_SENSITIVE_PATHS } from '../input-redaction.js'
 import {
@@ -662,6 +665,17 @@ interface FileSlot {
   key: string
 }
 
+/** Total references of the collected slots (toward {@link MAX_FILE_REFS_PER_FILL}). */
+const slotRefCount = (slots: FileSlot[]): number =>
+  slots.reduce((n, slot) => n + fileRefCount(slot.raw, slot.field.spec), 0)
+
+/**
+ * @internal Carried by a form's `fill` definition: counts the file references a `values` object
+ * holds (0 when the form has no file fields or the input is too complex to walk), so a wizard can
+ * cap the total across all its steps before any step resolves a file.
+ */
+export const FILE_REF_COUNT: unique symbol = Symbol('toolmark.fileRefCount')
+
 const matchesKey = (pattern: string[], segs: string[]): boolean =>
   pattern.length === segs.length &&
   pattern.every((p, i) => (p === '[]' ? /^\d+$/.test(segs[i]!) : p === segs[i]))
@@ -843,6 +857,32 @@ const byPath = (a: { path: string }, b: { path: string }): number =>
  * @param opts - Form tool options plus an optional target `scope`.
  * @returns A handle whose `dispose()` removes the form's tools.
  */
+/** Options objects the DOM scanner built for a `toolautosubmit` form (see {@link markAutosubmit}). */
+const autosubmitForms = new WeakSet<object>()
+
+/**
+ * @internal Marks a `createFormTools` options object as the DOM scanner's `toolautosubmit` form,
+ * the only case whose `hints.submit` may drop below `consequential` (the browser page itself opted
+ * into agent submission). Not reachable through any public option.
+ */
+export function markAutosubmit<T extends object>(opts: T): T {
+  autosubmitForms.add(opts)
+  return opts
+}
+
+/**
+ * The submit tool's hints: `hints.submit` merged over the floor — a submit is always at least
+ * `consequential` (or `destructive`) and never `readOnly`, except for a scanner-marked
+ * `toolautosubmit` form, whose hints are taken as given.
+ */
+function submitHints(opts: object, given: ToolHints | undefined): ToolHints {
+  if (autosubmitForms.has(opts)) return given !== undefined ? { ...given } : { consequential: true }
+  const hints: ToolHints = { ...given }
+  delete hints.readOnly
+  if (hints.destructive !== true) hints.consequential = true
+  return hints
+}
+
 export function createFormTools<V extends Record<string, unknown>>(
   tm: Toolmark,
   adapter: FormAdapter<V>,
@@ -950,6 +990,11 @@ export function createFormTools<V extends Record<string, unknown>>(
     if (fileFields.length > 0) {
       const collected = collectFileSlots(values, fileFields, budget)
       if (budget.left < 0) return tooComplex()
+      // Total cap (all slots, `[]` items and `multiple` lists together) before any shape check
+      // or resolution: an agent cannot make the resolver / fetch run thousands of times.
+      if (slotRefCount(collected.slots) > MAX_FILE_REFS_PER_FILL) {
+        return invalid([{ ...TOO_MANY_FILES_PER_FILL }])
+      }
       const shapeIssues = [...collected.issues, ...fileShapeIssues(collected.slots)]
       if (shapeIssues.length > 0) return invalid(shapeIssues.sort(byPath))
       const failure = await resolveFileSlots(collected.slots, filesCfg, signal)
@@ -1172,30 +1217,37 @@ export function createFormTools<V extends Record<string, unknown>>(
 
   const optionKeys = opts.options ? Object.keys(opts.options) : []
   const title = opts.title !== undefined ? { title: opts.title } : {}
-  const fillReg = tm.register(
-    {
-      name: fillName,
-      ...title,
-      ...(opts.origin !== undefined ? { origin: opts.origin } : {}),
-      ...(opts.nativeName?.fill !== undefined ? { nativeName: opts.nativeName.fill } : {}),
-      ...(opts.hints?.fill !== undefined ? { hints: { ...opts.hints.fill } } : {}),
-      description:
-        `${opts.description} Fill form fields: pass a partial object in "values" (null clears a ` +
-        `field). Fields the user edited are skipped unless "overwrite" is true.` +
-        (fileFields.length > 0 ? ' File fields take { "ref": "..." } or { "url": "..." }.' : ''),
-      input: fillInputSchema,
-      jsonSchema: fillJsonSchema(
-        inputSchema,
-        optionKeys.length > 0 ? { form: opts.name, keys: optionKeys } : undefined,
-        fileKeys.map((path, i) => ({ path, schema: fileFieldSchema(fileFields[i]!.spec) })),
-      ),
-      anchors: fillAnchors,
-      ...hooks,
-      ...fillInputSensitive,
-      run: (input, ctx) => fill(input, (restore) => ctx.registerUndo(restore), ctx.signal),
-    },
-    opts.scope ? { scope: opts.scope } : undefined,
-  )
+  const countFileRefs = (values: unknown): number => {
+    if (fileFields.length === 0 || !isPlainObject(values)) return 0
+    const budget = nodeBudget()
+    const { slots } = collectFileSlots(values, fileFields, budget)
+    return budget.left < 0 ? 0 : slotRefCount(slots)
+  }
+  const fillDef: ToolDefinition<FillInput, unknown> & {
+    [FILE_REF_COUNT]: (values: unknown) => number
+  } = {
+    name: fillName,
+    ...title,
+    ...(opts.origin !== undefined ? { origin: opts.origin } : {}),
+    ...(opts.nativeName?.fill !== undefined ? { nativeName: opts.nativeName.fill } : {}),
+    ...(opts.hints?.fill !== undefined ? { hints: { ...opts.hints.fill } } : {}),
+    description:
+      `${opts.description} Fill form fields: pass a partial object in "values" (null clears a ` +
+      `field). Fields the user edited are skipped unless "overwrite" is true.` +
+      (fileFields.length > 0 ? ' File fields take { "ref": "..." } or { "url": "..." }.' : ''),
+    input: fillInputSchema,
+    jsonSchema: fillJsonSchema(
+      inputSchema,
+      optionKeys.length > 0 ? { form: opts.name, keys: optionKeys } : undefined,
+      fileKeys.map((path, i) => ({ path, schema: fileFieldSchema(fileFields[i]!.spec) })),
+    ),
+    anchors: fillAnchors,
+    ...hooks,
+    ...fillInputSensitive,
+    run: (input, ctx) => fill(input, (restore) => ctx.registerUndo(restore), ctx.signal),
+    [FILE_REF_COUNT]: countFileRefs,
+  }
+  const fillReg = tm.register(fillDef, opts.scope ? { scope: opts.scope } : undefined)
   // I3: a confirmation is refused `stale` when the form changed after it was requested.
   const snapshotHook: ConfirmSnapshotHook = {
     take: () => snapshotValue(adapter.getValues()),
@@ -1206,7 +1258,7 @@ export function createFormTools<V extends Record<string, unknown>>(
       name: `${opts.name}.submit`,
       ...title,
       description: `${opts.description} Submit the form.`,
-      hints: opts.hints?.submit !== undefined ? { ...opts.hints.submit } : { consequential: true },
+      hints: submitHints(opts, opts.hints?.submit),
       ...(opts.origin !== undefined ? { origin: opts.origin } : {}),
       ...(opts.nativeName?.submit !== undefined ? { nativeName: opts.nativeName.submit } : {}),
       summary: () =>

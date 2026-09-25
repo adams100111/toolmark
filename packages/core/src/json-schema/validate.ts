@@ -27,6 +27,14 @@ const MAX_DEPTH = 256
  */
 export const MAX_PATTERN_INPUT_LENGTH = 10000
 
+/**
+ * Most schema-node evaluations one validation may perform. Past it the value gets the single issue
+ * "Input too complex" at the root, so recursive `anyOf` / `oneOf` unions (each branch re-walking
+ * the same subtree) cannot blow up exponentially with the nesting of the input.
+ * @internal
+ */
+export const MAX_SCHEMA_EVALUATIONS = 100000
+
 const REF = /^#\/\$defs\/([^/]+)$/
 
 const FORMATS: Record<string, (s: string) => boolean> = {
@@ -170,12 +178,16 @@ export function compileJsonSchema(schema: JsonSchema | boolean): SchemaValidator
   }
   check(root, 0)
 
+  // Per-validation evaluation budget (reset by every call of the returned validator).
+  let evaluations = 0
   const validate = (
     node: Node,
     value: unknown,
     path: (string | number)[],
     depth: number,
   ): SchemaIssue[] => {
+    // Over budget: unwind with no issues; the caller reports "Input too complex" instead.
+    if (++evaluations > MAX_SCHEMA_EVALUATIONS) return []
     if (node === true) return []
     if (node === false) return [{ path, message: 'Not allowed' }]
     if (depth > MAX_DEPTH) return [{ path, message: 'Schema nesting too deep' }]
@@ -293,7 +305,13 @@ export function compileJsonSchema(schema: JsonSchema | boolean): SchemaValidator
     return issues
   }
 
-  return (value) => validate(root, value, [], 0)
+  return (value) => {
+    evaluations = 0
+    const issues = validate(root, value, [], 0)
+    return evaluations > MAX_SCHEMA_EVALUATIONS
+      ? [{ path: [], message: 'Input too complex' }]
+      : issues
+  }
 }
 
 /**
