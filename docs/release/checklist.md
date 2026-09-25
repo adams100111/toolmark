@@ -256,8 +256,11 @@ PR run URL). `release-dry-run` runs the same dist e2e on Chromium.
 
 Fresh pack → `tarball-smoke`: 108 passed, 0 failed; `check-release-versions --tarballs`: 8 passed, 0 failed.
 
+Refreshed after the M5 final fixes (2026-09-25, `m5/final-fixes`): only `@toolmark/core` changed
+(SEC-24..SEC-27); same smoke and range results.
+
 ```
-9e2ae6c9c830d988ac4dd8882dc5a497f3f2bc01bc63184f820c3e891057d83b  toolmark-core-1.0.0.tgz
+f2fb0993debf932e9b8a42822f48ff27f25ba14349886d0ad012fd55498b1712  toolmark-core-1.0.0.tgz
 451eb0f6042928d5eac64d42c85c31920b2189c9ffd8a246b81817ac075556ed  toolmark-inertia-1.0.0.tgz
 a37a86726b3a0818d1cde78af7d6c146170a715b8f07d3ff87a977bcb9ec9466  toolmark-judge-typesafe-1.0.0.tgz
 8680ac95245c5ddeae61df106e89ab9502a03035421b4dd335279c91a67cda81  toolmark-lint-1.0.0.tgz

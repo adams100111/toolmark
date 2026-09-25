@@ -751,7 +751,7 @@ All are resolved on the M5 release branch. Their regression tests are in
 | SEC-13 | Minor     | 13   | `check-workflows` did not enforce that jobs runnable on `pull_request` have no write permissions and no secrets (SEC-9 was fixed by hand) | fixed      | `950dc7f` | `check_workflows_rejects_write_permissions_on_pull_request_jobs` |
 
 - SEC-11: before an edited approval is re-validated (`confirmPending`, inline approvals and
-  `ctx.confirm`), every sensitive input path that still holds `'[redacted]'` gets its value back
+  `ctx.confirm`), every sensitive input path (in an array, only on the same row: SEC-26) that still holds `'[redacted]'` gets its value back
   from the stored raw input; a sensitive path the approver changed keeps the new value, and
   `'[redacted]'` outside the sensitive paths is ordinary text. Also covered by
   `sec_11_deferred_edit_keeps_a_changed_secret`, `sec_11_inline_edit_restores_redacted_secrets`
@@ -769,6 +769,44 @@ All are resolved on the M5 release branch. Their regression tests are in
   (`schema_conversion_failed`: invalid or non-object schema, unresolvable local `$ref`, a pattern
   that does not compile or is unsafe) and the checked `fromJsonSchema` subset, and says that other
   keywords are ignored, so validation can be looser than the advertised schema (commit `66764fd`).
+
+## Final review follow-ups
+
+The M5 final whole-branch review found two Important defects and two Minor gaps in the core
+redaction code behind SEC-5 and SEC-11. All four are resolved on the M5 release branch, in commit
+`b9c81fa`. Their regression tests are in `packages/core/test/security-2026-final.test.ts`.
+
+| id     | severity  | item   | summary                                                                                                                                             | resolution | commit    | regression test                                    |
+| ------ | --------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- | --------- | -------------------------------------------------- |
+| SEC-24 | Important | 10     | `redactChanges` matched sensitive paths as raw strings, so `[]` wildcard paths leaked `ctx.confirm` and OTel field changes (`cards.0.cvc`, `cards`) | fixed      | `b9c81fa` | `sec_24_ctx_confirm_changes_redact_wildcard_paths` |
+| SEC-25 | Minor     | 10     | `ctx.confirm` changes and OTel result changes were sent unredacted when `sensitivePaths()` threw or returned a non-array                            | fixed      | `b9c81fa` | `sec_25_ctx_confirm_changes_fail_closed`           |
+| SEC-26 | Important | 10, 11 | SEC-11 restored array placeholders by index, so an approver who deleted, inserted or reordered rows put one row's secret on another row             | fixed      | `b9c81fa` | `sec_26_deferred_delete_row_refuses`               |
+| SEC-27 | Minor     | 10, 11 | A `'[redacted]'` placeholder at a sensitive path with no stored value (a copied row, a restructured key) reached validation as literal text         | fixed      | `b9c81fa` | `sec_27_restructured_placeholder_refuses`          |
+
+- SEC-24: `redactChanges` (now shared by `ctx.confirm`, the OTel exporter and form results) uses
+  the wildcard-aware matchers: a change at or under a sensitive path is redacted whole; a change
+  over one (`cards`, `cards.0`, or the root `''`) keeps its values with every sensitive descendant
+  redacted in place, failing closed to the whole value past the node budget. Confirmation inputs
+  (`redactInput`) and the SEC-11 restore already matched wildcards. Also covered by
+  `sec_24_redact_changes_matches_wildcards_at_under_and_over`,
+  `sec_24_redact_changes_redacts_descendants_of_a_root_change` and
+  `sec_24_otel_result_changes_redact_wildcard_paths`.
+- SEC-25: `ctx.confirm` changes read `sensitivePaths()` directly and redact every change when it
+  throws or returns a non-array; the OTel exporter does the same through the internal
+  `valueSensitivePaths` (`sec_25_otel_result_changes_fail_closed`).
+- SEC-26: a placeholder is restored through an array only when the edited array has the raw
+  array's length and the row's non-sensitive content equals the raw row's (nested arrays compare
+  recursively). Otherwise the placeholder has no source and the approval is refused as `invalid`
+  "Re-enter sensitive field" at its path; inside `ctx.confirm` the outcome is
+  `{ approved: false, reason: 'invalid' }`. Also covered by `sec_26_deferred_insert_row_refuses`,
+  `sec_26_deferred_reorder_rows_refuses`, `sec_26_deferred_changed_row_content_refuses`,
+  `sec_26_inline_delete_row_refuses`, `sec_26_inline_ctx_confirm_delete_row_is_not_approved`,
+  `sec_26_nested_arrays_refuse_on_inner_delete`, and the positive
+  `sec_26_deferred_unchanged_rows_restore` and `sec_26_deferred_reentered_secrets_are_accepted`.
+- SEC-27: any `'[redacted]'` left at a sensitive path without a source is refused the same way;
+  past the walk's node budget the restore fails closed (`sec_27_placeholder_without_raw_value_refuses`).
+  Documented in `docs/concepts/confirmation.md`, the `ConfirmRequest.input` and `ctx.confirm`
+  TSDoc, and the `@toolmark/core` 1.0.0 changelog entry.
 
 ## Release pipeline review
 
