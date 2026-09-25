@@ -112,6 +112,14 @@ export function rhfAdapter<V extends FieldValues>(
       }
     },
 
+    /**
+     * `form.formState` is a Proxy that only reflects a field's latest value at the *next* render
+     * after react-hook-form updates it — reading `dirtyFields` synchronously right after a
+     * `setValue`/user-input event (before React has re-rendered) can observe a stale snapshot. Core
+     * calls `dirtyPaths()` at tool-registration/call time, which in practice is after a render has
+     * already happened, but a caller reading it synchronously inside the same tick as an input event
+     * (outside of React's render cycle) may see paths lag by one render.
+     */
     dirtyPaths(): string[] {
       const out: string[] = []
       trueLeafPaths(form.formState.dirtyFields, '', out)
@@ -120,19 +128,22 @@ export function rhfAdapter<V extends FieldValues>(
 
     async submit(): Promise<ToolResult<unknown>> {
       let outcome: ToolResult<unknown> = { status: 'ok', data: {} }
-      await form.handleSubmit(
-        async (values) => {
-          try {
-            const result: unknown = await opts.onSubmit(values)
-            outcome = { status: 'ok', data: isJsonSafe(result) ? result : {} }
-          } catch (cause) {
-            outcome = { status: 'error', message: cause instanceof Error ? cause.message : String(cause) }
-          }
-        },
-        (errors) => {
+      try {
+        // Let a thrown `onSubmit` propagate out of `onValid` (and out of the `handleSubmit(...)()`
+        // call below) rather than swallowing it here: react-hook-form's `handleSubmit` "will not
+        // swallow errors that occurred inside your onSubmit callback" and only marks
+        // `formState.isSubmitSuccessful` true when `onValid` resolves without throwing — catching
+        // the error inside `onValid` (and merely recording an `error` outcome) would make RHF think
+        // the submission succeeded even though it failed.
+        await form.handleSubmit(async (values) => {
+          const result: unknown = await opts.onSubmit(values)
+          outcome = { status: 'ok', data: isJsonSafe(result) ? result : {} }
+        }, (errors) => {
           outcome = { status: 'invalid', issues: errorsToIssues(errors) }
-        },
-      )()
+        })()
+      } catch (cause) {
+        outcome = { status: 'error', message: cause instanceof Error ? cause.message : String(cause) }
+      }
       return outcome
     },
 

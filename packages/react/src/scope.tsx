@@ -8,6 +8,7 @@ import {
 } from 'react'
 import type { Scope } from '@toolmark/core'
 import { ScopeContext } from './context.js'
+import { isServerEnvironment } from './is-server.js'
 import { useToolmark } from './provider.js'
 
 /** Props for {@link ToolScope}. */
@@ -28,6 +29,11 @@ export interface ToolScopeProps {
  * mount effect disposes the scope on cleanup and clears the ref; if a later mount effect finds
  * the ref empty (a React StrictMode remount, whose cleanup already ran) it re-creates the scope
  * and forces one more render so the subtree re-registers into the live scope.
+ *
+ * Under SSR (`renderToString`/`renderToStaticMarkup`, no `document`) effects never run, so nothing
+ * would ever dispose a scope created during render; unlike `register`, `Scope.scope()` isn't itself
+ * a no-op there (I2), so this skips creating one server-side and provides `undefined` instead — a
+ * repeated `renderToString` against one module-level registry never accumulates child scopes.
  * @param props - See {@link ToolScopeProps}.
  */
 export function ToolScope(props: ToolScopeProps): JSX.Element {
@@ -36,8 +42,9 @@ export function ToolScope(props: ToolScopeProps): JSX.Element {
   const scopeRef = useRef<Scope | null>(null)
   const [, bump] = useReducer((n: number) => n + 1, 0)
   const when = props.when ?? true
+  const isServer = isServerEnvironment()
 
-  if (scopeRef.current === null) {
+  if (scopeRef.current === null && !isServer) {
     scopeRef.current = (parent ?? toolmark).scope(props.name, { when })
   }
 
