@@ -6,7 +6,12 @@ import { safeCall } from './events.js'
 import { resolveFileRef } from './files.js'
 import { REDACTED } from './forms/hooks.js'
 import { isPlainObject } from './forms/paths.js'
-import { inputSensitiveHookOf, redactChanges, redactInput } from './input-redaction.js'
+import {
+  inputSensitiveHookOf,
+  redactChanges,
+  redactInput,
+  restoreRedacted,
+} from './input-redaction.js'
 import { newId } from './ids.js'
 import { isAllowed, needsConfirmation } from './policy.js'
 import { SerialQueue } from './queue.js'
@@ -173,6 +178,13 @@ export function createCallRuntime(state: RegistryState): CallRuntime {
     const paths = inputPathsOf(entry)
     return paths === null ? REDACTED : redactInput(input, paths)
   }
+  /**
+   * SEC-11: an approver's edited input with the `'[redacted]'` placeholders of the public input it
+   * was built from put back to the real values of `raw` (a sensitive path the approver changed
+   * keeps the new value), so an edit never replaces a secret by the placeholder.
+   */
+  const restoreEdit = (entry: Entry, raw: unknown, edited: unknown): unknown =>
+    restoreRedacted(edited, raw, inputPathsOf(entry) ?? [])
   /** SEC-5: `ctx.confirm` changes with the tool's sensitive (value-shaped) paths redacted. */
   const publicChanges = (entry: Entry, changes: FieldChange[]): FieldChange[] => {
     const paths = state.tm.info(entry.fullName)?.sensitivePaths
@@ -310,7 +322,7 @@ export function createCallRuntime(state: RegistryState): CallRuntime {
       switch (outcome.kind) {
         case 'approved':
           return outcome.input !== undefined
-            ? { approved: true, input: outcome.input }
+            ? { approved: true, input: restoreEdit(entry, input, outcome.input) }
             : { approved: true }
         case 'rejected':
           return outcome.reason !== undefined
@@ -348,17 +360,39 @@ export function createCallRuntime(state: RegistryState): CallRuntime {
     else callerSignal?.addEventListener('abort', onCallerAbort, { once: true })
     // SEC-4: a run without a caller signal (signal-less `tm.call`, `confirmPending`) gets a
     // deadline, so a hung tool is abandoned after the grace period and its scope queue released.
+    // SEC-12: the deadline is paused while an inline `ctx.confirm` is open (that wait is bounded by
+    // `confirmExpiryMs` instead) and resumes with the time that was left once it settles.
     const timeout = callerSignal === undefined ? callTimeoutMs() : undefined
-    const deadline =
-      timeout === undefined
-        ? undefined
-        : setTimeout(() => controller.abort(timeoutReason()), timeout)
+    let remaining = timeout ?? 0
+    let armedAt = 0
+    let deadline: ReturnType<typeof setTimeout> | undefined
+    let openConfirms = 0
+    let finished = false
+    const arm = (): void => {
+      if (timeout === undefined || finished || controller.signal.aborted) return
+      armedAt = Date.now()
+      deadline = setTimeout(() => controller.abort(timeoutReason()), remaining)
+    }
+    const pause = (): void => {
+      if (deadline === undefined) return
+      clearTimeout(deadline)
+      deadline = undefined
+      remaining = Math.max(0, remaining - (Date.now() - armedAt))
+    }
+    arm()
 
     const ctx: ToolContext = {
       signal: controller.signal,
       callId,
       caller,
-      confirm: (req) => ctxConfirm(entry, caller, value, req, controller.signal),
+      confirm: async (req) => {
+        if (openConfirms++ === 0) pause()
+        try {
+          return await ctxConfirm(entry, caller, value, req, controller.signal)
+        } finally {
+          if (--openConfirms === 0) arm()
+        }
+      },
       registerUndo: (restore) => undos.set(callId, entry, restore),
       files: {
         resolve: (ref) => resolveFileRef(ref, {}, state.files, controller.signal),
@@ -402,6 +436,7 @@ export function createCallRuntime(state: RegistryState): CallRuntime {
       else controller.signal.addEventListener('abort', startGrace, { once: true })
 
       void work.then(async (result) => {
+        finished = true
         clearTimeout(deadline)
         callerSignal?.removeEventListener('abort', onCallerAbort)
         controller.signal.removeEventListener('abort', startGrace)
@@ -576,7 +611,7 @@ export function createCallRuntime(state: RegistryState): CallRuntime {
       if (outcome.kind === 'signal') return finish(cancelled('signal'))
       if (outcome.kind !== 'approved') return finish(cancelled('operator'))
       if (outcome.input !== undefined) {
-        const edited = await check(entry, outcome.input)
+        const edited = await check(entry, restoreEdit(entry, value, outcome.input))
         if (!edited.ok) return finish(edited.result)
         value = edited.value
       }
@@ -605,7 +640,7 @@ export function createCallRuntime(state: RegistryState): CallRuntime {
     }
     let value = stored.input
     if (outcome.input !== undefined) {
-      const edited = await check(entry, outcome.input)
+      const edited = await check(entry, restoreEdit(entry, stored.input, outcome.input))
       if (!edited.ok) {
         emitConfirm(confirmId, entry, 'approved', edited.result)
         return edited.result

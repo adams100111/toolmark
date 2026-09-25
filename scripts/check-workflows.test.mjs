@@ -87,3 +87,29 @@ test('check_workflows_defaults_to_repository_workflows', () => {
   assert.equal(r.status, 0, r.stdout + r.stderr)
   assert.match(r.stdout, /\.github\/workflows\/ci\.yml/)
 })
+
+test('check_workflows_accepts_read_only_pull_request_jobs', () => {
+  const r = check('pr-read-only.yml')
+  assert.equal(r.status, 0, r.output)
+  assert.match(r.output, /PASS .*pr-read-only\.yml/)
+})
+
+test('check_workflows_rejects_write_permissions_on_pull_request_jobs', () => {
+  const r = check('pr-write-permissions.yml')
+  assert.equal(r.status, 1, r.output)
+  assert.match(r.output, /FAIL .*job "label" can run on `pull_request`.*write permissions/)
+  // `||` does not rule pull_request out.
+  assert.match(r.output, /FAIL .*job "publish" can run on `pull_request`.*write permissions/)
+})
+
+test('check_workflows_rejects_secrets_in_pull_request_jobs', () => {
+  const r = check('pr-secrets.yml')
+  assert.equal(r.status, 1, r.output)
+  assert.match(r.output, /FAIL .*job "test" can run on `pull_request` and must not use secrets/)
+})
+
+test('check_workflows_rejects_workflow_env_secrets_on_pull_request', () => {
+  const r = check('pr-env-secrets.yml')
+  assert.equal(r.status, 1, r.output)
+  assert.match(r.output, /FAIL .*workflow-level `env` uses secrets/)
+})

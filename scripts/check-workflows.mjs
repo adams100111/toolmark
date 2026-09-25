@@ -12,7 +12,13 @@
 //     `# vX.Y.Z` comment;
 //   - run `actions/checkout` with `persist-credentials: false`, except in a job that must push:
 //     that job sets `persist-credentials: true` explicitly and names the exception in a comment
-//     inside the job that mentions "push" (for example `# Exception ...: this job pushes ...`).
+//     inside the job that mentions "push" (for example `# Exception ...: this job pushes ...`);
+//   - in a workflow triggered by `pull_request` (or `pull_request_review[_comment]`), give every
+//     job that can run on such an event (one whose `if:` does not rule the event out) no write
+//     permission and no secrets: its `permissions` are `{}` or `contents: read` only, and neither
+//     the job nor the workflow-level `env` uses `secrets.*` (or `secrets: inherit`). A job is ruled
+//     out only by an `if:` without `||` that contains `github.event_name != 'pull_request'` or
+//     `github.event_name == '<a non-PR event>'`.
 //
 // Prints one PASS/FAIL line per file (a FAIL line per problem) and exits 0 or 1.
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
@@ -40,6 +46,44 @@ function events(on) {
   if (Array.isArray(on)) return on
   if (on && typeof on === 'object') return Object.keys(on)
   return []
+}
+
+/** Events whose runs execute pull-request code and must stay read-only and secret-free. */
+const PR_EVENTS = new Set(['pull_request', 'pull_request_review', 'pull_request_review_comment'])
+
+/**
+ * Whether a job-level `if:` provably keeps the job off the PR events `triggers` (conservative):
+ * an expression without `||` that tests `github.event_name != '<event>'` for each of them, or
+ * `github.event_name == '<a non-PR event>'`.
+ */
+function excludesPullRequests(cond, triggers) {
+  if (typeof cond !== 'string') return false
+  // `||` or a negated group could let a PR event through; do not try to reason about them.
+  if (cond.includes('||') || /!\s*\(/.test(cond)) return false
+  const names = (op) =>
+    [...cond.matchAll(new RegExp(`github\\.event_name\\s*${op}\\s*['"]([\\w-]+)['"]`, 'g'))].map(
+      (m) => m[1],
+    )
+  const ne = names('!=')
+  if (triggers.every((e) => ne.includes(e))) return true
+  return names('==').some((e) => !PR_EVENTS.has(e))
+}
+
+/** Text without YAML comments (whole-line and trailing ` # ...`), for secret scanning. */
+function stripComments(text) {
+  return text
+    .split('\n')
+    .map((line) => (/^\s*#/.test(line) ? '' : line.replace(/\s+#.*$/, '')))
+    .join('\n')
+}
+
+const USES_SECRETS = /\bsecrets\s*(?:\.|\[|:\s*inherit\b)/
+
+/** Whether job permissions are `{}` or `contents: read` only. */
+function readOnlyPermissions(perms) {
+  if (perms === undefined || perms === null) return true
+  if (typeof perms !== 'object' || Array.isArray(perms)) return false
+  return Object.entries(perms).every(([k, v]) => k === 'contents' && v === 'read')
 }
 
 /** `uses:` lines with their trailing comment, from the raw text (the parser drops comments). */
@@ -106,6 +150,27 @@ function checkFile(file) {
         `job "${jobId}": actions/checkout needs \`persist-credentials: false\`; a job that must ` +
           'push sets `persist-credentials: true` and says so in a comment inside the job',
       )
+    }
+  }
+
+  const prTriggers = events(doc.on ?? doc[true]).filter((e) => PR_EVENTS.has(e))
+  if (prTriggers.length > 0) {
+    if (doc.env !== undefined && USES_SECRETS.test(JSON.stringify(doc.env))) {
+      problems.push(
+        `workflow-level \`env\` uses secrets, which jobs on \`${prTriggers[0]}\` would receive`,
+      )
+    }
+    for (const [jobId, job] of Object.entries(doc.jobs ?? {})) {
+      if (excludesPullRequests(job?.if, prTriggers)) continue
+      if (!readOnlyPermissions(job?.permissions)) {
+        problems.push(
+          `job "${jobId}" can run on \`${prTriggers[0]}\` and must not have write permissions ` +
+            '(allowed: `permissions: {}` or `contents: read` only)',
+        )
+      }
+      if (USES_SECRETS.test(stripComments(jobSource.get(jobId) ?? ''))) {
+        problems.push(`job "${jobId}" can run on \`${prTriggers[0]}\` and must not use secrets`)
+      }
     }
   }
   return problems

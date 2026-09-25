@@ -737,3 +737,35 @@ contents: read`, `persist-credentials: false`, `SPEC_WATCH_DRY_RUN=1`, no `GH_TO
 - **Wave-0 scripts:** after the wave-0 merge, run `node scripts/check-workflows.mjs` and
   `node scripts/check-no-app-code.mjs` on the release candidate and note the results under items 13
   and 14.
+
+## Re-review follow-ups
+
+The security re-review of the Task 5 fixes raised three more findings and one documentation gap.
+All are resolved on the M5 release branch. Their regression tests are in
+`packages/core/test/security-2026-rereview.test.ts` and `scripts/check-workflows.test.mjs`.
+
+| id     | severity  | item | summary                                                                                                                                   | resolution | commit    | regression test                                                  |
+| ------ | --------- | ---- | ----------------------------------------------------------------------------------------------------------------------------------------- | ---------- | --------- | ---------------------------------------------------------------- |
+| SEC-11 | Important | 10   | An approval that edited the redacted public input (SEC-5) ran the tool with the literal `'[redacted]'` in place of the secrets            | fixed      | `ee9ed62` | `sec_11_deferred_edit_restores_redacted_secrets`                 |
+| SEC-12 | Minor     | 8    | An inline `ctx.confirm` in a run governed by `callTimeoutMs` (SEC-4) was cut off by the call deadline while the operator answered         | fixed      | `28a81e7` | `sec_12_inline_ctx_confirm_is_not_cut_off_by_call_timeout`       |
+| SEC-13 | Minor     | 13   | `check-workflows` did not enforce that jobs runnable on `pull_request` have no write permissions and no secrets (SEC-9 was fixed by hand) | fixed      | `950dc7f` | `check_workflows_rejects_write_permissions_on_pull_request_jobs` |
+
+- SEC-11: before an edited approval is re-validated (`confirmPending`, inline approvals and
+  `ctx.confirm`), every sensitive input path that still holds `'[redacted]'` gets its value back
+  from the stored raw input; a sensitive path the approver changed keeps the new value, and
+  `'[redacted]'` outside the sensitive paths is ordinary text. Also covered by
+  `sec_11_deferred_edit_keeps_a_changed_secret`, `sec_11_inline_edit_restores_redacted_secrets`
+  and `sec_11_placeholder_outside_a_sensitive_path_is_kept`.
+- SEC-12: the `callTimeoutMs` deadline is paused while an inline `ctx.confirm` is open (bounded by
+  `confirmExpiryMs`) and resumes with the time that was left
+  (`sec_12_deadline_resumes_after_the_confirmation`). Documented in the `callTimeoutMs` TSDoc,
+  `docs/concepts/scopes.md` and `docs/concepts/confirmation.md`.
+- SEC-13: `scripts/check-workflows.mjs` fails any job that can run on `pull_request` (or
+  `pull_request_review[_comment]`) unless its permissions are `{}` or `contents: read` only and it
+  uses no `secrets.*`; a workflow-level `env` with secrets fails too. A job is exempt only when its
+  `if:` (without `||`) rules the event out. The current workflows pass
+  (`check_workflows_accepts_read_only_pull_request_jobs`, `check_workflows_rejects_secrets_in_pull_request_jobs`).
+- Documentation (no id): the `ToolDefinition.jsonSchema` TSDoc now lists what fails registration
+  (`schema_conversion_failed`: invalid or non-object schema, unresolvable local `$ref`, a pattern
+  that does not compile or is unsafe) and the checked `fromJsonSchema` subset, and says that other
+  keywords are ignored, so validation can be looser than the advertised schema (commit `66764fd`).

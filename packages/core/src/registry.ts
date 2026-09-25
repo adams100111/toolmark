@@ -59,8 +59,9 @@ export interface ConfirmRequest {
   caller: Caller
   /**
    * Validated input, with every value at the tool's sensitive paths replaced by `'[redacted]'`
-   * (the whole input when its redaction fails). The tool runs with the unredacted input; an
-   * approval that edits `input` must supply sensitive values again.
+   * (the whole input when its redaction fails). The tool runs with the unredacted input. An
+   * approval that edits `input` may send this copy back with its changes: a sensitive path still
+   * holding `'[redacted]'` gets its real value back, one the approver changed keeps the new value.
    */
   input: unknown
   /** The tool's hints. */
@@ -104,7 +105,10 @@ export interface ToolmarkOptions {
    * {@link Toolmark.undo} restorer. When it passes, the run's `ctx.signal` aborts; a tool that
    * still has not settled after `abortGraceMs` is abandoned with `cancelled` `signal`, which
    * releases its scope queue (a later settle is dropped with a `late_result` event). Calls that
-   * pass a `signal` are bounded by it instead. `Infinity` disables the deadline.
+   * pass a `signal` are bounded by it instead. `Infinity` disables the deadline. The deadline is
+   * paused while an inline `ctx.confirm` is open (that wait is bounded by `confirmExpiryMs`) and
+   * resumes with the time that was left once the confirmation settles, so an operator's answer
+   * never counts against the run.
    */
   callTimeoutMs?: number
   /** Visible-tool budget; exceeding it emits `tool_budget_exceeded` in `dev` (default 40). */

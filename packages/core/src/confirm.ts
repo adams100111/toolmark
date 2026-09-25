@@ -15,8 +15,9 @@ export interface PendingConfirmation {
   /**
    * The validated input the tool will run with (unless the approval edits it), with every value at
    * the tool's sensitive paths replaced by `'[redacted]'` (the whole input when its redaction
-   * fails). The run itself gets the unredacted input; an approval that edits `input` must supply
-   * sensitive values again.
+   * fails). The run itself gets the unredacted input. An approval that edits `input` may send this
+   * copy back with its changes: a sensitive path still holding `'[redacted]'` gets its real value
+   * back before validation, and a sensitive path the approver changed keeps the new value.
    */
   input: unknown
   /** User-facing summary. */

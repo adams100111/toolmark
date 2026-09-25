@@ -1,0 +1,48 @@
+name: PR read-only
+
+on:
+  pull_request:
+  schedule:
+    - cron: '0 6 * * *'
+
+permissions: {}
+
+concurrency:
+  group: pr-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # A comment that mentions secrets.NPM_TOKEN is not a use.
+      - run: echo ok
+  plan:
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - run: echo plan
+  nightly:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: echo nightly
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  scheduled:
+    if: ${{ github.event_name == 'schedule' && !github.event.repository.private }}
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - run: echo scheduled
