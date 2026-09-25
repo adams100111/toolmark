@@ -3,6 +3,7 @@
  * The transports are re-exported here and also ship in their own subpaths
  * (`@toolmark/core/bridge/echo`, `…/websocket`, `…/post-message`, `…/in-page`).
  * @packageDocumentation
+ * @module @toolmark/core/bridge
  */
 export type { BridgeTransport } from './transport.js'
 export type { BridgeOptions } from './bridge.js'

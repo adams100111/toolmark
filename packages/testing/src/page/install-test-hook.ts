@@ -1,3 +1,8 @@
+/**
+ * `@toolmark/testing/page` — The in-page test hook (`installTestHook`), installed only outside production builds.
+ * @packageDocumentation
+ * @module @toolmark/testing/page
+ */
 import type {
   Caller,
   ConfirmOutcome,

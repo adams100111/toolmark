@@ -3,6 +3,7 @@
  * interaction events (spec §11.5). The overlay lives in `@toolmark/tour/overlay`, the React binding
  * in `@toolmark/tour/react`.
  * @packageDocumentation
+ * @module @toolmark/tour
  */
 export type {
   Planner,

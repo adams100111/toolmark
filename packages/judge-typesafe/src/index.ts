@@ -1,3 +1,8 @@
+/**
+ * `@toolmark/judge-typesafe` — The optional TypeSafe judge for `toolmark lint` (Node only, dev/CI only).
+ * @packageDocumentation
+ * @module @toolmark/judge-typesafe
+ */
 import {
   APIConnectionError,
   APIError,

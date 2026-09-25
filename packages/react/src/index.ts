@@ -1,6 +1,7 @@
 /**
  * `@toolmark/react` — provider, scopes and hooks for React ≥ 18.3 (spec §9).
  * @packageDocumentation
+ * @module @toolmark/react
  */
 export { ToolmarkProvider, useToolmark, type ToolmarkProviderProps } from './provider.js'
 export { ToolScope, useCurrentScope, type ToolScopeProps } from './scope.js'
