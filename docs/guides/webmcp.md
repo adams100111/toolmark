@@ -67,7 +67,7 @@ way.
 
 ## Error events
 
-Listen with `tm.events.on('error', …)`:
+Listen with `tm.events.on('error', …)` (all codes: [`reference/codes.md`](../reference/codes.md)):
 
 | Code                     | When                                                                                                                                                                  |
 | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -75,3 +75,8 @@ Listen with `tm.events.on('error', …)`:
 | `webmcp_register_failed` | `{ tool, cause }`: `registerTool` rejected (or a `filter` threw). Reported once per tool version; retried when the tool changes.                                      |
 
 The consumer never throws; without a model context it stays inactive.
+
+---
+
+Every error, refusal and event code, with the milestone that added it, is listed in
+[`reference/codes.md`](../reference/codes.md).

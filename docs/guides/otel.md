@@ -54,3 +54,8 @@ By default no input or result value is recorded, only the names, ids, statuses a
 
 Hand-written tools with sensitive input declare `sensitivePaths()` themselves; otherwise their
 payloads are recorded as-is when `recordPayloads` is on.
+
+---
+
+Every error, refusal and event code, with the milestone that added it, is listed in
+[`reference/codes.md`](../reference/codes.md).
