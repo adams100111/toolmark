@@ -1,0 +1,26 @@
+{
+  "$schema": "https://raw.githubusercontent.com/adams100111/sdd-lanes/main/skills/sdd-lanes/config.schema.json",
+  "slots": { "implementers": 4, "reviewers": 2, "heavyOps": 2 },
+  "models": {
+    "high": "most-capable",
+    "normal": "standard",
+    "review": "by-risk",
+    "finalReview": "most-capable",
+    "reReview": "standard"
+  },
+  "gates": {
+    "task": "the task brief's Task gate + pnpm exec eslint <changed files> + pnpm typecheck + pnpm format:check",
+    "chain": "pnpm install --frozen-lockfile && pnpm build && pnpm lint && pnpm format:check && pnpm typecheck && pnpm test",
+    "milestone": "chain gate + node --test \"scripts/*.test.mjs\" + example e2e (TOOLMARK_EXAMPLE_PORT=5174 locally) + prod build hook grep + pack + node scripts/tarball-smoke.mjs dist-tarballs + CI green"
+  },
+  "paths": { "ledgerRoot": ".superpowers/sdd", "worktreeRoot": "../toolmark-wt" },
+  "git": { "finish": "pr-merge", "deleteBranchOnMerge": false, "pushLaneBranches": false },
+  "review": { "skipDocsOnly": true },
+  "crossMilestone": true,
+  "heavyPatterns": [
+    "playwright",
+    "vitest --project react",
+    "vitest --project inertia",
+    "core-browser"
+  ]
+}
