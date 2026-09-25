@@ -7,4 +7,14 @@ describe('@toolmark/core/dom under Node (SSR)', () => {
     expect(typeof mod.domFormAdapter).toBe('function')
     expect(typeof mod.synthesizeFormSchema).toBe('function')
   })
+
+  it('scan_dom_ssr_noop', async () => {
+    const { createToolmark } = await import('@toolmark/core')
+    const { scanDom } = await import('@toolmark/core/dom')
+    const tm = createToolmark()
+    const off = scanDom()(tm)
+    expect(tm.manifest().tools).toEqual([])
+    expect(() => off()).not.toThrow()
+    expect(() => tm.use(scanDom({ observe: true }))()).not.toThrow()
+  })
 })

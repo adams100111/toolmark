@@ -6,3 +6,5 @@
 export type { DomFormAdapter, DomFormAdapterOptions } from './form-adapter.js'
 export { domFormAdapter } from './form-adapter.js'
 export { synthesizeFormSchema } from './synthesize.js'
+export type { ScanDomOptions } from './scan.js'
+export { scanDom } from './scan.js'
