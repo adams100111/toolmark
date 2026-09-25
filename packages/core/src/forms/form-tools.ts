@@ -1154,6 +1154,9 @@ export function createFormTools<V extends Record<string, unknown>>(
     {
       name: fillName,
       ...title,
+      ...(opts.origin !== undefined ? { origin: opts.origin } : {}),
+      ...(opts.nativeName?.fill !== undefined ? { nativeName: opts.nativeName.fill } : {}),
+      ...(opts.hints?.fill !== undefined ? { hints: { ...opts.hints.fill } } : {}),
       description:
         `${opts.description} Fill form fields: pass a partial object in "values" (null clears a ` +
         `field). Fields the user edited are skipped unless "overwrite" is true.` +
@@ -1178,7 +1181,9 @@ export function createFormTools<V extends Record<string, unknown>>(
       name: `${opts.name}.submit`,
       ...title,
       description: `${opts.description} Submit the form.`,
-      hints: { consequential: true },
+      hints: opts.hints?.submit !== undefined ? { ...opts.hints.submit } : { consequential: true },
+      ...(opts.origin !== undefined ? { origin: opts.origin } : {}),
+      ...(opts.nativeName?.submit !== undefined ? { nativeName: opts.nativeName.submit } : {}),
       summary: () =>
         opts.submitSummary?.(adapter.getValues()) ?? `Submit ${opts.title ?? opts.name}`,
       run: () => adapter.submit(),
@@ -1205,8 +1210,9 @@ export function createFormTools<V extends Record<string, unknown>>(
   let optionsReg: Registration | undefined
   if (opts.options && optionKeys.length > 0) {
     try {
+      const optionsTool = optionsToolDefinition(tm, opts.name, opts.description, opts.options)
       optionsReg = tm.register(
-        optionsToolDefinition(tm, opts.name, opts.description, opts.options),
+        opts.origin !== undefined ? { ...optionsTool, origin: opts.origin } : optionsTool,
         scopeOpt,
       )
     } catch (e) {

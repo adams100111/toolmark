@@ -11,6 +11,13 @@ export const TABLE_MAX_LIMIT = 500
 export const MAX_CELL_TEXT = 1000
 /** @internal Longest `where` filter string accepted. */
 export const MAX_WHERE_LENGTH = 1000
+/** @internal Most queryable columns per table (further `data-tool-column`s are skipped). */
+export const TABLE_MAX_COLUMNS = 32
+/**
+ * @internal Character budget of a table result's `rows` (their JSON length); rows past it are left
+ * out and the result says `truncated: true`.
+ */
+export const TABLE_RESULT_BUDGET = 200_000
 
 const COLUMN_NAME = /^[A-Za-z0-9_-]{1,64}$/
 const UNSAFE = new Set(['__proto__', 'prototype', 'constructor'])
@@ -33,7 +40,8 @@ function columnHeaders(table: HTMLTableElement): HTMLTableCellElement[] {
 /**
  * @internal The columns a `data-tool` table declares, in header order. Names must match
  * `^[A-Za-z0-9_-]{1,64}$` and not be `__proto__`/`prototype`/`constructor`; a repeated name keeps
- * its first header. Rejected names are reported through `reject`.
+ * its first header; at most {@link TABLE_MAX_COLUMNS} columns (the rest are reported once).
+ * Rejected names are reported through `reject`.
  * @param table - The table.
  * @param reject - Called with each rejected column name and why.
  */
@@ -42,8 +50,14 @@ export function tableColumns(
   reject: (name: string, reason: string) => void,
 ): TableColumn[] {
   const columns: TableColumn[] = []
-  for (const th of columnHeaders(table)) {
+  const headers = columnHeaders(table)
+  for (const [i, th] of headers.entries()) {
     const name = (getAttr(th, 'data-tool-column') ?? '').trim()
+    if (columns.length >= TABLE_MAX_COLUMNS) {
+      const rest = headers.length - i
+      reject(name, `more than ${TABLE_MAX_COLUMNS} columns; ${rest} column(s) from here skipped`)
+      break
+    }
     if (!COLUMN_NAME.test(name) || UNSAFE.has(name)) {
       reject(name, 'invalid column name')
       continue
@@ -100,7 +114,9 @@ interface TableQuery {
  * contains every given string (case-insensitive); `limit` defaults to 50 and is clamped to 500.
  * Returns `ok({ rows, total })`: `rows` are objects keyed by column name with the cell's trimmed
  * `textContent` (capped at 1000 characters; number columns parse, unparsable or empty → `null`),
- * `total` is the number of matching rows before the limit. Rows are the `<tbody>` rows of the
+ * `total` is the number of matching rows before the limit. The rows' JSON is kept within
+ * {@link TABLE_RESULT_BUDGET} characters: rows past it are left out and `truncated: true` is set
+ * (`total` still counts every match). Rows are the `<tbody>` rows of the
  * table read at call time; a row that holds a column header is skipped. Hints: `readOnly`,
  * `untrustedContent` (cells are page/user content).
  * @param table - The table.
@@ -113,7 +129,10 @@ export function tableToolDefinition(
   name: string,
   description: string,
   columns: TableColumn[],
-): ToolDefinition<TableQuery, { rows: Record<string, string | number | null>[]; total: number }> {
+): ToolDefinition<
+  TableQuery,
+  { rows: Record<string, string | number | null>[]; total: number; truncated?: true }
+> {
   const whereProps: Record<string, JsonSchema> = {}
   for (const c of columns) whereProps[c.name] = { type: 'string', maxLength: MAX_WHERE_LENGTH }
   const input = fromJsonSchema<TableQuery>({
@@ -158,21 +177,29 @@ export function tableToolDefinition(
       }
       const rows: Record<string, string | number | null>[] = []
       let total = 0
+      let used = 2 // `[]`
+      let truncated = false
       for (const body of table.tBodies) {
         for (const row of body.rows) {
           if (row.querySelector('th[data-tool-column]') !== null) continue
           if (!filters.every(([c, v]) => text(row, c).toLowerCase().includes(v))) continue
           total++
-          if (rows.length >= limit) continue
+          if (rows.length >= limit || truncated) continue
           const out: Record<string, string | number | null> = {}
           for (const c of columns) {
             const raw = text(row, c.name)
             out[c.name] = c.number ? parseNumber(raw) : cap(raw, MAX_CELL_TEXT)
           }
+          const size = JSON.stringify(out).length + 1
+          if (used + size > TABLE_RESULT_BUDGET) {
+            truncated = true
+            continue
+          }
+          used += size
           rows.push(out)
         }
       }
-      return ok({ rows, total })
+      return ok(truncated ? { rows, total, truncated: true as const } : { rows, total })
     },
   }
 }

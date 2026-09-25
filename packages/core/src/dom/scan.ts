@@ -6,7 +6,12 @@ import { isValidToolName } from '../names.js'
 import { emitEvent, registryState, type Toolmark } from '../registry.js'
 import type { Scope } from '../scope.js'
 import type { ToolDefinition, ToolHints, ToolOrigin } from '../tool.js'
-import { buttonToolDefinition, isToolButton, MAX_CONFIRM_SUMMARY } from './button-tools.js'
+import {
+  buttonToolDefinition,
+  isToolButton,
+  MAX_CONFIRM_SUMMARY,
+  submitsForm,
+} from './button-tools.js'
 import { cap, discoverFields, getAttr, isReadOnly } from './elements.js'
 import { domFormAdapter } from './form-adapter.js'
 import { optionsUrlProvider, resolveOptionsUrl } from './options-url.js'
@@ -77,6 +82,61 @@ function groupOf(el: Element, root: Node): string | undefined {
   return undefined
 }
 
+/**
+ * Elements whose subtree (text, children, attributes) feeds a tool's definition: forms and their
+ * controls, labels (field descriptions), options, fieldsets/legends, tool elements and tables.
+ */
+const TOOL_CONTEXT =
+  'form,input,select,textarea,button,option,optgroup,datalist,fieldset,legend,label,output,' +
+  'table[data-tool],[data-tool],[toolname],[data-tool-group]'
+
+/** Attributes that make or unmake tools or ignored regions wherever they appear. */
+const isToolAttribute = (name: string): boolean =>
+  name.startsWith('data-tool') ||
+  name.startsWith('tool') ||
+  name === 'contenteditable' ||
+  name === 'form'
+
+const closestOf = (el: Element, selector: string): Element | null =>
+  Element.prototype.closest.call(el, selector)
+
+/** Whether an added or removed node can carry tools (or a shadow root that might). */
+function nodeMatters(node: Node): boolean {
+  if (!(node instanceof Element) || isIgnoredElement(node)) return false
+  if (localNameOf(node).includes('-') || shadowOf(node) !== null) return true
+  return (
+    Element.prototype.matches.call(node, TOOL_CONTEXT) ||
+    Element.prototype.querySelector.call(node, TOOL_CONTEXT) !== null
+  )
+}
+
+/**
+ * I5: whether a mutation can change the scanned tools. Records inside ignored regions never do
+ * (streaming user content), except for the attribute that creates or removes the region itself;
+ * elsewhere only records touching forms, form controls, labels, tool elements or tool attributes
+ * count. The rest (animations, unrelated text updates) schedule no rescan.
+ */
+function isRelevantMutation(record: MutationRecord): boolean {
+  const target = record.target
+  if (record.type === 'attributes') {
+    const attr = record.attributeName ?? ''
+    const el = target as Element
+    if (attr === 'data-tool-ignore' || attr === 'contenteditable') {
+      const parent = parentOf(el)
+      return parent === null || !isInIgnoredRegion(parent)
+    }
+    if (isInIgnoredRegion(el)) return false
+    return isToolAttribute(attr) || closestOf(el, TOOL_CONTEXT) !== null
+  }
+  if (isInIgnoredRegion(target)) return false
+  const el = target instanceof Element ? target : (target as CharacterData).parentElement
+  if (el && closestOf(el, TOOL_CONTEXT) !== null) return true
+  if (record.type === 'characterData') return false
+  for (const n of record.addedNodes) if (nodeMatters(n)) return true
+  for (const n of record.removedNodes) if (nodeMatters(n)) return true
+  return false
+}
+
 interface Candidates {
   forms: HTMLFormElement[]
   buttons: Element[]
@@ -139,16 +199,23 @@ interface Live {
  *   summary). `data-tool-options-url` on a field adds a same-origin options lookup (other URLs
  *   are ignored with an `options_url_rejected` event). Fill and submit results are marked
  *   `untrustedContent`.
- * - **Buttons** (`<button>` / button `<input>` with `data-tool`) → an action tool that clicks
- *   the button; a button that submits or resets its form is always at least `consequential`.
- * - **Tables** with `data-tool` and `th[data-tool-column]` → a read-only query tool.
+ * - **Buttons** (`<button>` / button `<input>` with `data-tool` and `data-tool-description`;
+ *   without a description the button is skipped with an `invalid_name` event in development,
+ *   never described from its text) → an action tool that clicks the button; a button that
+ *   submits or resets its form is always at least `consequential`, uses the form's
+ *   `data-tool-confirm` as its summary, and its approval is refused `stale` when the form's
+ *   values changed after the confirmation was requested.
+ * - **Tables** with `data-tool` and `th[data-tool-column]` (at most 32 columns) → a read-only
+ *   query tool whose rows are capped at 200 000 JSON characters (`truncated: true`).
  * - `data-tool-group` on an ancestor puts the tools in a scope of that name. An invalid tool or
  *   group name is skipped with an `invalid_name` event (never thrown, also in development);
  *   registration errors are reported as `error` events too.
  * - **Observation** (`observe`, default `true`): one `MutationObserver` watches `root` and every
- *   open shadow root found; changes are batched per animation frame; a tool is re-registered only
- *   when its synthesized schema or tool attributes changed; removed elements' tools and form
- *   adapters are disposed.
+ *   open shadow root found; only mutations touching forms, form controls, labels, tool elements
+ *   or tool attributes outside ignored regions schedule a rescan; changes are batched per
+ *   animation frame; a tool is re-registered only when its synthesized schema (load-time
+ *   `default`s aside) or tool attributes changed; removed elements' tools and form adapters are
+ *   disposed.
  *
  * Without `document` (SSR) it does nothing.
  * @param opts - `root` (default `document`) and `observe` (default `true`).
@@ -260,8 +327,10 @@ export function scanDom(opts: ScanDomOptions = {}): (tm: Toolmark) => () => void
         autosubmit,
         destructive,
         confirmText,
-        schema: s.schema,
-        validationSchema: s.validationSchema,
+        // Schema `default`s (load-time values) are left out: frameworks that keep the `value`
+        // attribute in sync (controlled inputs) would otherwise re-register on every keystroke.
+        schema: withoutDefaults(s.schema),
+        validationSchema: withoutDefaults(s.validationSchema),
         files: s.files,
         skipped: s.skipped,
         options: Object.entries(optionUrls).map(([k, v]) => [k, v.raw]),
@@ -269,8 +338,30 @@ export function scanDom(opts: ScanDomOptions = {}): (tm: Toolmark) => () => void
       return {
         signature,
         build: () => {
-          if (!checkName(name, group, '.submit')) return skip()
+          const options: Record<string, OptionsProvider> = {}
+          const rejectedUrls: Array<[string, string]> = []
+          for (const [key, { raw, el }] of Object.entries(optionUrls)) {
+            const resolved = resolveOptionsUrl(raw, el)
+            if ('rejected' in resolved) {
+              rejectedUrls.push([key, resolved.rejected])
+              continue
+            }
+            Object.defineProperty(options, key, {
+              value: optionsUrlProvider(resolved.url),
+              enumerable: true,
+            })
+          }
+          const hasOptions = Object.keys(options).length > 0
+          // The longest suffix actually registered: `.options` (8) when options exist, else `.submit`.
+          if (!checkName(name, group, hasOptions ? '.options' : '.submit')) return skip()
           const full = `${group !== undefined ? `${group}.` : ''}${name}`
+          for (const [key, reason] of rejectedUrls) {
+            report(
+              'options_url_rejected',
+              `Form "${full}": data-tool-options-url of field "${key}" ignored: ${reason}`,
+              `${full}.options`,
+            )
+          }
           if (dev) {
             for (const sk of s.skipped) {
               if (sk.reason === 'read-only') continue
@@ -289,67 +380,29 @@ export function scanDom(opts: ScanDomOptions = {}): (tm: Toolmark) => () => void
               }
             }
           }
-          const options: Record<string, OptionsProvider> = {}
-          for (const [key, { raw, el }] of Object.entries(optionUrls)) {
-            const resolved = resolveOptionsUrl(raw, el)
-            if ('rejected' in resolved) {
-              report(
-                'options_url_rejected',
-                `Form "${full}": data-tool-options-url of field "${key}" ignored: ${resolved.rejected}`,
-                `${full}.options`,
-              )
-              continue
-            }
-            Object.defineProperty(options, key, {
-              value: optionsUrlProvider(resolved.url),
-              enumerable: true,
-            })
-          }
-          const fillName = `${name}.fill`
-          const submitName = `${name}.submit`
-          const decorate = (
-            def: ToolDefinition<unknown, unknown>,
-          ): ToolDefinition<unknown, unknown> => {
-            if (def.name === fillName) {
-              return {
-                ...def,
-                hints: { ...def.hints, untrustedContent: true },
-                origin,
-                ...(origin === 'native-form' ? { nativeName: name } : {}),
-              }
-            }
-            if (def.name === submitName) {
-              const hints: ToolHints = autosubmit
-                ? { untrustedContent: true }
-                : destructive
-                  ? { destructive: true, untrustedContent: true }
-                  : { ...def.hints, consequential: true, untrustedContent: true }
-              return {
-                ...def,
-                hints,
-                origin,
-                ...(origin === 'native-form' ? { nativeName: name } : {}),
-              }
-            }
-            // `<name>.options` has no native counterpart: origin only, no nativeName.
-            return { ...def, origin }
-          }
+          const submitHints: ToolHints = autosubmit
+            ? { untrustedContent: true }
+            : destructive
+              ? { destructive: true, untrustedContent: true }
+              : { consequential: true, untrustedContent: true }
           const adapter = domFormAdapter(form)
           const handle = guarded(`${full}.fill`, () =>
-            withDecoratedRegister(tm, decorate, () =>
-              createFormTools(tm, adapter, {
-                name,
-                description,
-                input: fromJsonSchema(s.validationSchema),
-                jsonSchema: s.schema,
-                files: s.files,
-                ...(Object.keys(options).length > 0 ? { options } : {}),
-                ...(confirmText
-                  ? { submitSummary: () => cap(confirmText, MAX_CONFIRM_SUMMARY) }
-                  : {}),
-                ...(group !== undefined ? { scope: scopeFor(group)! } : {}),
-              }),
-            ),
+            createFormTools(tm, adapter, {
+              name,
+              description,
+              input: fromJsonSchema(s.validationSchema),
+              jsonSchema: s.schema,
+              files: s.files,
+              origin,
+              // `<name>.options` has no native counterpart: it never gets a nativeName.
+              ...(origin === 'native-form' ? { nativeName: { fill: name, submit: name } } : {}),
+              hints: { fill: { untrustedContent: true }, submit: submitHints },
+              ...(hasOptions ? { options } : {}),
+              ...(confirmText
+                ? { submitSummary: () => cap(confirmText, MAX_CONFIRM_SUMMARY) }
+                : {}),
+              ...(group !== undefined ? { scope: scopeFor(group)! } : {}),
+            }),
           )
           if (!handle || tm.info(`${full}.fill`) === undefined) {
             handle?.dispose()
@@ -367,14 +420,17 @@ export function scanDom(opts: ScanDomOptions = {}): (tm: Toolmark) => () => void
     const planSimple = (
       el: Element,
       kind: 'button' | 'table',
-      def: (name: string, description: string) => ToolDefinition<unknown, unknown> | undefined,
+      def: (
+        name: string,
+        description: string,
+        full: string,
+      ) => ToolDefinition<unknown, unknown> | undefined,
       extra: unknown,
       defaultDescription: (name: string) => string | undefined,
     ): Plan | undefined => {
       const name = (getAttr(el, 'data-tool') ?? '').trim()
       const given = getAttr(el, 'data-tool-description')?.trim()
       const description = given ? given : defaultDescription(name)
-      if (description === undefined) return undefined
       const group = groupOf(el, root)
       const attrs = [
         'data-tool-readonly',
@@ -388,9 +444,20 @@ export function scanDom(opts: ScanDomOptions = {}): (tm: Toolmark) => () => void
       return {
         signature,
         build: () => {
+          if (description === undefined) {
+            // I2: never invent a description from page text; reported once per change, dev only.
+            if (dev) {
+              report(
+                'invalid_name',
+                `DOM ${kind} tool "${cap(name, 200)}" skipped: it has no data-tool-description ` +
+                  `attribute`,
+              )
+            }
+            return skip()
+          }
           if (!checkName(name, group, '')) return skip()
           const full = `${group !== undefined ? `${group}.` : ''}${name}`
-          const tool = def(name, cap(description, MAX_TOOL_DESCRIPTION))
+          const tool = def(name, cap(description, MAX_TOOL_DESCRIPTION), full)
           if (!tool) return skip()
           const scope = scopeFor(group)
           const reg = guarded(full, () => tm.register(tool, scope ? { scope } : undefined))
@@ -405,13 +472,11 @@ export function scanDom(opts: ScanDomOptions = {}): (tm: Toolmark) => () => void
       return planSimple(
         b,
         'button',
-        (name, description) => buttonToolDefinition(b, name, description),
+        (name, description, full) => buttonToolDefinition(b, name, description, full),
         // The form owner decides whether the button submits (consequential).
-        { submits: b.form !== null, type: b.type },
-        (name) => {
-          const text = (b.textContent ?? '').trim() || (b.localName === 'input' ? b.value : '')
-          return text ? `Click the "${cap(text, 200)}" button (${name}).` : undefined
-        },
+        { submits: submitsForm(b), type: b.type },
+        // I2: the description comes from `data-tool-description` only (never the button text).
+        () => undefined,
       )
     }
 
@@ -499,7 +564,9 @@ export function scanDom(opts: ScanDomOptions = {}): (tm: Toolmark) => () => void
 
     const observer =
       opts.observe !== false && typeof MutationObserver === 'function'
-        ? new MutationObserver(schedule)
+        ? new MutationObserver((records) => {
+            if (records.some(isRelevantMutation)) schedule()
+          })
         : undefined
     if (observer) {
       observed.add(root)
@@ -521,26 +588,34 @@ export function scanDom(opts: ScanDomOptions = {}): (tm: Toolmark) => () => void
   }
 }
 
+/** Schema keys whose value maps names to subschemas (the names themselves are not keywords). */
+const SCHEMA_MAPS = new Set(['properties', 'patternProperties', '$defs', 'definitions'])
+
 /**
- * Runs `fn` (which registers tools through `tm.register`, e.g. `createFormTools`) with every
- * registration passed through `decorate` first. `createFormTools` has no options for `origin`,
- * `nativeName` or per-tool hints, so the scanner decorates its definitions on the way in; the
- * original `register` is restored before this returns (registration is synchronous).
+ * A copy of `schema` without `default` keywords (for change signatures only). Property names
+ * called `default` are kept.
  */
-function withDecoratedRegister<T>(
-  tm: Toolmark,
-  decorate: (def: ToolDefinition<unknown, unknown>) => ToolDefinition<unknown, unknown>,
-  fn: () => T,
-): T {
-  const own = Object.getOwnPropertyDescriptor(tm, 'register')
-  const register = tm.register.bind(tm)
-  const decorated: Toolmark['register'] = (tool, o) =>
-    register(decorate(tool as ToolDefinition<unknown, unknown>), o)
-  Object.defineProperty(tm, 'register', { value: decorated, configurable: true, writable: true })
-  try {
-    return fn()
-  } finally {
-    if (own) Object.defineProperty(tm, 'register', own)
-    else Reflect.deleteProperty(tm, 'register')
+function withoutDefaults(schema: unknown, depth = 0): unknown {
+  if (depth > 64 || typeof schema !== 'object' || schema === null) return schema
+  if (Array.isArray(schema)) return schema.map((s) => withoutDefaults(s, depth + 1))
+  const out: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(schema)) {
+    if (key === 'default') continue
+    if (SCHEMA_MAPS.has(key) && typeof value === 'object' && value !== null) {
+      const map: Record<string, unknown> = {}
+      for (const [name, sub] of Object.entries(value as Record<string, unknown>)) {
+        Object.defineProperty(map, name, {
+          value: withoutDefaults(sub, depth + 1),
+          enumerable: true,
+        })
+      }
+      Object.defineProperty(out, key, { value: map, enumerable: true })
+    } else {
+      Object.defineProperty(out, key, {
+        value: withoutDefaults(value, depth + 1),
+        enumerable: true,
+      })
+    }
   }
+  return out
 }

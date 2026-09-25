@@ -1,6 +1,8 @@
+import { CONFIRM_SNAPSHOT, type ConfirmSnapshotHook } from '../confirm-snapshot.js'
+import { deepEqual, snapshotValue } from '../forms/paths.js'
 import { ok, refuse } from '../result.js'
 import type { ToolDefinition, ToolHints } from '../tool.js'
-import { cap, getAttr } from './elements.js'
+import { cap, discover, getAttr, nestValues, readField } from './elements.js'
 
 /** @internal Longest `data-tool-confirm` summary kept (longer text is truncated with `…`). */
 export const MAX_CONFIRM_SUMMARY = 500
@@ -26,7 +28,7 @@ export function isToolButton(el: Element): el is ToolButton {
 export function submitsForm(button: ToolButton): boolean {
   const type = button.type.toLowerCase()
   const acts = type === 'submit' || type === 'reset' || type === 'image'
-  return acts && button.form !== null
+  return acts && ownerOf(button) !== null
 }
 
 /**
@@ -56,32 +58,72 @@ function clickable(button: ToolButton): boolean {
   return button.getClientRects().length > 0
 }
 
+/** The form a button acts on (its form owner), read through the prototype getter. */
+function ownerOf(button: ToolButton): HTMLFormElement | null {
+  const proto =
+    button.localName === 'input' ? HTMLInputElement.prototype : HTMLButtonElement.prototype
+  const form: unknown = Reflect.get(proto, 'form', button)
+  return form instanceof HTMLFormElement ? form : null
+}
+
+/** The non-excluded values of `form` (the same fields its form tools read). */
+function formValues(form: HTMLFormElement): unknown {
+  return snapshotValue(nestValues(discover(form).fields.map((f) => [f.path, readField(f)])))
+}
+
 /**
  * @internal The action tool for a `data-tool` button (spec §10.2): no input; `run` clicks the
  * button (`HTMLElement.prototype.click`) and returns `ok({ clicked: true })`. A disabled, inert,
  * hidden (`checkVisibility()` fails) or detached button → `refused` `not_allowed`
- * "Button is disabled or hidden". `data-tool-confirm` becomes the confirmation summary.
+ * "Button is disabled or hidden".
+ *
+ * Confirmation (fix round 1, I1): the summary is the owner form's `data-tool-confirm` while the
+ * button submits or resets its form, else the button's own `data-tool-confirm`, else `fallback`.
+ * The tool carries a confirm snapshot of the button's form owner and that form's non-excluded
+ * values, so an approval given before the form (or the owner) changed is refused `stale` and the
+ * button is not clicked.
  * @param button - The button.
  * @param name - Local tool name.
  * @param description - LLM-facing description (from app-authored markup).
+ * @param fallback - Summary when no `data-tool-confirm` applies (default `name`).
  */
 export function buttonToolDefinition(
   button: ToolButton,
   name: string,
   description: string,
-): ToolDefinition<unknown, { clicked: true }> {
-  const confirm = getAttr(button, 'data-tool-confirm')?.trim()
-  const summary = confirm ? cap(confirm, MAX_CONFIRM_SUMMARY) : undefined
+  fallback: string = name,
+): ToolDefinition<unknown, { clicked: true }> & { [CONFIRM_SNAPSHOT]: ConfirmSnapshotHook } {
+  const own = getAttr(button, 'data-tool-confirm')?.trim()
+  const summary = (): string => {
+    const form = ownerOf(button)
+    const formConfirm =
+      form !== null && submitsForm(button) ? getAttr(form, 'data-tool-confirm')?.trim() : undefined
+    const text = formConfirm || own
+    return text ? cap(text, MAX_CONFIRM_SUMMARY) : fallback
+  }
+  const snapshotHook: ConfirmSnapshotHook = {
+    take: () => {
+      const form = ownerOf(button)
+      return { form, values: form ? formValues(form) : undefined }
+    },
+    changed: (snapshot) => {
+      const snap = snapshot as { form: HTMLFormElement | null; values: unknown }
+      const form = ownerOf(button)
+      if (form !== snap.form) return true
+      return form !== null && !deepEqual(formValues(form), snap.values)
+    },
+  }
   return {
     name,
     description,
     hints: buttonHints(button),
     origin: 'dom',
-    ...(summary !== undefined ? { summary: () => summary } : {}),
+    summary,
     run() {
       if (!clickable(button)) return refuse('not_allowed', 'Button is disabled or hidden')
       HTMLElement.prototype.click.call(button)
       return ok({ clicked: true as const })
     },
+    [CONFIRM_SNAPSHOT]: snapshotHook,
   }
 }
