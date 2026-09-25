@@ -11,8 +11,8 @@ test('simple_form_within_3_rounds', async ({ page }) => {
   await page.goto('/')
   const recorder = new RoundRecorder(page)
 
-  // Start from the attach (summary) manifest only.
-  const manifest = await recorder.attach()
+  // Start from the (summary) manifest that first lists the form's tools.
+  const manifest = await recorder.attach([FILL, SUBMIT])
   expect(manifest.tools.map((t) => t.name)).toEqual(expect.arrayContaining([FILL, SUBMIT]))
   expect(manifest.tools.every((t) => !('inputSchema' in t))).toBe(true)
 

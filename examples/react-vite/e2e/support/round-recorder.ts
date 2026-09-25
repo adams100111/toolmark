@@ -45,13 +45,25 @@ export class RoundRecorder {
 
   constructor(private readonly page: Page) {}
 
-  /** Waits for the attach `manifest` and records its size; returns it (the agent's starting point). */
-  async attach(): Promise<ManifestMessage> {
-    await this.page.waitForFunction(() => globalThis.__toolmark_agent__?.manifest !== undefined)
-    const manifest = await this.page.evaluate(() => globalThis.__toolmark_agent__!.manifest!)
-    this.clientId = manifest.clientId
-    this.manifestBytes = utf8Bytes(manifest)
-    return manifest
+  /**
+   * Waits for the first `manifest` that lists every tool in `required`, records its size, and
+   * returns it (the agent's starting point). The bridge attaches before React registers the page's
+   * tools, so the very first (attach) manifest is empty; the agent starts from the first manifest
+   * revision that carries the task's tools, and its `rev` is the one the agent calls with.
+   * @param required - Tool names the starting manifest must contain.
+   */
+  async attach(required: readonly string[]): Promise<ManifestMessage> {
+    const manifest = await this.page.waitForFunction((names) => {
+      const m = globalThis.__toolmark_agent__?.manifest
+      if (!m) return undefined
+      const listed = new Set(m.tools.map((t) => t.name))
+      return names.every((n) => listed.has(n)) ? m : undefined
+    }, required)
+    const value = (await manifest.jsonValue()) as ManifestMessage
+    await manifest.dispose()
+    this.clientId = value.clientId
+    this.manifestBytes = utf8Bytes(value)
+    return value
   }
 
   /** Runs one agent turn (one round): sends every message, awaits one reply per call/describe. */

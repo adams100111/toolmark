@@ -1,5 +1,5 @@
 // Tests for scripts/tarball-smoke.mjs and scripts/render-round-budget.mjs.
-// Run with `node --test scripts/` (Node >= 22.12; needs pnpm on PATH and registry access).
+// Run with `node --test "scripts/*.test.mjs"` (Node >= 22.12; needs pnpm on PATH and registry access).
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
@@ -55,6 +55,21 @@ test('smoke_detects_missing_export_file', { timeout: 300000 }, async () => {
     assert.equal(run.status, 1, output)
     assert.match(output, /FAIL .*toolmark-smoke-fixture\/missing/)
     assert.match(output, /missing\.js/)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('smoke_fails_js_entry_without_types_condition', { timeout: 300000 }, async () => {
+  const { root, out } = await packFixture({
+    extraExports: { './untyped': { import: './index.js' } },
+  })
+  try {
+    const run = runSmoke(out)
+    const output = `${run.stdout}\n${run.stderr}`
+    assert.equal(run.status, 1, output)
+    assert.match(output, /FAIL types toolmark-smoke-fixture\/untyped/)
+    assert.doesNotMatch(output, /FAIL types toolmark-smoke-fixture\b(?!\/)/)
   } finally {
     await rm(root, { recursive: true, force: true })
   }

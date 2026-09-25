@@ -27,9 +27,10 @@ reference lives in [`guides/laravel-reference.md`](guides/laravel-reference.md).
 6. [Deferred confirmation](#deferred-confirmation)
 7. [LLM exposure](#llm-exposure)
 8. [Navigation and full reloads (D23)](#navigation-and-full-reloads-d23)
-9. [Transports](#transports)
-10. [Inbound limits](#inbound-limits)
-11. [Codes (M1)](#codes-m1)
+9. [The page-side bridge](#the-page-side-bridge)
+10. [Transports](#transports)
+11. [Inbound limits](#inbound-limits)
+12. [Codes (M1)](#codes-m1)
 
 ## Participants and ids
 
@@ -119,6 +120,10 @@ Every `result.result` and `confirmed.result` is one of (spec §6; plain JSON, ne
 - Messages are JSON, which drops `undefined`: `ok.data` and `FieldChange.before`/`after` may be
   **absent**, meaning "no value" (e.g. a field that was empty before a fill). Treat absent as
   `undefined`, never as an error.
+- Results are serialized with **JSON semantics** (`JSON.stringify`): values with a `toJSON` method
+  are sent as its output (a `Date` in `ok.data` arrives as its ISO 8601 string), `undefined`
+  properties are dropped, and anything else that is not JSON-safe turns the whole result into
+  `error` "Result not serializable".
 - `error.message` is deliberately generic (`"Tool failed"`, `"Result not serializable"`,
   `"unsupported protocol"`, …); details go to page-side `error` events only.
 - Results carrying page or user content come from tools with `hints.untrustedContent`; treat such
@@ -143,8 +148,9 @@ Every `result.result` and `confirmed.result` is one of (spec §6; plain JSON, ne
 7. Consequential/destructive tools called by `inapp` return `needs_confirmation` (deferred mode,
    the default) — see [Deferred confirmation](#deferred-confirmation).
 8. Every inbound message is treated as hostile: bounded ([Inbound limits](#inbound-limits)), copied,
-   validated, then filtered by `clientId`. Invalid messages are dropped with the page-side `error`
-   event `invalid_message`; the page never answers them.
+   filtered by `clientId` (a message carrying another page's string `clientId` is ignored
+   silently), then validated. Invalid messages are dropped with the page-side `error` event
+   `invalid_message`; the page never answers them.
 
 ## Security MUSTs
 
@@ -262,11 +268,26 @@ Alternative: one LLM tool per manifest entry, named by `llmName` (map it back to
 - **Client-side navigation** (SPA/Inertia visits): a navigation tool returns `ok` **before** its
   scope is disposed; the page then publishes the new tool list (`manifest`, or `changed` in
   `'changed'` mode). The `clientId` stays the same.
-- **Full reload** (or a new tab): the old page is gone. Calls pending on it never get a result, so
-  the server's deadline maps them to `timeout`. The new page load has a **new `clientId`** and sends
-  a fresh `manifest`; the server re-binds the conversation to the new `clientId` (only for the same
-  authenticated user and conversation) and sends future calls there. Pending deferred confirmations
-  of the old page are lost (never approved), so treat an old `confirmId` as expired.
+- **Full reload** (or a new tab): the new page load has a **new `clientId`** and sends a fresh
+  `manifest`; the server re-binds the conversation to the new `clientId` (only for the same
+  authenticated user and conversation) and sends **future** calls there. Calls already sent stay
+  bound to the old `clientId`: a result from it (a tab that is still open, or an answer sent just
+  before the reload) is **accepted** if it arrives before the call's deadline, like any other
+  result; a page that is gone never answers, so the deadline maps the call to `timeout`. Deferred
+  confirmations of a page that is gone are lost (never approved), so treat its `confirmId`s as
+  expired; a still-open old tab can still send `confirmed` for its own `confirmId`s.
+
+## The page-side bridge
+
+`bridge({ transport, onChange?, caller?, maxMessageBytes? })` from `@toolmark/core/bridge`,
+attached with `tm.use(...)`:
+
+- `caller` accepts only `'inapp'` in M1 (the default); any other value **throws** when the bridge
+  is created.
+- `onChange`: `'manifest'` (default) or `'changed'` (see [Messages](#page--agent)).
+- `maxMessageBytes`: see [Inbound limits](#inbound-limits).
+- Disposing the bridge (the function `tm.use` returns) unsubscribes it, aborts its in-flight calls
+  and **closes the transport** (`transport.close()`); create a new transport to attach again.
 
 ## Transports
 
@@ -309,6 +330,10 @@ echoTransport({
 - Reconnects with exponential backoff (500 ms doubling, capped by `maxDelayMs`, default `30000`)
   until a `terminalCloseCodes` close, a rejecting `onOpen` or `close()`. Up to 100 outgoing messages
   are buffered while disconnected (oldest evicted).
+- A reconnect does **not** re-send the manifest: the bridge only sends one on attach and on each
+  registry revision. The server keeps the latest manifest it received for the `clientId`; the next
+  revision brings a fresh one. A server that lost that state should treat the page as having no
+  manifest until then.
 - Non-JSON, binary and oversized frames (more than `4 × 1048576` UTF-16 code units) are dropped
   unparsed, before the bridge's own limit applies.
 
