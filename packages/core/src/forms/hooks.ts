@@ -5,7 +5,7 @@
  */
 import { emitEvent, type Toolmark } from '../registry.js'
 import type { StandardSchemaV1 } from '../standard-schema.js'
-import { getPath, isSafePath, setPath, snapshotValue } from './paths.js'
+import { getPath, isSafePath, nodeBudget, setPath, snapshotValue, spend } from './paths.js'
 import type { FieldInfo, FormAdapter } from './types.js'
 
 /** @internal The value that replaces a sensitive value in results, payloads and `state()`. */
@@ -50,19 +50,154 @@ export function isSensitiveElement(el: Element | null | undefined): boolean {
   )
 }
 
+/** Whether a field is sensitive by its own facts (`FieldInfo.sensitive` or its element). */
+const isSensitiveField = (f: FieldInfo): boolean =>
+  f.sensitive === true || isSensitiveElement(f.element)
+
 /**
- * @internal The sensitive rule (spec §14): the app-declared `sensitive` paths, plus every field
- * whose `FieldInfo.sensitive` is `true` or whose element is a password / `cc-*` / secret
- * `autocomplete` control. Deduplicated, declared order first.
- * @param declared - App-declared sensitive dot paths.
- * @param fields - The adapter's current fields.
+ * @internal The sensitive rule (spec §14) of one form tool (or one wizard step): the app-declared
+ * `sensitive` paths (declared order first), plus every field whose `FieldInfo.sensitive` is `true`
+ * or whose element is a password / `cc-*` / secret `autocomplete` control. Sticky: every path
+ * that was ever reported sensitive stays sensitive, so a "show password" toggle (`type="password"`
+ * → `"text"`), an unmounted step form or a re-rendered element never exposes a value that was
+ * redacted before. A path only becomes sensitive once it has been seen that way: an element that
+ * is plain text on every read before it turns into a password is not covered, so apps declare
+ * such paths in `sensitive`.
+ * @param declared - App-declared sensitive dot paths (`[]` wildcards allowed).
+ * @param seen - The memory of paths seen sensitive (shared, e.g. {@link sensitiveMemoryOf}).
+ * @returns Returns the current list (declared first, then every path seen sensitive) for `fields`.
  */
-export function sensitivePathsOf(declared: readonly string[] | undefined, fields: FieldInfo[]) {
-  const out = new Set<string>()
-  for (const p of declared ?? []) if (typeof p === 'string') out.add(p)
-  for (const f of fields) {
-    if (f.sensitive === true || isSensitiveElement(f.element)) out.add(f.path)
+export function stickySensitive(
+  declared: readonly string[] | undefined,
+  seen: Set<string> = new Set(),
+): (fields: FieldInfo[]) => string[] {
+  return (fields) => {
+    for (const f of fields) if (typeof f.path === 'string' && isSensitiveField(f)) seen.add(f.path)
+    const out = new Set<string>()
+    for (const p of declared ?? []) if (typeof p === 'string') out.add(p)
+    for (const p of seen) out.add(p)
+    return [...out]
   }
+}
+
+const memories = new WeakMap<object, Set<string>>()
+
+/**
+ * @internal The memory of paths seen sensitive for one adapter object, shared by every form tool
+ * registered over it, so a re-registration (e.g. `useFormTool` after a dependency change) does not
+ * forget a path that was a password before a "show password" toggle.
+ * @param adapter - The form adapter.
+ */
+export function sensitiveMemoryOf(adapter: object): Set<string> {
+  let memory = memories.get(adapter)
+  if (!memory) {
+    memory = new Set()
+    memories.set(adapter, memory)
+  }
+  return memory
+}
+
+/**
+ * Splits a sensitive path into segments, `[]` (any array index) as its own segment:
+ * `cards[].cvc` → `cards`, `[]`, `cvc` (`a[][]` and `a.[].b` work too). `undefined` for an
+ * empty segment or a prototype key.
+ */
+function patternSegments(path: string): string[] | undefined {
+  const out: string[] = []
+  for (const seg of path.split('.')) {
+    const m = /^([^[\]]*)((?:\[\])*)$/.exec(seg)
+    if (!m) return undefined
+    const base = m[1]!
+    const wildcards = m[2]!.length / 2
+    if (base === '' && wildcards === 0) return undefined
+    if (base !== '') {
+      if (!isSafePath(base)) return undefined
+      out.push(base)
+    }
+    for (let i = 0; i < wildcards; i++) out.push('[]')
+  }
+  return out
+}
+
+const INDEX = /^\d+$/
+
+/**
+ * @internal The concrete dot paths that the sensitive path `pattern` addresses in `values`: the
+ * path itself when it has no `[]`, else every existing match (`cards[].cvc` → `cards.0.cvc`,
+ * `cards.1.cvc`, …). At most 10000 nodes are visited; past that the walk fails closed and returns
+ * the path before the first `[]` (the whole array is then redacted). Invalid patterns yield `[]`.
+ * @param values - The values to expand against.
+ * @param pattern - A sensitive dot path, possibly with `[]` wildcards.
+ */
+export function expandSensitive(values: unknown, pattern: string): string[] {
+  if (!pattern.includes('[]')) return isSafePath(pattern) ? [pattern] : []
+  const segs = patternSegments(pattern)
+  if (!segs) return []
+  const budget = nodeBudget()
+  const out: string[] = []
+  let overflow = false
+  const walk = (node: unknown, i: number, at: string[]): void => {
+    if (overflow) return
+    if (!spend(budget)) {
+      overflow = true
+      return
+    }
+    if (i === segs.length) {
+      out.push(at.join('.'))
+      return
+    }
+    const seg = segs[i]!
+    if (seg === '[]') {
+      if (!Array.isArray(node)) return
+      for (let k = 0; k < node.length && !overflow; k++) {
+        if (k in node) walk(node[k], i + 1, [...at, String(k)])
+      }
+    } else if (typeof node === 'object' && node !== null && Object.hasOwn(node, seg)) {
+      walk((node as Record<string, unknown>)[seg], i + 1, [...at, seg])
+    }
+  }
+  walk(values, 0, [])
+  if (overflow) {
+    const head = segs.slice(0, segs.indexOf('[]')).join('.')
+    return head === '' ? [] : [head]
+  }
+  return out
+}
+
+/**
+ * @internal Whether the concrete dot path `path` is at or under the sensitive path `pattern`
+ * (`[]` matches any array index): `cards.0.cvc` and `cards.0.cvc.x` are under `cards[].cvc`.
+ */
+export function isUnderSensitive(path: string, pattern: string): boolean {
+  const segs = patternSegments(pattern)
+  if (!segs) return false
+  const parts = path.split('.')
+  if (parts.length < segs.length) return false
+  return segs.every((s, i) => (s === '[]' ? INDEX.test(parts[i]!) : s === parts[i]))
+}
+
+/**
+ * @internal The part of the sensitive path `pattern` that lies strictly below the concrete path
+ * `path` (`cards` + `cards[].cvc` → `[].cvc`), or `undefined` when `pattern` is not below `path`.
+ */
+export function sensitiveBelow(path: string, pattern: string): string | undefined {
+  const segs = patternSegments(pattern)
+  if (!segs) return undefined
+  const parts = path.split('.')
+  if (segs.length <= parts.length) return undefined
+  const matches = parts.every((p, i) => (segs[i] === '[]' ? INDEX.test(p) : segs[i] === p))
+  return matches ? segs.slice(parts.length).join('.') : undefined
+}
+
+/**
+ * @internal The published `sensitivePaths` list: the sensitive paths as given (patterns with `[]`
+ * kept, for consumers that match by pattern) plus the concrete paths each `[]` pattern addresses
+ * in `values` right now (for consumers that redact by exact path, such as the OTel exporter).
+ */
+export function publishSensitive(sensitive: readonly string[], values: unknown): string[] {
+  const out = new Set(sensitive)
+  for (const p of sensitive)
+    if (p.includes('[]')) for (const c of expandSensitive(values, p)) out.add(c)
   return [...out]
 }
 
@@ -82,15 +217,18 @@ export function safeFields(adapter: Pick<FormAdapter, 'fields'> | undefined): Fi
 
 /**
  * @internal A deep copy of `values` (plain objects and arrays) in which every sensitive path that
- * holds a value is replaced by {@link REDACTED}. Unsafe paths are ignored.
+ * holds a value is replaced by {@link REDACTED}. `[]` in a sensitive path matches every array
+ * index (`cards[].cvc`; see {@link expandSensitive}). Unsafe paths are ignored.
  * @param values - Current form values (not mutated).
  * @param sensitive - Sensitive dot paths.
  */
 export function redactValues<T>(values: T, sensitive: readonly string[]): T {
   let out = snapshotValue(values)
-  for (const path of sensitive) {
-    if (!isSafePath(path)) continue
-    if (getPath(out, path) !== undefined) out = setPath(out, path, REDACTED)
+  for (const pattern of sensitive) {
+    if (typeof pattern !== 'string') continue
+    for (const path of expandSensitive(out, pattern)) {
+      if (getPath(out, path) !== undefined) out = setPath(out, path, REDACTED)
+    }
   }
   return out
 }

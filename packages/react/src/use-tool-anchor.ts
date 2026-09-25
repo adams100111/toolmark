@@ -17,6 +17,10 @@ const isElement = (el: unknown): el is Element =>
  *
  * The callback is stable for a given `tool` and `param`; changing either detaches the old anchor
  * and attaches the new one.
+ *
+ * One override exists per `(tool, param)`: when two mounted components anchor the same pair, the
+ * last one to attach (or re-apply) wins, and the first to detach may clear it for both. Anchor each
+ * `(tool, param)` from one component only.
  * @param tool - Full tool name, as in the manifest (scope path included).
  * @param param - Input path the element stands for; omit for the tool's own element.
  * @returns A ref callback.

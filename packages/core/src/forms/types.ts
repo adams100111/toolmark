@@ -80,7 +80,15 @@ export interface FormToolOptions<V> {
   /**
    * Dot paths whose values are always redacted (spec §14): in fill `changes`, confirmation
    * payloads and `state()`. Together with `FieldInfo.sensitive` and password / `cc-*` elements it
-   * forms the tools' `sensitivePaths` (`tm.info(name).sensitivePaths`).
+   * forms the tools' `sensitivePaths` (`tm.info(name).sensitivePaths`). `[]` stands for any array
+   * index (`cards[].cvc`); such a pattern is published as given plus its current concrete paths
+   * (`cards.0.cvc`, …). A field seen sensitive by its element stays sensitive for the tools'
+   * lifetime (a "show password" toggle never exposes it), but a field is only known to be
+   * sensitive once an element has reported it: adapters without elements (e.g. `rhfAdapter`
+   * without `root`/`elementFor`) need their secret paths declared here.
+   *
+   * Issue messages in `state()` are not redacted: schemas must not echo sensitive values in
+   * their messages.
    */
   sensitive?: string[]
   /**

@@ -1,6 +1,7 @@
 import type { FieldInfo, FormAdapter } from '../forms/types.js'
 import { deepEqual, getPath, setPath } from '../forms/paths.js'
 import { invalid, ok, type ToolResult } from '../result.js'
+import { isAgentActivation } from './activation.js'
 import {
   discover,
   formElements,
@@ -62,6 +63,9 @@ const isUnder = (path: string, base: string): boolean =>
  *   `submit` are never reported, nor are events on excluded controls (password, `cc-*`, hidden,
  *   disabled, `[data-tool-ignore]`): those fields do not exist for tools. Only paths are reported,
  *   never values. Note that `element.focus()` from page script also yields a trusted `focusin`.
+ *   The trusted `submit` caused by a DOM button tool's `click()` (an agent activation) is not
+ *   reported either. While subscribed, the control → path map is cached and invalidated by a
+ *   `MutationObserver` on the form's root.
  *
  * @param form - The form element.
  * @param opts - Optional submit override.
@@ -100,7 +104,7 @@ export function domFormAdapter(
   // are the agent's, not the user's.
   let writing = false
   const onUserEvent = (event: Event): void => {
-    if (!event.isTrusted || writing) return
+    if (!event.isTrusted || writing || isAgentActivation()) return
     const composed = event.composedPath()
     const first = composed[0]
     if (first !== undefined && !pending.has(first)) pending.set(first, composed)
@@ -141,19 +145,38 @@ export function domFormAdapter(
       }
     }
   }
+  // Control → field path, cached while someone subscribes so keystrokes do not re-run field
+  // discovery. A MutationObserver on the root invalidates it on any child-list or attribute change
+  // (`name`, `type`, `disabled`, `autocomplete`, `data-tool-ignore`, `form`, …); pending records
+  // are taken synchronously on every lookup, so a change made in the same task is never missed.
+  let pathByControl: Map<EventTarget, string> | undefined
+  const observer =
+    typeof MutationObserver === 'function'
+      ? new MutationObserver(() => {
+          pathByControl = undefined
+        })
+      : undefined
+  const controlPaths = (): Map<EventTarget, string> => {
+    if (!observer || observer.takeRecords().length > 0) pathByControl = undefined
+    if (!pathByControl) {
+      pathByControl = new Map()
+      for (const f of fields()) for (const c of f.controls) pathByControl.set(c, f.path)
+    }
+    return pathByControl
+  }
   const onInteraction = (event: Event): void => {
-    if (!event.isTrusted || writing || subscribers.size === 0) return
+    if (!event.isTrusted || writing || isAgentActivation() || subscribers.size === 0) return
     if (event.type === 'submit') {
       if (!submitting && event.target === form) report({ path: '', kind: 'submit' })
       return
     }
     // The field an event came from: the first field control on its composed path. Excluded
     // controls (password, `cc-*`, hidden, disabled, ignored) are not fields and never report.
-    const list = fields()
+    const paths = controlPaths()
     for (const target of event.composedPath()) {
-      const field = list.find((f) => f.controls.includes(target as HTMLElement))
-      if (field) {
-        report({ path: field.path, kind: event.type === 'input' ? 'input' : 'focus' })
+      const path = paths.get(target)
+      if (path !== undefined) {
+        report({ path, kind: event.type === 'input' ? 'input' : 'focus' })
         return
       }
     }
@@ -163,10 +186,13 @@ export function domFormAdapter(
       root.addEventListener('input', onInteraction, true)
       root.addEventListener('focusin', onInteraction, true)
       EventTarget.prototype.addEventListener.call(form, 'submit', onInteraction, true)
+      observer?.observe(root, { subtree: true, childList: true, attributes: true })
     } else {
       root.removeEventListener('input', onInteraction, true)
       root.removeEventListener('focusin', onInteraction, true)
       EventTarget.prototype.removeEventListener.call(form, 'submit', onInteraction, true)
+      observer?.disconnect()
+      pathByControl = undefined
     }
   }
 
