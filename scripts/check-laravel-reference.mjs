@@ -1,11 +1,14 @@
 #!/usr/bin/env node
 // Checks that the Laravel reference guide shows the example's code byte for byte.
 //
-// Every fenced `php` block in the doc whose first line is `// file: app/Toolmark/<Name>.php`
-// must equal that file under the example root (line endings normalised to LF; the file's final
-// newline is not part of the block). Unmarked php blocks are not checked. Exit codes: 0 all
-// marked blocks match; 1 a mismatch, a missing file, an invalid marker, an unclosed fence or no
-// marked block at all; 2 usage error.
+// A fenced `php` block is marked when its first line is `// file: app/Toolmark/<Name>.php`, or
+// when its first line is `<?php` and its second line is that marker (a real PHP file cannot open
+// with anything before `<?php`, so a synced file's own first two lines are `<?php` then the
+// marker — the marker is then part of the compared content). A marked block must equal that file
+// under the example root (line endings normalised to LF; the file's final newline is not part of
+// the block). Unmarked php blocks are not checked. Exit codes: 0 all marked blocks match; 1 a
+// mismatch, a missing file, an invalid marker, an unclosed fence or no marked block at all; 2
+// usage error.
 //
 // Usage: node scripts/check-laravel-reference.mjs
 //          [--doc docs/guides/laravel-reference.md] [--root examples/inertia-laravel]
@@ -43,6 +46,21 @@ export function phpBlocks(markdown) {
   return blocks
 }
 
+/**
+ * Finds a block's `// file: ...` marker: on its own first line (stripped before comparing, since
+ * it is not part of the synced file), or on its second line when the first is `<?php` (kept,
+ * since a real PHP file's own second line is that marker). Returns `{ rel, strip }` or null.
+ */
+function findMarker(body) {
+  const first = MARKER.exec(body[0] ?? '')
+  if (first) return { rel: first[1], strip: 1 }
+  if (body[0] === '<?php') {
+    const second = MARKER.exec(body[1] ?? '')
+    if (second) return { rel: second[1], strip: 0 }
+  }
+  return null
+}
+
 /** Compares the doc's marked blocks with the example files; returns `{ checked, errors }`. */
 export function checkLaravelReference({ doc, root }) {
   const errors = []
@@ -54,9 +72,9 @@ export function checkLaravelReference({ doc, root }) {
   }
   let checked = 0
   for (const block of blocks) {
-    const marker = MARKER.exec(block.body[0] ?? '')
+    const marker = findMarker(block.body)
     if (!marker) continue
-    const rel = marker[1]
+    const rel = marker.rel
     const where = `${doc}:${block.line}`
     if (!VALID_PATH.test(rel)) {
       errors.push(`${where}: invalid file marker "${rel}" (expected app/Toolmark/<Name>.php)`)
@@ -69,7 +87,7 @@ export function checkLaravelReference({ doc, root }) {
       continue
     }
     const expected = lines(readFileSync(file, 'utf8'))
-    const actual = block.body.slice(1)
+    const actual = block.body.slice(marker.strip)
     const n = Math.max(expected.length, actual.length)
     for (let k = 0; k < n; k++) {
       if (expected[k] !== actual[k]) {

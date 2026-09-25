@@ -25,13 +25,35 @@ const BRIDGE = [
 
 const PROPS = ['<?php', '', 'namespace App\\Toolmark;', '', 'final class Props {}', ''].join('\n')
 
-/** Renders a markdown doc whose php blocks carry `// file:` markers. */
+/** A file whose own second line (after `<?php`) is the marker — a real synced file's shape. */
+const RUNNER = [
+  '<?php',
+  '// file: app/Toolmark/AgentRunner.php',
+  '',
+  'namespace App\\Toolmark;',
+  '',
+  'interface AgentRunner {}',
+  '',
+].join('\n')
+
+/** Renders a markdown doc whose php blocks carry a `// file:` marker as their own first line
+ * (not part of the synced file: stripped before comparing). */
 function doc(blocks) {
   const parts = ['# Laravel reference', '', 'Intro.', '']
   for (const { file, body } of blocks) {
     parts.push('```php', `// file: ${file}`, body.replace(/\n$/, ''), '```', '')
   }
   parts.push('An unmarked block is not checked:', '', '```php', '<?php echo 1;', '```', '')
+  return parts.join('\n')
+}
+
+/** Renders a markdown doc whose php blocks are the file verbatim, `<?php` first and the marker
+ * as the file's own second line (the real convention: the marker is part of the compared file). */
+function docEmbeddedMarker(bodies) {
+  const parts = ['# Laravel reference', '', 'Intro.', '']
+  for (const body of bodies) {
+    parts.push('```php', body.replace(/\n$/, ''), '```', '')
+  }
   return parts.join('\n')
 }
 
@@ -71,6 +93,36 @@ test('laravel_reference_matches_example: matching fixture exits 0', async () => 
     const r = run(f)
     assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`)
     assert.match(r.stdout, /2 blocks match/)
+  } finally {
+    await rm(f.dir, { recursive: true, force: true })
+  }
+})
+
+test('marker on line 2 (after <?php, the real file convention): matching fixture exits 0', async () => {
+  const f = await fixture({
+    files: { 'app/Toolmark/AgentRunner.php': RUNNER },
+    markdown: docEmbeddedMarker([RUNNER]),
+  })
+  try {
+    const r = run(f)
+    assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`)
+    assert.match(r.stdout, /1 blocks match/)
+  } finally {
+    await rm(f.dir, { recursive: true, force: true })
+  }
+})
+
+test('marker on line 2: a changed byte (including in the marker line itself) exits 1', async () => {
+  const f = await fixture({
+    files: { 'app/Toolmark/AgentRunner.php': RUNNER },
+    markdown: docEmbeddedMarker([
+      RUNNER.replace('interface AgentRunner {}', 'interface AgentRunner2 {}'),
+    ]),
+  })
+  try {
+    const r = run(f)
+    assert.equal(r.status, 1, `${r.stdout}\n${r.stderr}`)
+    assert.match(r.stderr, /app\/Toolmark\/AgentRunner\.php/)
   } finally {
     await rm(f.dir, { recursive: true, force: true })
   }
