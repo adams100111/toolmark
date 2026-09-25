@@ -70,6 +70,14 @@ export const MAX_FILE_REF_LENGTH = 2048
 /** Most characters (code points) of a `{ url }` value. */
 export const MAX_FILE_URL_LENGTH = 8192
 
+/**
+ * Most file references one fill may carry in total, across every file field (each item of a `[]`
+ * array path and each reference of a `multiple` field counts once; a wizard `fill` counts all its
+ * steps together). More is `invalid` ("Too many files") at the root, before any reference is
+ * resolved or fetched.
+ */
+export const MAX_FILE_REFS_PER_FILL = 100
+
 const MAX_NAME_LENGTH = 255
 
 /** Non-empty and at most `max` code points (cheap UTF-16 bound first, no huge spreads). */
@@ -299,6 +307,17 @@ export function fileLimitIssues(
   }
   return refLengthIssues(raw, path)
 }
+
+/** @internal The number of references a form file value counts toward {@link MAX_FILE_REFS_PER_FILL}. */
+export function fileRefCount(raw: unknown, spec: FileFieldSpec): number {
+  return spec.multiple === true && Array.isArray(raw) ? raw.length : 1
+}
+
+/** @internal The root issue of a fill over {@link MAX_FILE_REFS_PER_FILL}. */
+export const TOO_MANY_FILES_PER_FILL = {
+  path: '',
+  message: `Too many files (at most ${MAX_FILE_REFS_PER_FILL} per fill)`,
+} as const
 
 function refLengthIssues(v: unknown, path: string): { path: string; message: string }[] {
   if (typeof v !== 'object' || v === null || Array.isArray(v)) return []

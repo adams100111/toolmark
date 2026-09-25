@@ -225,13 +225,8 @@ function EventWizard(): JSX.Element {
       setCreated((list) => [...list, dataRef.current])
       return Promise.resolve(ok({}))
     },
-    // `d` (core's `getData()`) only reflects the mounted current step once it has been synced
-    // into `data` (on `goTo`/`submit`, i.e. after this summary is shown) — read the live current
-    // adapter directly instead, so the confirmation text is right even for the current step.
-    submitSummary: () => {
-      const merged = { ...dataRef.current, [current]: currentAdapter.getValues() } as EventData
-      return `Create event "${merged.basics.title}"`
-    },
+    // `d` already carries the current step's live values (core merges the mounted adapter in).
+    submitSummary: (d) => `Create event "${String(d.basics?.title)}"`,
   })
 
   // The app's own Back/Next controls bypass the wizard tool call, so they sync explicitly first.

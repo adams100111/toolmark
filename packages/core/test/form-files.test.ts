@@ -3,6 +3,7 @@ import { z } from 'zod'
 import {
   createFormTools,
   fileFieldSchema,
+  MAX_FILE_REFS_PER_FILL,
   ok,
   setPath,
   type FieldInfo,
@@ -400,5 +401,50 @@ describe('form files: fix round 1 (misconfiguration)', () => {
       files: { docs: { multiple: true, maxFiles: 100 } },
     })
     expect(tm.manifest().tools.length).toBeGreaterThan(0)
+  })
+})
+
+describe('form files: total references per fill (final review I2)', () => {
+  it('array_item_file_refs_over_total_cap_invalid_before_resolution', async () => {
+    const fetch = vi.fn(() => Promise.resolve(new Response('x')))
+    vi.stubGlobal('fetch', fetch)
+    try {
+      const { adapter, fill, resolve } = setup({})
+      const before = adapter.values
+      const items = Array.from({ length: 4000 }, () => ({ label: 'x', file: { ref: 'a' } }))
+      expect(await fill({ attachments: items })).toEqual({
+        status: 'invalid',
+        issues: [{ path: '', message: expect.stringContaining('Too many files') as string }],
+      })
+      expect(resolve).not.toHaveBeenCalled()
+      expect(fetch).not.toHaveBeenCalled()
+      expect(adapter.values).toBe(before)
+      // One over the cap is refused too; the cap counts every slot and every list entry together.
+      const over = Array.from({ length: MAX_FILE_REFS_PER_FILL - 9 }, () => ({
+        label: 'x',
+        file: { url: 'https://cdn.example.com/a.txt' },
+      }))
+      const docs = Array.from({ length: 10 }, () => ({ ref: 'a' }))
+      expect(await fill({ attachments: over, docs })).toMatchObject({
+        status: 'invalid',
+        issues: [{ path: '' }],
+      })
+      expect(resolve).not.toHaveBeenCalled()
+      expect(fetch).not.toHaveBeenCalled()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('exactly_the_total_cap_is_accepted', async () => {
+    const { fill, resolve } = setup({})
+    const items = Array.from({ length: MAX_FILE_REFS_PER_FILL - 10 }, () => ({
+      label: 'x',
+      file: { ref: 'a' },
+    }))
+    const docs = Array.from({ length: 10 }, () => ({ ref: 'b' }))
+    const r = await fill({ title: 'T', attachments: items, docs })
+    expect(r.status).toBe('ok')
+    expect(resolve).toHaveBeenCalledTimes(MAX_FILE_REFS_PER_FILL)
   })
 })

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { fromJsonSchema, ToolmarkError, type JsonSchema } from '@toolmark/core'
-import { MAX_PATTERN_INPUT_LENGTH } from '../src/json-schema/validate.js'
+import { MAX_PATTERN_INPUT_LENGTH, MAX_SCHEMA_EVALUATIONS } from '../src/json-schema/validate.js'
 
 function check(schema: JsonSchema, value: unknown): { path: string; message: string }[] {
   const result = fromJsonSchema(schema)['~standard'].validate(value)
@@ -138,5 +138,33 @@ describe('json schema additionalProperties as a schema (fix round 1, I1)', () =>
     rejection({ additionalProperties: { $ref: 'https://example.com/x' } })
     rejection({ additionalProperties: { pattern: '(' } })
     rejection({ additionalProperties: 'nope' })
+  })
+})
+
+describe('json schema evaluation budget (final review M1)', () => {
+  // Two-branch unions reached recursively: every nesting level doubles the work without a budget.
+  const bomb = {
+    $defs: {
+      x: { anyOf: [{ $ref: '#/$defs/y' }, { $ref: '#/$defs/y' }] },
+      y: { anyOf: [{ $ref: '#/$defs/z' }, { $ref: '#/$defs/z' }] },
+      z: { type: 'array', items: { $ref: '#/$defs/x' } },
+    },
+    $ref: '#/$defs/x',
+  } as JsonSchema
+
+  it('recursive_unions_stop_at_the_budget_with_input_too_complex', () => {
+    expect(MAX_SCHEMA_EVALUATIONS).toBe(100000)
+    let nest: unknown = 1
+    for (let i = 0; i < 11; i++) nest = [nest]
+    const t0 = performance.now()
+    expect(check(bomb, nest)).toEqual([{ path: '', message: 'Input too complex' }])
+    expect(performance.now() - t0).toBeLessThan(1000)
+  })
+
+  it('shallow_inputs_still_validate_normally', () => {
+    expect(check(bomb, [[[1]]])).toEqual([{ path: '0.0.0', message: expect.any(String) as string }])
+    expect(check(bomb, [[[]]])).toEqual([])
+    // The budget is per validation: a later call starts afresh.
+    expect(check({ type: 'array', items: { type: 'number' } }, [1, 2, 3])).toEqual([])
   })
 })

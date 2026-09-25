@@ -338,6 +338,29 @@ describe('wizard tools', () => {
     expect(t.submit).not.toHaveBeenCalled()
   })
 
+  it('wizard_submit_summary_sees_the_mounted_step_live_values', async () => {
+    const summaries: Data[] = []
+    const s = setup({
+      adapter: true,
+      submitSummary: (d) => {
+        summaries.push(d)
+        return `Create "${String(d.basicInfo?.title)}"`
+      },
+    })
+    // The user edits the mounted step; parent data still holds the old title.
+    s.w.forms.basicInfo!.userTypes('title', 'Live title')
+    expect(s.w.data.basicInfo).toEqual({ title: 'Old title' })
+    const r = await s.tm.call('create.submit', {}, { caller: 'inapp' })
+    expect(r).toMatchObject({ status: 'needs_confirmation', summary: 'Create "Live title"' })
+    expect(summaries.at(-1)).toEqual({
+      basicInfo: { title: 'Live title' },
+      details: { budget: 10 },
+      review: {},
+    })
+    // The summary view is a copy: parent data is untouched.
+    expect(s.w.data.basicInfo).toEqual({ title: 'Old title' })
+  })
+
   it('wizard_submit_validates_all_steps_before_confirmation', async () => {
     const s = setup({ data: { basicInfo: { title: 'T' }, details: {}, review: {} } })
     const r = await s.tm.call('create.submit', {}, { caller: 'inapp' })
@@ -575,6 +598,61 @@ describe('wizard tools', () => {
     expect(s.tm.manifest().tools).toHaveLength(4)
     s.tools.dispose()
     expect(s.tm.manifest().tools).toEqual([])
+  })
+})
+
+describe('wizard tools: total file references per fill (final review I2)', () => {
+  it('wizard_fill_caps_file_refs_across_steps_before_any_resolution', async () => {
+    const resolve = vi.fn(() => Promise.resolve(new File(['x'], 'a.txt', { type: 'text/plain' })))
+    const tm = createTestRegistry({ files: { resolve } })
+    const withFiles = z.object({
+      items: z.array(z.object({ file: z.instanceof(File) })).optional(),
+    })
+    let data: Data = { a: {}, b: {} }
+    createWizardTools(tm, {
+      name: 'up',
+      description: 'Upload wizard.',
+      steps: [
+        { name: 'a', input: withFiles, files: { 'items[].file': {} } },
+        { name: 'b', input: withFiles, files: { 'items[].file': {} } },
+      ],
+      getData: () => data,
+      setData: (next) => {
+        data = next
+      },
+      getCurrent: () => 'a',
+      goTo: () => {},
+      submit: () => Promise.resolve(ok(null)),
+    })
+    const items = (n: number) => Array.from({ length: n }, () => ({ file: { ref: 'r' } }))
+    // Each step alone is under the cap; together they are over it → nothing resolved.
+    const r = await tm.call(
+      'up.fill',
+      { steps: { a: { items: items(60) }, b: { items: items(60) } } },
+      { caller: 'inapp' },
+    )
+    expect(r).toEqual({
+      status: 'invalid',
+      issues: [{ path: '', message: expect.stringContaining('Too many files') as string }],
+    })
+    expect(resolve).not.toHaveBeenCalled()
+    expect(data).toEqual({ a: {}, b: {} })
+    // 4000 items in one step: refused up front too.
+    const big = await tm.call(
+      'up.fill',
+      { steps: { a: { items: items(4000) } } },
+      { caller: 'inapp' },
+    )
+    expect(big.status).toBe('invalid')
+    expect(resolve).not.toHaveBeenCalled()
+    // Within the cap: resolved.
+    const fine = await tm.call(
+      'up.fill',
+      { steps: { a: { items: items(2) }, b: { items: items(3) } } },
+      { caller: 'inapp' },
+    )
+    expect(fine.status).toBe('ok')
+    expect(resolve).toHaveBeenCalledTimes(5)
   })
 })
 

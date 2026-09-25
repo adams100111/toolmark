@@ -20,6 +20,7 @@ export {
   DEFAULT_MAX_FILES,
   fileFieldSchema,
   MAX_FILE_REF_LENGTH,
+  MAX_FILE_REFS_PER_FILL,
   MAX_FILE_URL_LENGTH,
 } from './files.js'
 export { isValidToolName, toLlmName } from './names.js'
