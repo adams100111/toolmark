@@ -19,6 +19,14 @@ export function isSafePath(path: string): boolean {
   return path.split('.').every((seg) => seg !== '' && !FORBIDDEN.has(seg))
 }
 
+/** Own enumerable keys; array indices skip holes (`i in arr`) so sparse arrays never yield `undefined`. */
+function ownKeys(node: Record<string, unknown> | unknown[]): string[] {
+  if (!Array.isArray(node)) return Object.keys(node)
+  const keys: string[] = []
+  for (let i = 0; i < node.length; i++) if (i in node) keys.push(String(i))
+  return keys
+}
+
 function segments(path: string): string[] {
   if (!isSafePath(path)) {
     throw new ToolmarkError('invalid_path', `Invalid field path "${path}"`)
@@ -41,7 +49,7 @@ function unsafeInside(
   if (!isArray && !isPlainObject(value)) return null
   if (depth > MAX_DEPTH || seen.has(value)) return path
   seen.add(value)
-  const keys = isArray ? value.map((_, i) => String(i)) : Object.keys(value)
+  const keys = ownKeys(value)
   for (const key of keys) {
     const child = `${path}.${key}`
     if (!isSafePath(key)) return child
@@ -82,7 +90,7 @@ export function flattenWithRejected(
     isPlainObject(v) || (expandArrays && Array.isArray(v))
   const walk = (node: Record<string, unknown> | unknown[], prefix: string, depth: number): void => {
     ancestors.add(node)
-    const keys = Array.isArray(node) ? node.map((_, i) => String(i)) : Object.keys(node)
+    const keys = ownKeys(node)
     for (const key of keys) {
       const path = prefix === '' ? key : `${prefix}.${key}`
       if (!isSafePath(key) || !isSafePath(path)) {
@@ -218,23 +226,31 @@ export function deepEqual(a: unknown, b: unknown): boolean {
 
 /**
  * @internal Splits `fill` values into plain values and array operations. A plain object at `path`
- * is taken as an array-op candidate when one of its keys starts with `$` or `isArrayField(path)`
- * says the schema declares only an array there; candidates are returned raw (validated by
- * {@link applyArrayOp}). Every other value is copied as-is (unsafe keys are kept, so the caller's
- * flatten still refuses them).
+ * is taken as an array-op candidate when `isArrayField(path)` says the schema declares only an
+ * array there, or when one of its keys starts with `$` and `declaresArray(path)` says the schema
+ * declares an array there (so `$`-keyed data in records / open objects stays plain data). Without
+ * `declaresArray`, any `$`-keyed object is a candidate. Candidates are returned raw (validated by
+ * {@link applyArrayOp}). Every other value is copied as-is (unsafe keys, cycles and over-deep
+ * values are kept, so the caller's flatten still refuses them).
  */
 export function extractArrayOps(
   values: Record<string, unknown>,
   isArrayField: (path: string) => boolean,
+  declaresArray?: (path: string) => boolean,
 ): { rest: Record<string, unknown>; ops: Map<string, Record<string, unknown>> } {
   const ops = new Map<string, Record<string, unknown>>()
+  const ancestors = new WeakSet<object>()
+  const isOp = (value: Record<string, unknown>, path: string): boolean =>
+    isArrayField(path) ||
+    (Object.keys(value).some((k) => k.startsWith('$')) && (declaresArray?.(path) ?? true))
   const walk = (node: Record<string, unknown>, prefix: string, depth: number) => {
+    ancestors.add(node)
     const out: Record<string, unknown> = {}
     for (const key of Object.keys(node)) {
       const path = prefix === '' ? key : `${prefix}.${key}`
       let value = node[key]
-      if (isPlainObject(value) && isSafePath(path) && depth < MAX_DEPTH) {
-        if (Object.keys(value).some((k) => k.startsWith('$')) || isArrayField(path)) {
+      if (isPlainObject(value) && isSafePath(path) && depth < MAX_DEPTH && !ancestors.has(value)) {
+        if (isOp(value, path)) {
           ops.set(path, value)
           continue
         }
@@ -247,6 +263,7 @@ export function extractArrayOps(
         configurable: true,
       })
     }
+    ancestors.delete(node)
     return out
   }
   return { rest: walk(values, '', 0), ops }
