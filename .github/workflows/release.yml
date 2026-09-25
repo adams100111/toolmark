@@ -150,6 +150,10 @@ jobs:
       # equal the plan entry's, with no install scripts and a plain packages/<file>.tgz path (SEC-16).
       - name: Plan entries match their tarballs
         run: node scripts/check-release-versions.mjs --plan dist-pack
+      # SEC-22: npm's own tar reader must agree with the plan too. `npm publish --dry-run --json`
+      # per tarball, offline (--force, loopback registry) and with no token or OIDC variables.
+      - name: npm reads the plan's name and version from each tarball
+        run: node scripts/check-release-versions.mjs --npm-dry-run dist-pack
       - name: Publish (npm, provenance)
         env:
           NPM_BOOTSTRAP_TOKEN: ${{ secrets.NPM_BOOTSTRAP_TOKEN }}

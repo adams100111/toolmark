@@ -68,6 +68,16 @@ test('sec_16_publish_checks_plan_against_packed_manifests_first', () => {
   )
 })
 
+test('sec_22_publish_asks_npm_what_each_tarball_is_before_publishing', () => {
+  const plan = stepIndex('publish', /check-release-versions\.mjs --plan dist-pack/)
+  const npm = stepIndex('publish', /check-release-versions\.mjs --npm-dry-run dist-pack/)
+  const publish = stepIndex('publish', /npm publish/)
+  assert.ok(npm > plan, 'after the packed-manifest check')
+  assert.ok(npm < publish, 'before any npm publish')
+  // No token reaches the dry-run step (the script also strips the environment it gives npm).
+  assert.equal(workflow.jobs.publish.steps[npm].env, undefined)
+})
+
 test('sec_17_doc_lists_main_only_deployment_branches_as_a_gate', () => {
   const gates = doc.slice(doc.indexOf('## What stops a publish'), doc.indexOf('## Publish path'))
   assert.match(gates, /Required owner gate/)

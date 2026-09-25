@@ -76,6 +76,14 @@ After approval, the job still refuses to publish if:
   or declares a `preinstall`/`install`/`postinstall` script, or the plan's `tarball.path` is not a
   plain `packages/<name>-<version>.tgz` (`check-release-versions --plan`, SEC-16). npm publishes
   what the tarball says, not what the plan says.
+- a tarball could be read differently by npm's own tar reader: more than one entry that normalises
+  to `package/package.json` (npm keeps the last), a PAX (`x`/`g`) or GNU long-name (`L`/`K`)
+  header, a link or device entry, an entry outside `package/`, or a bad header checksum
+  (`check-release-versions --plan`, SEC-22).
+- `npm publish <tgz> --dry-run --json` reports a different `name` or `version` than the plan entry
+  (`check-release-versions --npm-dry-run`, SEC-22). It runs offline (`--force` skips the registry
+  version lookup; the registry is a loopback address) with only `PATH` and a scratch `HOME` in its
+  environment, so no token, OIDC request variable or npm config reaches it.
 - an existing `<name>@<version>` git tag points at a commit other than `$GITHUB_SHA` (checked
   before and after `gh release create`, which would otherwise attach the release to the existing
   tag and ignore `--target`; SEC-15).
