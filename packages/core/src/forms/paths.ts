@@ -3,6 +3,32 @@ import { ToolmarkError } from '../errors.js'
 const FORBIDDEN = new Set(['__proto__', 'prototype', 'constructor'])
 const MAX_DEPTH = 64
 
+/**
+ * @internal Maximum number of nodes (containers and leaves, counted per visit, so shared
+ * references count every time they are reached) a walk over one `fill` input may visit.
+ */
+export const MAX_INPUT_NODES = 10000
+
+/**
+ * @internal A node budget shared by the walks over one input. Each visited node spends one unit;
+ * once `left` is negative the walks stop descending and the caller must refuse the input
+ * ("Input too complex"). Bounds shared-reference (DAG) inputs, which are otherwise exponential.
+ */
+export interface NodeBudget {
+  left: number
+}
+
+/** @internal A fresh {@link NodeBudget} of `max` nodes. */
+export function nodeBudget(max = MAX_INPUT_NODES): NodeBudget {
+  return { left: max }
+}
+
+/** Spends one node; `false` once the budget is exhausted. */
+function spend(budget: NodeBudget): boolean {
+  budget.left--
+  return budget.left >= 0
+}
+
 const hasOwn = (obj: object, key: PropertyKey): boolean =>
   Object.prototype.hasOwnProperty.call(obj, key)
 
@@ -19,9 +45,17 @@ export function isSafePath(path: string): boolean {
   return path.split('.').every((seg) => seg !== '' && !FORBIDDEN.has(seg))
 }
 
-/** Own enumerable keys; array indices skip holes (`i in arr`) so sparse arrays never yield `undefined`. */
-function ownKeys(node: Record<string, unknown> | unknown[]): string[] {
+/**
+ * Own enumerable keys; array indices skip holes (`i in arr`) so sparse arrays never yield
+ * `undefined`. An array longer than the remaining budget exhausts it (a huge sparse array would
+ * otherwise cost its full length) and yields no keys.
+ */
+function ownKeys(node: Record<string, unknown> | unknown[], budget: NodeBudget): string[] {
   if (!Array.isArray(node)) return Object.keys(node)
+  if (node.length > budget.left) {
+    budget.left = -1
+    return []
+  }
   const keys: string[] = []
   for (let i = 0; i < node.length; i++) if (i in node) keys.push(String(i))
   return keys
@@ -36,24 +70,32 @@ function segments(path: string): string[] {
 
 /**
  * Finds the first unsafe key inside a leaf value (arrays and plain objects, depth-bounded).
- * Returns its full path, or `null` when the value is safe.
+ * Returns its full path, or `null` when the value is safe. An exhausted budget reports `path`.
  */
 function unsafeInside(
   value: unknown,
   path: string,
   depth: number,
   seen: WeakSet<object>,
+  budget: NodeBudget,
 ): string | null {
   if (typeof value !== 'object' || value === null) return null
   const isArray = Array.isArray(value)
   if (!isArray && !isPlainObject(value)) return null
-  if (depth > MAX_DEPTH || seen.has(value)) return path
+  if (depth > MAX_DEPTH || seen.has(value) || !spend(budget)) return path
   seen.add(value)
-  const keys = ownKeys(value)
+  const keys = ownKeys(value, budget)
+  if (budget.left < 0) return path
   for (const key of keys) {
     const child = `${path}.${key}`
     if (!isSafePath(key)) return child
-    const found = unsafeInside((value as Record<string, unknown>)[key], child, depth + 1, seen)
+    const found = unsafeInside(
+      (value as Record<string, unknown>)[key],
+      child,
+      depth + 1,
+      seen,
+      budget,
+    )
     if (found !== null) return found
   }
   seen.delete(value)
@@ -72,27 +114,37 @@ export interface FlattenOptions {
 /**
  * @internal Like {@link flatten}, also returning the paths it refused: prototype keys and empty
  * segments anywhere (including inside array / object leaves, reported with their full path, e.g.
- * `tags.0.__proto__`), cycles and values nested deeper than 64 levels. A refused subtree is not
- * emitted.
+ * `tags.0.__proto__`), cycles, values nested deeper than 64 levels and subtrees past the node
+ * `budget` (default: a fresh {@link MAX_INPUT_NODES} budget; check `budget.left < 0`). A refused
+ * subtree is not emitted. `duplicates` lists paths reached twice (e.g. `{ 'a.b': 1, a: { b: 2 } }`);
+ * the later value wins in `values`.
  */
 export function flattenWithRejected(
   obj: unknown,
   opts?: FlattenOptions,
+  budget: NodeBudget = nodeBudget(),
 ): {
   values: Record<string, unknown>
   rejected: string[]
+  duplicates: string[]
 } {
   const expandArrays = opts?.arraysAsLeaves === false
   const values: Record<string, unknown> = {}
   const rejected: string[] = []
+  const duplicates: string[] = []
   const ancestors = new WeakSet<object>()
   const isContainer = (v: unknown): v is Record<string, unknown> | unknown[] =>
     isPlainObject(v) || (expandArrays && Array.isArray(v))
   const walk = (node: Record<string, unknown> | unknown[], prefix: string, depth: number): void => {
     ancestors.add(node)
-    const keys = ownKeys(node)
+    const keys = ownKeys(node, budget)
+    if (budget.left < 0) rejected.push(prefix)
     for (const key of keys) {
       const path = prefix === '' ? key : `${prefix}.${key}`
+      if (!spend(budget)) {
+        rejected.push(path)
+        break
+      }
       if (!isSafePath(key) || !isSafePath(path)) {
         rejected.push(path)
         continue
@@ -103,11 +155,12 @@ export function flattenWithRejected(
         else walk(value, path, depth + 1)
         continue
       }
-      const unsafe = unsafeInside(value, path, depth + 1, new WeakSet())
+      const unsafe = unsafeInside(value, path, depth + 1, new WeakSet(), budget)
       if (unsafe !== null) {
         rejected.push(unsafe)
         continue
       }
+      if (hasOwn(values, path)) duplicates.push(path)
       Object.defineProperty(values, path, {
         value,
         enumerable: true,
@@ -118,7 +171,7 @@ export function flattenWithRejected(
     ancestors.delete(node)
   }
   if (isPlainObject(obj)) walk(obj, '', 0)
-  return { values, rejected }
+  return { values, rejected, duplicates }
 }
 
 /**
@@ -146,7 +199,8 @@ export function snapshotValue<T>(value: T, depth = 0): T {
  * leaves unless `arraysAsLeaves: false`; non-plain objects (e.g. `Date`, `File`) are always
  * leaves; empty objects produce no path. Keys that are `__proto__`, `prototype` or `constructor`
  * (at any depth, including inside array leaves), cycles and values nested deeper than 64 levels
- * are never emitted. Only own properties are read.
+ * are never emitted. At most 10000 nodes are visited (shared references count each time they are
+ * reached); the rest of a larger value is not emitted. Only own properties are read.
  * @param obj - The value to flatten (non-objects yield `{}`).
  * @param opts - See {@link FlattenOptions}; arrays are leaves by default.
  * @returns A record keyed by dot path.
@@ -227,18 +281,26 @@ export function deepEqual(a: unknown, b: unknown): boolean {
 /**
  * @internal Splits `fill` values into plain values and array operations. A plain object at `path`
  * is taken as an array-op candidate when `isArrayField(path)` says the schema declares only an
- * array there, or when one of its keys starts with `$` and `declaresArray(path)` says the schema
- * declares an array there (so `$`-keyed data in records / open objects stays plain data). Without
+ * array there, or when one of its keys starts with `$` and `declaresArray(path)` says the path
+ * takes array ops (form tools: an array is declared there, or no object is — so `$`-keyed data in
+ * records / open objects stays plain data). Without
  * `declaresArray`, any `$`-keyed object is a candidate. Candidates are returned raw (validated by
- * {@link applyArrayOp}). Every other value is copied as-is (unsafe keys, cycles and over-deep
- * values are kept, so the caller's flatten still refuses them).
+ * {@link applyArrayOp}). Every other value is copied as-is (unsafe keys, cycles, over-deep values
+ * and subtrees past the node `budget` are kept raw, so the caller's flatten still refuses them).
+ * `duplicates` lists op paths reached twice (e.g. `{ 'a.b': op, a: { b: op } }`).
  */
 export function extractArrayOps(
   values: Record<string, unknown>,
   isArrayField: (path: string) => boolean,
   declaresArray?: (path: string) => boolean,
-): { rest: Record<string, unknown>; ops: Map<string, Record<string, unknown>> } {
+  budget: NodeBudget = nodeBudget(),
+): {
+  rest: Record<string, unknown>
+  ops: Map<string, Record<string, unknown>>
+  duplicates: string[]
+} {
   const ops = new Map<string, Record<string, unknown>>()
+  const duplicates: string[] = []
   const ancestors = new WeakSet<object>()
   const isOp = (value: Record<string, unknown>, path: string): boolean =>
     isArrayField(path) ||
@@ -249,8 +311,15 @@ export function extractArrayOps(
     for (const key of Object.keys(node)) {
       const path = prefix === '' ? key : `${prefix}.${key}`
       let value = node[key]
-      if (isPlainObject(value) && isSafePath(path) && depth < MAX_DEPTH && !ancestors.has(value)) {
+      if (
+        isPlainObject(value) &&
+        isSafePath(path) &&
+        depth < MAX_DEPTH &&
+        !ancestors.has(value) &&
+        spend(budget)
+      ) {
         if (isOp(value, path)) {
+          if (ops.has(path)) duplicates.push(path)
           ops.set(path, value)
           continue
         }
@@ -266,7 +335,7 @@ export function extractArrayOps(
     ancestors.delete(node)
     return out
   }
-  return { rest: walk(values, '', 0), ops }
+  return { rest: walk(values, '', 0), ops, duplicates }
 }
 
 /**
@@ -279,6 +348,7 @@ export function applyArrayOp(
   op: Record<string, unknown>,
   current: unknown,
   path: string,
+  budget: NodeBudget = nodeBudget(),
 ): { kind: 'append' | 'remove'; next: unknown[] } | { error: string } {
   const keys = Object.keys(op)
   if (keys.length !== 1 || (keys[0] !== '$append' && keys[0] !== '$remove')) {
@@ -289,12 +359,15 @@ export function applyArrayOp(
   const operand = op[keys[0]]
   if (keys[0] === '$append') {
     if (!Array.isArray(operand)) return { error: '$append expects an array of items' }
-    if (unsafeInside(operand, path, 1, new WeakSet()) !== null) {
+    if (unsafeInside(operand, path, 1, new WeakSet(), budget) !== null) {
       return { error: 'Invalid field path inside appended items' }
     }
     return { kind: 'append', next: [...(base as unknown[]), ...(operand as unknown[])] }
   }
   if (!Array.isArray(operand)) return { error: '$remove expects an array of indexes' }
+  if (operand.length > base.length) {
+    return { error: '$remove lists more indexes than the current array has' }
+  }
   const seen = new Set<number>()
   for (const i of operand as unknown[]) {
     if (typeof i !== 'number' || !Number.isInteger(i) || i < 0 || i >= base.length) {

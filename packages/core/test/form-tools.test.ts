@@ -99,8 +99,12 @@ describe('form tools', () => {
     })
     // M2: array-op branches keep their own `required` (pass-2 ruling); nothing else does.
     const values = (fill.inputSchema.properties as Record<string, JsonSchema>).values!
+    const isOpBranch = (b: unknown): boolean => {
+      const props = (b as { properties?: Record<string, unknown> } | null)?.properties
+      return props !== undefined && ('$append' in props || '$remove' in props)
+    }
     const withoutOps = JSON.stringify(values, (key, v: unknown) =>
-      key === 'anyOf' && Array.isArray(v) && v.length === 3 ? [v[0]] : v,
+      key === 'anyOf' && Array.isArray(v) ? v.filter((b) => !isOpBranch(b)) : v,
     )
     expect(withoutOps).not.toContain('"required"')
     tools.dispose()

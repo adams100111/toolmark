@@ -15,6 +15,7 @@ import {
   getPath,
   isPlainObject,
   isSafePath,
+  nodeBudget,
   setPath,
   snapshotValue,
 } from './paths.js'
@@ -127,8 +128,10 @@ function arrayOpSchema(stripped: unknown, items: unknown): JsonSchema {
 /**
  * Wraps every array-only property reachable through `properties` and `allOf`/`anyOf`/`oneOf` of
  * the stripped schema in {@link arrayOpSchema}, walking the unstripped schema in parallel. Array
- * items and `$defs` are not descended into (ops on arrays nested inside arrays stay accepted at
- * runtime but are not advertised).
+ * items and `$defs` are not descended into. At runtime `fill` resolves paths only through
+ * `properties`, `additionalProperties` and local `$ref`s, never through array `items`, so an op on
+ * an array nested inside an array is rejected (`invalid`, fail closed); an array reached only
+ * through a `$ref`'d object is accepted but not advertised.
  */
 function wrapArrayOps(
   stripped: unknown,
@@ -663,19 +666,49 @@ export function createFormTools<V extends Record<string, unknown>>(
     registerUndo: (restore: () => ToolResult<unknown>) => void,
   ) {
     const current = adapter.getValues()
-    // Array ops (M2): a `$`-keyed object, or any object where the schema declares only an array.
+    // Every walk over the agent's input shares one node budget (DAG inputs from in-page callers).
+    const budget = nodeBudget()
+    const tooComplex = () => invalid([{ path: '', message: 'Input too complex' }])
+    // Array ops (M2): an object where the schema declares only an array, or a `$`-keyed object
+    // unless the schema declares an object (record / open object) and no array there, so
+    // `$`-keyed record data stays plain data (I3) while `{ $append }` on a scalar is still an op
+    // (then "Array operations apply to array fields only").
     const nodeFor = (path: string): unknown => {
       const at = nodeAt(inputSchema, path, current)
       return typeof at === 'object' ? at.node : undefined
     }
-    const { rest, ops } = extractArrayOps(input.values, (path) => {
-      const node = nodeFor(path)
-      return node !== undefined && arrayOnlyShape(node, inputSchema) !== undefined
-    })
-    const { values: flat, rejected } = flattenWithRejected(rest)
+    const {
+      rest,
+      ops,
+      duplicates: opDuplicates,
+    } = extractArrayOps(
+      input.values,
+      (path) => {
+        const node = nodeFor(path)
+        return node !== undefined && arrayOnlyShape(node, inputSchema) !== undefined
+      },
+      (path) => {
+        const node = nodeFor(path)
+        if (node === undefined) return true
+        const arr = collect(node, 'array', inputSchema)
+        return (
+          (arr !== undefined && arr !== 'open') ||
+          collect(node, 'object', inputSchema) === undefined
+        )
+      },
+      budget,
+    )
+    if (budget.left < 0) return tooComplex()
+    const { values: flat, rejected, duplicates } = flattenWithRejected(rest, undefined, budget)
+    if (budget.left < 0) return tooComplex()
     const issues = rejected.map((path) => ({ path, message: 'Invalid field path' }))
+    // m1: two values (ops or plain) resolving to the same path are refused, nothing is set.
+    const duplicated = new Set([...duplicates, ...opDuplicates])
+    for (const path of ops.keys()) if (Object.hasOwn(flat, path)) duplicated.add(path)
+    for (const path of duplicated) issues.push({ path, message: 'Duplicate field path' })
     const opKinds = new Map<string, 'append' | 'remove'>()
     for (const [path, op] of ops) {
+      if (duplicated.has(path)) continue
       const node = nodeFor(path)
       const conflict = Object.keys(flat).find((p) => isUnder(p, path) || isUnder(path, p))
       if (node === undefined || collect(node, 'array', inputSchema) === undefined) {
@@ -683,7 +716,8 @@ export function createFormTools<V extends Record<string, unknown>>(
       } else if (conflict !== undefined) {
         issues.push({ path: conflict, message: 'Conflicts with an array operation' })
       } else {
-        const applied = applyArrayOp(op, getPath(current, path), path)
+        const applied = applyArrayOp(op, getPath(current, path), path, budget)
+        if (budget.left < 0) return tooComplex()
         if ('error' in applied) {
           issues.push({ path, message: applied.error })
         } else {
