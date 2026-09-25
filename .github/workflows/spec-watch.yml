@@ -23,16 +23,42 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # Dry-run until Task 7d flips this (a PR-triggered run is always dry-run regardless, since this
-  # covers every trigger while it is set): spec-watch.mjs opens/updates no issue and writes no
-  # state, git-commit-and-PR is skipped, canary/wpt/audit issue-opening still runs (those aren't
-  # gated by this — they only fire `on: failure()`, which a dry run of `watch` doesn't affect).
+  # Dry-run until Task 7d flips this (the PR-triggered `validate` job always sets it itself):
+  # spec-watch.mjs opens/updates no issue and writes no state, git-commit-and-PR is skipped,
+  # canary/wpt/audit issue-opening still runs (those aren't gated by this — they only fire
+  # `on: failure()`, which a dry run of `watch` doesn't affect).
   SPEC_WATCH_DRY_RUN: '1'
 
 # Third-party and GitHub actions are pinned to full commit SHAs (version in the trailing comment),
 # each dereferenced with `gh api repos/<owner>/<repo>/commits/<tag>` on 2026-09-25.
+#
+# SEC-9 (docs/security/review-2026.md): a same-repository pull request gets a write-capable token,
+# so on `pull_request` only the read-only `validate` job runs (no secrets, no persisted
+# credential). Every job with write permissions or a token runs only on `schedule` /
+# `workflow_dispatch` (the default branch's code). scripts/spec-watch-workflow.test.mjs checks it.
 jobs:
+  validate:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      SPEC_WATCH_DRY_RUN: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.x
+      - name: spec-watch tests
+        run: node --test scripts/spec-watch.test.mjs scripts/spec-watch-workflow.test.mjs
+      - name: spec-watch (dry run, no token)
+        run: node scripts/spec-watch.mjs
+
   watch:
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -84,6 +110,7 @@ jobs:
   # flag on. See .spec-watch/{playwright,vitest}.canary.config.ts for the verified channel/flag and
   # why this needs its own config files rather than editing the example's or core's.
   canary:
+    if: github.event_name != 'pull_request'
     continue-on-error: true
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -149,6 +176,7 @@ jobs:
   # product does not accept a channel override the way Playwright does), which is fine: this job
   # never blocks and reports whatever it manages to run.
   wpt:
+    if: github.event_name != 'pull_request'
     continue-on-error: true
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -171,6 +199,7 @@ jobs:
           ./wpt run --binary-arg=--enable-blink-features=WebMCPTesting chrome_canary webmcp
 
   audit:
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
