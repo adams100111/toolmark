@@ -219,7 +219,7 @@ export interface RegistryState {
 const stateOf = new WeakMap<Toolmark, RegistryState>()
 
 /**
- * @internal Emits an event on a registry from core-internal consumers (e.g. the bridge), with the
+ * @internal Emits an event on a registry from Toolmark packages (core bridge/dom, inertia), with the
  * same listener isolation as the registry (`error` also reaches `onError`).
  */
 export function emitEvent<K extends keyof ToolmarkEventMap>(

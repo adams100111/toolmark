@@ -32,7 +32,7 @@ export type {
   ToolInfo,
   ToolmarkOptions,
 } from './registry.js'
-export { createToolmark, onPendingConsumed } from './registry.js'
+export { createToolmark, emitEvent, onPendingConsumed } from './registry.js'
 export type { PendingConfirmation } from './confirm.js'
 export type { ConfirmQueue } from './confirm-queue.js'
 export { createConfirmQueue } from './confirm-queue.js'
