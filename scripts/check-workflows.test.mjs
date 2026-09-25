@@ -156,6 +156,11 @@ test('check_workflows_rejects_cache_in_privileged_jobs', () => {
   assert.match(r.output, /FAIL .*job "notify".*cache/)
   // write permission, setup-node without `package-manager-cache: false`
   assert.match(r.output, /FAIL .*job "label".*package-manager-cache: false/)
+  // SEC-23: a `cache:` input on any action (pnpm/action-setup has one), quoted or not, and every
+  // actions/cache sub-action.
+  assert.match(r.output, /FAIL .*job "pnpm-cache".*pnpm\/action-setup.*cache: true/)
+  assert.match(r.output, /FAIL .*job "quoted-cache".*pnpm\/action-setup.*cache: true/)
+  assert.match(r.output, /FAIL .*job "cache-save".*actions\/cache\/save/)
   // Unprivileged jobs may cache; a privileged-feeding job that disables the cache passes.
   assert.doesNotMatch(r.output, /job "test"/)
   assert.doesNotMatch(r.output, /job "plan"/)
