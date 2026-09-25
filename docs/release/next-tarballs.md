@@ -94,6 +94,49 @@ versions, so the fixed group moves to `0.1.0-next.2`. `@toolmark/mcp` joins the 
   `nodenext` and `preserve`/`bundler`: 4/4 pass.
 - Bins: `toolmark-mcp --help` passes.
 
+## M4 — `0.1.0-next.3` (2026-09-25)
+
+Packed from commit `dcaf0e5` (`chore(release): version 0.1.0-next.3`) on branch `m4/task-8b` (off
+`feat/m4-tours`), after `pnpm build`. `@toolmark/tour`, `@toolmark/lint` and
+`@toolmark/judge-typesafe` join the fixed group (`@toolmark/*`), going from `0.0.0` straight to
+`0.1.0-next.3`; the five existing packages move with the group (API-reference comments only).
+
+Repacked (version unchanged) from commit `6d67362` on branch `m4/fix-final` after the M4 final fix
+wave: `@toolmark/lint` (symlink-safe `dist/bin.js` bin, `--url` schema validation, output
+sanitising, fresh Ajv per schema, README), `@toolmark/judge-typesafe` (origin + path only, per-page
+time bound) and `@toolmark/tour` (`confirming` for any pending confirmation, README) changed; the
+other five tarballs are byte-identical to the first pack. `@toolmark/mcp` here predates the
+concurrent signal-handler fix; its row changes when that fix is integrated and repacked.
+
+| Tarball                                    | Bytes  | SHA-256                                                            |
+| ------------------------------------------ | ------ | ------------------------------------------------------------------ |
+| `toolmark-core-0.1.0-next.3.tgz`           | 264125 | `a6c7bccab4169d5f827db64e368403ba2986f62c6e61e247dbbed82e03f8a4aa` |
+| `toolmark-inertia-0.1.0-next.3.tgz`        | 29641  | `71cd3e15014c5b74fd7aad6505cb53d3553fcd015de9401653ff5b1eac2ba73f` |
+| `toolmark-judge-typesafe-0.1.0-next.3.tgz` | 9502   | `b30e0cafcdcab314d119877ebb96bfca0954a3cfc9d80b6238234360e018d88c` |
+| `toolmark-lint-0.1.0-next.3.tgz`           | 22258  | `bc92af6ffe8605f2cdddfb48b6a844a431eadc65b3eeb615dd8ce06eb52cc792` |
+| `toolmark-mcp-0.1.0-next.3.tgz`            | 54704  | `21c3e12a905162ec4f5618563e34072573e1b8d81e5ca30f8a8d04ee6280403b` |
+| `toolmark-react-0.1.0-next.3.tgz`          | 32227  | `76ec4ef64b2b74432ee23d06c78ae45b5599b6fc0cc17c27602cbed169167cb7` |
+| `toolmark-testing-0.1.0-next.3.tgz`        | 8641   | `e6f4a0130ba05bc4917e939a01ea5613b8f12e1d058c707e703832da3afc940f` |
+| `toolmark-tour-0.1.0-next.3.tgz`           | 32623  | `dadbdac85eaa599b305b0932ef7771619a12cfc77aefc873f41091b224c59b03` |
+
+**Smoke result: pass** — `tarball-smoke: 108 passed, 0 failed` (Node 22.23.2, pnpm 12.6.0, macOS;
+first pack: 101), with the script extended in `273c767` and again in the final fix wave (bins run
+through a symlink too):
+
+- `pnpm install` of the eight tarballs in a temp project outside the workspace (peers at the catalog
+  versions, including `@playwright/test` for `@toolmark/lint`).
+- `exports`: 35 entries, every target present. 23 JS entries dynamically imported by `node` without
+  a DOM (new: `@toolmark/tour`, `@toolmark/tour/overlay`, `@toolmark/tour/react`, `@toolmark/lint`
+  and `@toolmark/judge-typesafe`, whose Node-only `node` condition the smoke now also imports;
+  browser-only list still empty); 11 JSON entries parsed (new: `@toolmark/lint/manifest.schema.json`);
+  1 asset entry, `@toolmark/tour/styles.css` (4439 bytes; asset targets must now be non-empty).
+- Types: `tsc --noEmit` over all 23 JS entries with TypeScript 6.0.3 and 7.0.2, each with
+  `nodenext` and `preserve`/`bundler`: 4/4 pass.
+- Bins: `toolmark --help`, `toolmark lint --help` (the documented subcommand) and
+  `toolmark-mcp --help` exit 0 with usage text, and an unknown flag exits non-zero (2) — each run
+  both directly and through a symlink to the bin, as npm/npx `.bin` entries invoke it (the first
+  pack's `toolmark` bin was a silent no-op through a symlink).
+
 ## Consumer recipe (optional)
 
 1. Vendor the tarballs into the consuming repo, e.g. `vendor/toolmark/*.tgz`, and check the SHA-256
@@ -103,25 +146,28 @@ versions, so the fixed group moves to `0.1.0-next.2`. `@toolmark/mcp` joins the 
    ```json
    {
      "dependencies": {
-       "@toolmark/core": "file:vendor/toolmark/toolmark-core-0.1.0-next.1.tgz",
-       "@toolmark/react": "file:vendor/toolmark/toolmark-react-0.1.0-next.1.tgz"
+       "@toolmark/core": "file:vendor/toolmark/toolmark-core-0.1.0-next.3.tgz",
+       "@toolmark/react": "file:vendor/toolmark/toolmark-react-0.1.0-next.3.tgz"
      }
    }
    ```
 
 3. Map **every** `@toolmark/*` package to its tarball with overrides, so the tarballs' own
-   dependencies (`"@toolmark/core": "0.1.0-next.1"`, which is not on npm) resolve to the vendored
+   dependencies (`"@toolmark/core": "0.1.0-next.3"`, which is not on npm) resolve to the vendored
    files too. pnpm ≥ 11 reads overrides from `pnpm-workspace.yaml` (it ignores the `pnpm` field in
    `package.json`):
 
    ```yaml
    # pnpm-workspace.yaml
    overrides:
-     '@toolmark/core': file:vendor/toolmark/toolmark-core-0.1.0-next.1.tgz
-     '@toolmark/react': file:vendor/toolmark/toolmark-react-0.1.0-next.1.tgz
-     '@toolmark/inertia': file:vendor/toolmark/toolmark-inertia-0.1.0-next.1.tgz
-     '@toolmark/testing': file:vendor/toolmark/toolmark-testing-0.1.0-next.1.tgz
-     '@toolmark/mcp': file:vendor/toolmark/toolmark-mcp-0.1.0-next.1.tgz
+     '@toolmark/core': file:vendor/toolmark/toolmark-core-0.1.0-next.3.tgz
+     '@toolmark/react': file:vendor/toolmark/toolmark-react-0.1.0-next.3.tgz
+     '@toolmark/inertia': file:vendor/toolmark/toolmark-inertia-0.1.0-next.3.tgz
+     '@toolmark/testing': file:vendor/toolmark/toolmark-testing-0.1.0-next.3.tgz
+     '@toolmark/mcp': file:vendor/toolmark/toolmark-mcp-0.1.0-next.3.tgz
+     '@toolmark/tour': file:vendor/toolmark/toolmark-tour-0.1.0-next.3.tgz
+     '@toolmark/lint': file:vendor/toolmark/toolmark-lint-0.1.0-next.3.tgz
+     '@toolmark/judge-typesafe': file:vendor/toolmark/toolmark-judge-typesafe-0.1.0-next.3.tgz
    ```
 
    With pnpm ≤ 10 put the same map under `"pnpm": { "overrides": { … } }` in `package.json`; with

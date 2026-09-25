@@ -70,6 +70,17 @@ export function parseManifestFile(filePath: string, content: unknown): ManifestF
 }
 
 /**
+ * Validates a manifest collected from a live page (`--url`, the test hook's `{ rev, tools }`
+ * shape) against the same `manifest.schema.json` as `--manifest` files, so a page-supplied
+ * malformed tool is rejected here rather than crashing a rule downstream.
+ * @throws {Error} `invalid manifest collected from <url>` when `content` is not that shape.
+ */
+export function parseCollectedManifest(url: string, content: unknown): ManifestFile {
+  if (validateTestHookShape(content)) return { page: url, tools: content.tools }
+  throw new Error(`invalid manifest collected from ${url}`)
+}
+
+/**
  * Reads and JSON-parses `filePath`, then {@link parseManifestFile}s it.
  * @throws {Error} `invalid manifest file: <filePath>` when the file cannot be read, is not valid
  * JSON, or does not match an accepted shape.

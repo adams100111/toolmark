@@ -1,6 +1,6 @@
 {
   "name": "@toolmark/judge-typesafe",
-  "version": "0.0.0",
+  "version": "0.1.0-next.3",
   "description": "Optional TypeSafe judge plugin for @toolmark/lint: Node-only probabilistic checks for description quality, tool overlap and consequential-hint coverage.",
   "license": "MIT",
   "type": "module",

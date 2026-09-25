@@ -6,9 +6,14 @@ import { defaultClientConditions, defaultServerConditions, defineConfig } from '
 
 // `@toolmark/source` first: the example resolves the workspace packages straight to `src/*.ts`
 // (overview "Source-first resolution"); `@toolmark/tour/styles.css` comes from the built package.
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   plugins: [
-    laravel({ input: 'resources/js/app.tsx' }),
+    // Mode `e2e` (the Playwright globalSetup) keeps the test hook: build it into public/build-e2e
+    // so public/build only ever holds a production bundle.
+    laravel({
+      input: 'resources/js/app.tsx',
+      buildDirectory: mode === 'e2e' ? 'build-e2e' : 'build',
+    }),
     react(),
     // Route/action files are generated at build (git-ignored). `php` may run in Docker.
     wayfinder({ command: 'scripts/php.sh php artisan wayfinder:generate' }),
@@ -24,4 +29,4 @@ export default defineConfig({
       conditions: ['@toolmark/source', ...defaultServerConditions],
     },
   },
-})
+}))

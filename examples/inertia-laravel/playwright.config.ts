@@ -40,7 +40,8 @@ export default defineConfig({
       // whitelist of environment variables to its workers (CACHE_STORE, REDIS_HOST and the
       // Docker REVERB_HOST would be dropped).
       command: 'scripts/php.sh php artisan serve --no-reload --host=' + bind + ' --port=8010',
-      env: { PHP_CLI_SERVER_WORKERS: '4', PHP_PORTS: '8010' },
+      // TOOLMARK_E2E_BUILD: serve public/build-e2e (built by globalSetup, with the test hook).
+      env: { PHP_CLI_SERVER_WORKERS: '4', PHP_PORTS: '8010', TOOLMARK_E2E_BUILD: 'true' },
       url: 'http://127.0.0.1:8010/up',
       reuseExistingServer: !process.env.CI,
       timeout: 180_000,

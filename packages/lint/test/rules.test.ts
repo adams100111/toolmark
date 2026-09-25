@@ -195,6 +195,24 @@ describe('schema-invalid', () => {
     const t = tool({ name: 'a', inputSchema: { type: 'object', properties: {} } })
     expect(rule.check(page('p', [t]), CTX)).toEqual([])
   })
+
+  it('schema_invalid_duplicate_id_negative', () => {
+    // Tools (and pages) commonly share a schema, `$id` included; each schema compiles on its own.
+    const shared = {
+      $id: 'https://example.com/schemas/address.json',
+      type: 'object',
+      properties: { city: { type: 'string' } },
+    }
+    const a = tool({ name: 'a', inputSchema: { ...shared } })
+    const b = tool({ name: 'b', inputSchema: { ...shared } })
+    expect(rule.check(page('p1', [a, b]), CTX)).toEqual([])
+    expect(rule.check(page('p2', [tool({ name: 'c', inputSchema: { ...shared } })]), CTX)).toEqual(
+      [],
+    )
+    // Same `$id`, different content, across two lint runs.
+    const other = tool({ name: 'd', inputSchema: { ...shared, required: ['city'] } })
+    expect(rule.check(page('p3', [other]), CTX)).toEqual([])
+  })
 })
 
 describe('llm-name-collision', () => {

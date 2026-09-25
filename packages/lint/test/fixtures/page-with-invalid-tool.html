@@ -1,0 +1,17 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>fixture: page whose test hook returns a malformed tool</title>
+  </head>
+  <body>
+    <p>Fixture page for `collectFromUrl` tests: a tool without `hints` or `inputSchema`.</p>
+    <script>
+      window.__toolmark_test__ = {
+        manifest: function () {
+          return { rev: 1, tools: [{ name: 'broken.tool', llmName: 'broken_tool' }] }
+        },
+      }
+    </script>
+  </body>
+</html>

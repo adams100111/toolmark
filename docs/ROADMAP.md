@@ -35,8 +35,8 @@ Post-1.0 consumer track:          └─► Innov P0 ─► P1 ─► P2 ─► 
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | T-M1 Core | toolmark | `…-m1-core.md` | — | CI green; round budget `simple_form_within_3_rounds`; tarball smoke | done | `feat/m1-core` (PR #2) | 2026-09-25 |
 | T-M2 Forms | toolmark | `…-m2-forms.md` | T-M1 | round budget `wizard_within_5_rounds`; tarball smoke | done | `feat/m2-forms` (PR #3) | 2026-09-25 |
-| T-M3 Reach | toolmark | `…-m3-reach.md` | T-M2 | same tool via WebMCP + MCP + Playwright (`reach.spec.ts`); tarball smoke incl. `toolmark-mcp` | active | `feat/m3-reach` | 2026-09-25 |
-| T-M4 Tours & tooling | toolmark | `…-m4-tours-tooling.md` | T-M3 | authored + planned tours (3 browsers, axe-clean); Laravel authored tour; same-tools e2e; Laravel + Next.js suites; `docs:build`; lint clean; tarball smoke | active (T5 blocked: Docker) | `feat/m4-tours` | 2026-09-25 |
+| T-M3 Reach | toolmark | `…-m3-reach.md` | T-M2 | same tool via WebMCP + MCP + Playwright (`reach.spec.ts`); tarball smoke incl. `toolmark-mcp` | done | `feat/m3-reach` (PR #4) | 2026-09-25 |
+| T-M4 Tours & tooling | toolmark | `…-m4-tours-tooling.md` | T-M3 | authored + planned tours (3 browsers, axe-clean); Laravel authored tour; same-tools e2e; Laravel + Next.js suites; `docs:build`; lint clean; tarball smoke | active | `feat/m4-tours` | 2026-09-25 |
 | T-M5 Release | toolmark | `…-m5-release.md` | T-M4 | all §21 gates (incl. round budget + smoke on the RC); publish (owner) | todo | — | — |
 
 **Current focus:** Toolmark M1 → M5 (release). Innovation is post-1.0. Within Toolmark, units are
@@ -69,7 +69,7 @@ its exit check passes. Task numbers refer to the unit's plan.
 - [x] W0 · A (T1, high, **security**) `@toolmark/mcp` skeleton, registry hooks (`tm.anchor`/`state`/`info`), bridge caller
 - [x] W1 · B (T2, **security**) tour hooks in adapters · C (T3) WebMCP · D (T4–T5, **security**) MCP server + pairing + CLI · E (T6) OTel
 - [x] W2 · F (T7) example, `reach.spec.ts`, guides, tarballs + smoke
-- [ ] Unit exit: `same_declaration_webmcp_mcp_fixture`; tarball smoke incl. `toolmark-mcp`
+- [x] Unit exit: `same_declaration_webmcp_mcp_fixture`; tarball smoke incl. `toolmark-mcp`
 
 ### T-M4 Tours & tooling (toolmark)
 - [x] W0 · A (T0) skeletons + deps
@@ -235,3 +235,6 @@ also record progress in Innovation's own branch history.
   per-interface rule): M3 all tasks + final review fixes merged, integration with M2 in progress
   (→ `0.1.0-next.2`); M4 T0–T4 and T6 merged, **T5 (Laravel) blocked: local Docker daemon unresponsive
   (owner action: restart colima)**. sdd-lanes is now the private plugin `adams100111/sdd-lanes`.
+- 2026-09-25 — **T-M3 done** (PR #4): `0.1.0-next.2`, `same_declaration_webmcp_mcp_fixture` green,
+  smoke 74/74, full CI matrix green (incl. a React 18 `useToolAnchor` fix). M3 rulings in spec §23.
+  Docker restored (owner-approved colima restart); M4 T5 (Laravel) running; M4 T0–T4, T6 merged.

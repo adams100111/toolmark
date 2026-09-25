@@ -11,6 +11,8 @@ class DatabaseSeeder extends Seeder
      */
     public function run(): void
     {
+        // Demo data only: this example has no production seed.
+        ToolmarkDemoSeeder::ensureDemoEnvironment();
         $this->call(ToolmarkDemoSeeder::class);
     }
 }

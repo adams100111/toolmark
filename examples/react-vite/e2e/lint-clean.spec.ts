@@ -3,14 +3,14 @@ import { fileURLToPath } from 'node:url'
 import { expect, test } from '@playwright/test'
 import { exampleOrigin } from './support/mcp-client.js'
 
-// M4 exit 6: the real `toolmark lint` CLI (built by `e2e/global-setup.ts`) against the running
+// M4 exit 6: the real `toolmark lint` CLI (spawned as `node dist/bin.js lint …`, the bin's target, built by `e2e/global-setup.ts`) against the running
 // example — the main page and both hash routes — exits 0.
 
-const LINT_CLI = fileURLToPath(new URL('../../../packages/lint/dist/cli.js', import.meta.url))
+const LINT_CLI = fileURLToPath(new URL('../../../packages/lint/dist/bin.js', import.meta.url))
 
 function runLint(args: string[]): Promise<{ code: number | null; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [LINT_CLI, ...args], { stdio: 'pipe' })
+    const child = spawn(process.execPath, [LINT_CLI, 'lint', ...args], { stdio: 'pipe' })
     let stdout = ''
     let stderr = ''
     child.stdout.on('data', (d: Buffer) => (stdout += d.toString()))
@@ -26,11 +26,10 @@ test('lint_clean', async () => {
   const urls = [`${origin}/`, `${origin}/#/routes/a`, `${origin}/#/routes/b`]
   const urlArgs = urls.flatMap((u) => ['--url', u])
 
-  const clean = await runLint([...urlArgs, '--format', 'json'])
+  const clean = await runLint(urlArgs)
   expect(clean.code, `stdout:\n${clean.stdout}\nstderr:\n${clean.stderr}`).toBe(0)
-  const report = JSON.parse(clean.stdout) as LintReport
-  expect(report.summary.errors).toBe(0)
-  expect(report.findings).toEqual([])
+  // The pretty summary line, not only exit 0: a CLI that silently does nothing must not pass.
+  expect(clean.stdout.trimEnd()).toBe('0 error(s), 0 warning(s)')
 
   // Not vacuous: with `--budget 1` every page reports its (non-empty) tool count, so lint really
   // collected each page's manifest. `tool-budget` is a warning: still exit 0.

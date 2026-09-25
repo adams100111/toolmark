@@ -1,6 +1,6 @@
 {
   "name": "@toolmark/lint",
-  "version": "0.0.0",
+  "version": "0.1.0-next.3",
   "description": "Static lint for Toolmark tool manifests: naming, descriptions, schemas and LLM-facing hygiene, with an optional TypeSafe judge.",
   "license": "MIT",
   "type": "module",
@@ -18,7 +18,7 @@
     "src"
   ],
   "bin": {
-    "toolmark": "./dist/cli.js"
+    "toolmark": "./dist/bin.js"
   },
   "exports": {
     ".": {

@@ -12,9 +12,13 @@ Install it as a **devDependency**: it's a lint-time judge, run by `toolmark lint
 never bundled into an app. ESM, Node-only (its `node` export condition dynamic-imports the
 `@typesafe-ai/sdk`); Node ≥ 22.12.
 
-It sends only **tool names, titles, descriptions and JSON Schema parameter paths/descriptions**
-from the page's manifest to `api.typesafe.ai` — never parameter values, `default`, `enum`,
-`examples`, `const`, or any other application data.
+It sends only the following to `api.typesafe.ai`:
+
+- the **page's origin and path** (for a `--url` page; query string, hash and any `user:pass@` are
+  stripped, since they can carry tokens or user data), or the manifest file's `page` name as-is;
+- **tool names, titles, descriptions and JSON Schema parameter paths/descriptions**.
+
+Never parameter values, `default`, `enum`, `examples`, `const`, or any other application data.
 
 Requires a `TYPESAFE_API_KEY` environment variable (or `apiKey` below). Without one, the judge
 prints a one-line warning to stderr, returns no findings, and makes no network calls or SDK client
@@ -37,12 +41,15 @@ const judge = typesafeJudge({
   overlapThreshold: 0.8, // default
   maxPairs: 200, // default
   strictHints: false, // default; `true` makes judge/consequential-hint an error
+  pageTimeoutMs: 120_000, // default; overall bound per page
 })
 ```
 
 Findings: `judge/description-quality`, `judge/consequential-hint`, `judge/overlap`,
 `judge/overlap-truncated` (warn; all `warn` except `judge/consequential-hint` under
-`strictHints`), and `judge/unavailable` (warn, on an SDK/network error — the judge never throws).
+`strictHints`), `judge/unavailable` (warn, on an SDK/network error — the judge never throws), and
+`judge/timeout` (warn, when a page's requests don't finish within `pageTimeoutMs`; each request is
+retried at most once, so a slow or unreachable API never stalls `toolmark lint`).
 
 ## License
 

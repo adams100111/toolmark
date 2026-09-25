@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process'
 import { createRequire } from 'node:module'
 import path from 'node:path'
 import AxeBuilder from '@axe-core/playwright'
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Locator, type Page } from '@playwright/test'
 import { validateMessage } from '@toolmark/core/protocol'
 import { BASE_URL, ROOT, STORAGE_STATE } from './global-setup.js'
 
@@ -234,26 +234,92 @@ test('messages_conform_to_protocol_schemas', async ({ page }) => {
   expect(types(toAgent).filter((t) => t === 'result')).toHaveLength(5)
 })
 
+/** Serious or critical axe violations inside the tour overlay. */
+async function tourAxeViolations(page: Page): Promise<string[]> {
+  const axe = await new AxeBuilder({ page }).include('.toolmark-tour').analyze()
+  return axe.violations
+    .filter((v) => v.impact === 'serious' || v.impact === 'critical')
+    .map((v) => `${v.id}: ${v.help}`)
+}
+
+/** The spotlight cut-out encloses the anchor (the overlay pads it by a few pixels). */
+async function expectSpotlightAround(page: Page, anchor: Locator): Promise<void> {
+  const cutout = page.locator('.toolmark-tour__cutout')
+  await expect(cutout).toBeVisible()
+  await expect(async () => {
+    const hole = (await cutout.boundingBox())!
+    const box = (await anchor.boundingBox())!
+    expect(hole.x).toBeLessThanOrEqual(box.x + 0.5)
+    expect(hole.y).toBeLessThanOrEqual(box.y + 0.5)
+    expect(hole.x + hole.width).toBeGreaterThanOrEqual(box.x + box.width - 0.5)
+    expect(hole.y + hole.height).toBeGreaterThanOrEqual(box.y + box.height - 0.5)
+    // Tight: the hole is the anchor plus padding, not the whole page.
+    expect(hole.width).toBeLessThan(box.width + 24)
+    expect(hole.height).toBeLessThan(box.height + 24)
+  }).toPass({ timeout: 5_000 })
+}
+
 test('tour_authored_on_inertia_page', async ({ page }) => {
+  // M4 exit 3: the authored three-step `show` tour on an Inertia page (react-hook-form +
+  // useFormTool, anchors from `rhfAdapter(form, { elementFor })`).
   await page.goto('/challenges/create?tour=authored')
+  const overlay = page.locator('.toolmark-tour')
   const tour = page.locator('.toolmark-tour [role="dialog"]')
+  const titleEn = page.getByLabel('Title (English)')
+  const titleAr = page.getByLabel('Title (Arabic)')
+  const type = page.getByRole('combobox', { name: 'Type' })
+  const startsAt = page.getByLabel('Starts at')
 
   await expect(tour).toBeVisible()
+  await expect(overlay).toHaveAttribute('data-mode', 'show')
+  // `show` is not modal: no focus trap, the page stays operable.
+  await expect(tour).toHaveAttribute('aria-modal', 'false')
+
+  // Step 1 anchors on `title.en`.
   await expect(tour).toContainText('Step 1 of 3')
+  await expect(tour.getByRole('heading', { name: 'Title' })).toBeVisible()
   await expect(tour).toContainText('Give the challenge a short English title.')
+  await expectSpotlightAround(page, titleEn)
+  expect(await tourAxeViolations(page)).toEqual([])
 
-  const axe = await new AxeBuilder({ page }).include('.toolmark-tour').analyze()
-  const blocking = axe.violations.filter((v) => v.impact === 'serious' || v.impact === 'critical')
-  expect(blocking, JSON.stringify(blocking, null, 2)).toEqual([])
+  // Interaction: the anchor stays clickable and editable through the spotlight; in `show` mode
+  // the user's input neither advances nor ends the tour.
+  await titleEn.click()
+  await expect(titleEn).toBeFocused()
+  await titleEn.fill('Typed by the user')
+  await expect(titleEn).toHaveValue('Typed by the user')
+  await expect(tour).toContainText('Step 1 of 3')
 
+  // Step 2 anchors on `type`.
   await tour.getByRole('button', { name: 'Next' }).click()
   await expect(tour).toContainText('Step 2 of 3')
   await expect(tour).toContainText('Pick what kind of challenge this is.')
+  await expectSpotlightAround(page, type)
+  expect(await tourAxeViolations(page)).toEqual([])
+
+  // Back returns to the first anchor; Next again.
+  await tour.getByRole('button', { name: 'Back' }).click()
+  await expect(tour).toContainText('Step 1 of 3')
+  await expectSpotlightAround(page, titleEn)
+  await tour.getByRole('button', { name: 'Next' }).click()
+  await expect(tour).toContainText('Step 2 of 3')
+
+  // Step 3 anchors on `startsAt`; the last step's Next reads Done.
   await tour.getByRole('button', { name: 'Next' }).click()
   await expect(tour).toContainText('Step 3 of 3')
   await expect(tour).toContainText('Choose the day the challenge starts.')
+  await expectSpotlightAround(page, startsAt)
+  expect(await tourAxeViolations(page)).toEqual([])
+
   await tour.getByRole('button', { name: 'Done' }).click()
-  await expect(page.locator('.toolmark-tour')).toHaveCount(0)
+  await expect(overlay).toHaveCount(0)
+
+  // `show` never fills: only the user's own typing is in the form, and nothing was submitted.
+  await expect(titleEn).toHaveValue('Typed by the user')
+  await expect(titleAr).toHaveValue('')
+  await expect(type).toHaveValue('workshop')
+  await expect(startsAt).toHaveValue('')
+  await expect(page).toHaveURL(/\/challenges\/create\?tour=authored$/)
 })
 
 test('planned_tour_from_server_planner', async ({ page }) => {
@@ -282,15 +348,24 @@ test('lint_clean', async () => {
   const lintDir = path.dirname(require.resolve('@toolmark/lint/package.json'))
   const pages = ['/challenges', '/challenges/create', '/wizard', '/feedback']
   const args = [
-    path.join(lintDir, 'dist', 'cli.js'),
+    path.join(lintDir, 'dist', 'bin.js'),
+    'lint',
     ...pages.flatMap((p) => ['--url', BASE_URL + p]),
     '--storage-state',
     STORAGE_STATE,
   ]
-  const exitCode = await new Promise<number>((resolve, reject) => {
-    const child = spawn(process.execPath, args, { cwd: ROOT, stdio: 'inherit' })
-    child.once('exit', (code) => resolve(code ?? 1))
-    child.once('error', reject)
-  })
-  expect(exitCode).toBe(0)
+  const result = await new Promise<{ code: number; stdout: string; stderr: string }>(
+    (resolve, reject) => {
+      const child = spawn(process.execPath, args, { cwd: ROOT, stdio: 'pipe' })
+      let stdout = ''
+      let stderr = ''
+      child.stdout.on('data', (d: Buffer) => (stdout += d.toString()))
+      child.stderr.on('data', (d: Buffer) => (stderr += d.toString()))
+      child.once('close', (code) => resolve({ code: code ?? 1, stdout, stderr }))
+      child.once('error', reject)
+    },
+  )
+  expect(result.code, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`).toBe(0)
+  // The summary line, not only exit 0: a CLI that silently does nothing must not pass.
+  expect(result.stdout).toMatch(/^0 error\(s\), \d+ warning\(s\)$/m)
 })

@@ -6,6 +6,7 @@
 import {
   APIConnectionError,
   APIError,
+  APIUserAbortError,
   noul,
   score,
   TypeSafeClient,
@@ -35,6 +36,11 @@ export interface TypesafeJudgeOptions {
   strictHints?: boolean
   /** Model override forwarded to `systemOne`. Default: the SDK's own default model. */
   model?: string
+  /**
+   * Overall time bound for one page's requests (all chunks and retries), in milliseconds. When it
+   * elapses the page gets one `judge/timeout` warning instead of findings. Default `120000`.
+   */
+  pageTimeoutMs?: number
   /** Custom `fetch`, forwarded to `TypeSafeClient` (tests; alternate transports). */
   fetch?: (input: string, init?: RequestInit) => Promise<Response>
 }
@@ -45,6 +51,10 @@ const DEFAULT_OVERLAP_THRESHOLD = 0.8
 const DEFAULT_MAX_PAIRS = 200
 /** `TypeSafeClient`'s per-attempt timeout used by this judge (SDK default is 10000 ms). */
 const REQUEST_TIMEOUT_MS = 60_000
+/** Default {@link TypesafeJudgeOptions.pageTimeoutMs}. */
+const DEFAULT_PAGE_TIMEOUT_MS = 120_000
+/** SDK retries after a failed attempt (SDK default is 2); bounded so a page can't stall lint. */
+const MAX_RETRIES = 1
 /** `systemOne` accepts at most this many questions per request (Task 4 brief). */
 const QUESTIONS_PER_REQUEST = 100
 
@@ -73,9 +83,25 @@ interface JudgeState {
   tools: StateTool[]
 }
 
+/**
+ * The page identity sent to TypeSafe: for an `http(s)` URL only its origin and pathname (no
+ * userinfo, query or hash, which may carry tokens or user data); any other page name (a
+ * `--manifest` file's `page`) unchanged.
+ */
+function pageForState(page: string): string {
+  let url: URL
+  try {
+    url = new URL(page)
+  } catch {
+    return page
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return page
+  return `${url.origin}${url.pathname}`
+}
+
 function buildState(page: string, tools: readonly ToolManifest[]): JudgeState {
   return {
-    page,
+    page: pageForState(page),
     tools: tools.map((tool) => ({
       name: tool.name,
       ...(tool.title !== undefined ? { title: tool.title } : {}),
@@ -107,9 +133,11 @@ let missingKeyWarned = false
  * quality, missing consequential/destructive hints and confusable tool pairs, run only when
  * `@toolmark/lint --judge` loads this module (dev/CI, never bundled into an app).
  *
- * Sends only tool names, titles, descriptions and schema property paths/descriptions to
- * `api.typesafe.ai` — never values, `default`, `enum`, `examples`, `const` or user data. Install
- * as a devDependency.
+ * Sends only the page's origin + pathname (no query, hash or userinfo), tool names, titles,
+ * descriptions and schema property paths/descriptions to `api.typesafe.ai` — never values,
+ * `default`, `enum`, `examples`, `const` or user data. Each page is bounded by `pageTimeoutMs`
+ * (one `judge/timeout` warning when it elapses) and each request is retried at most once.
+ * Install as a devDependency.
  *
  * @param o - See {@link TypesafeJudgeOptions}. All thresholds and `strictHints` have defaults.
  */
@@ -119,6 +147,7 @@ export function typesafeJudge(o: TypesafeJudgeOptions = {}): Judge {
   const overlapThreshold = o.overlapThreshold ?? DEFAULT_OVERLAP_THRESHOLD
   const maxPairs = o.maxPairs ?? DEFAULT_MAX_PAIRS
   const strictHints = o.strictHints ?? false
+  const pageTimeoutMs = o.pageTimeoutMs ?? DEFAULT_PAGE_TIMEOUT_MS
 
   return {
     name: 'typesafe',
@@ -134,7 +163,8 @@ export function typesafeJudge(o: TypesafeJudgeOptions = {}): Judge {
 
       const client = new TypeSafeClient({
         apiKey,
-        timeout: REQUEST_TIMEOUT_MS,
+        timeout: Math.min(REQUEST_TIMEOUT_MS, pageTimeoutMs),
+        retry: { maxRetries: MAX_RETRIES },
         logLevel: 'warn',
         ...(o.fetch ? { fetch: o.fetch } : {}),
       })
@@ -162,18 +192,45 @@ export function typesafeJudge(o: TypesafeJudgeOptions = {}): Judge {
       }
 
       const answers: Record<string, NoulResponse | ScoreResponse> = {}
-      try {
+      // One overall bound per page: aborts the SDK (request and pending retries) and, should a
+      // transport ignore its signal, still settles via the race below — never a hang.
+      const controller = new AbortController()
+      const timeoutFinding: Finding = {
+        rule: 'judge/timeout',
+        severity: 'warn',
+        page,
+        message: `TypeSafe judge did not finish within ${pageTimeoutMs} ms; page skipped`,
+      }
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const timedOut = new Promise<'timeout'>((resolve) => {
+        timer = setTimeout(() => {
+          controller.abort(new Error(`judge page timeout (${pageTimeoutMs} ms)`))
+          resolve('timeout')
+        }, pageTimeoutMs)
+      })
+      const ask = async (): Promise<'done'> => {
         for (const chunk of chunkQuestions(questions)) {
-          const result = await client.systemOne({
-            // `state` is a plain JSON-safe object (verified by construction); `EntryType`
-            // requires an index signature, which a named interface never structurally satisfies.
-            state: state as unknown as EntryType,
-            questions: chunk,
-            ...(o.model !== undefined ? { model: o.model } : {}),
-          })
+          const result = await client.systemOne(
+            {
+              // `state` is a plain JSON-safe object (verified by construction); `EntryType`
+              // requires an index signature, which a named interface never structurally satisfies.
+              state: state as unknown as EntryType,
+              questions: chunk,
+              ...(o.model !== undefined ? { model: o.model } : {}),
+            },
+            { signal: controller.signal },
+          )
           Object.assign(answers, result.answers)
         }
+        return 'done'
+      }
+      try {
+        const asking = ask()
+        // The race's loser must not surface later as an unhandled rejection.
+        asking.catch(() => {})
+        if ((await Promise.race([asking, timedOut])) === 'timeout') return [timeoutFinding]
       } catch (e) {
+        if (controller.signal.aborted || e instanceof APIUserAbortError) return [timeoutFinding]
         if (e instanceof APIError || e instanceof APIConnectionError) {
           return [
             {
@@ -185,6 +242,8 @@ export function typesafeJudge(o: TypesafeJudgeOptions = {}): Judge {
           ]
         }
         throw e
+      } finally {
+        clearTimeout(timer)
       }
 
       const findings: Finding[] = []

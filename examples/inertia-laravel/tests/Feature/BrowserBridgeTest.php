@@ -203,4 +203,126 @@ final class BrowserBridgeTest extends TestCase
         $route = app('router')->getRoutes()->match(Request::create($this->bridgeUrl($this->aliceConversation), 'POST'));
         $this->assertContains('web', $route->gatherMiddleware());
     }
+
+    public function test_rejects_malformed_ids(): void
+    {
+        $this->bridge();
+        $this->connectPage($this->alice, $this->aliceConversation, 'page-alice');
+        $post = fn (array $m) => $this->actingAs($this->alice)->postJson($this->bridgeUrl($this->aliceConversation), $m)->status();
+        $bad = [str_repeat('a', 129), 'has space', 'a/b', 'a:b', "abc\n", 'é', '', 'x*'];
+
+        // Well-formed but unknown ids reach the binding lookup (404); the longest allowed is 128.
+        $this->assertSame(404, $post($this->resultMessage('page-alice', str_repeat('a', 128))));
+        $this->assertSame(404, $post($this->resultMessage('page-alice', 'A-z_0-9')));
+        foreach ($bad as $id) {
+            $this->assertSame(422, $post($this->resultMessage('page-alice', $id)), 'result id '.json_encode($id));
+        }
+
+        $confirmed = fn (string $confirmId) => [
+            'protocol' => 1, 'type' => 'confirmed', 'clientId' => 'page-alice',
+            'confirmId' => $confirmId, 'result' => ['status' => 'ok', 'data' => (object) []],
+        ];
+        $this->assertSame(404, $post($confirmed(str_repeat('c', 128))));
+        foreach ($bad as $confirmId) {
+            $this->assertSame(422, $post($confirmed($confirmId)), 'confirmed confirmId '.json_encode($confirmId));
+            // A `needs_confirmation` result carries a page-supplied confirmId too.
+            $this->assertSame(422, $post($this->resultMessage('page-alice', 'some-call', [
+                'status' => 'needs_confirmation', 'confirmId' => $confirmId, 'summary' => 'Archive',
+            ])), 'needs_confirmation confirmId '.json_encode($confirmId));
+        }
+        foreach ($bad as $clientId) {
+            $this->assertSame(422, $post([
+                'protocol' => 1, 'type' => 'manifest', 'clientId' => $clientId, 'rev' => 1, 'tools' => [],
+            ]), 'clientId '.json_encode($clientId));
+        }
+    }
+
+    public function test_manifest_mode_is_a_known_value(): void
+    {
+        $manifest = fn (mixed $mode) => [
+            'protocol' => 1, 'type' => 'manifest', 'clientId' => 'page-alice', 'rev' => 1,
+            'tools' => [$this->tool(['mode' => $mode])],
+        ];
+        $post = fn (array $m) => $this->actingAs($this->alice)->postJson($this->bridgeUrl($this->aliceConversation), $m)->status();
+
+        $this->assertSame(204, $post($manifest('stepwise')));
+        $this->assertSame('stepwise', app(\App\Toolmark\BrowserBridge::class)->manifest($this->aliceConversation)['tools'][0]['mode']);
+        foreach (['', 'Stepwise', 'batch', str_repeat('x', 2000), 1, true] as $mode) {
+            $this->assertSame(422, $post($manifest($mode)), 'mode '.json_encode($mode));
+        }
+    }
+
+    public function test_manifest_bounds(): void
+    {
+        $post = fn (array $tools) => $this->actingAs($this->alice)->postJson($this->bridgeUrl($this->aliceConversation), [
+            'protocol' => 1, 'type' => 'manifest', 'clientId' => 'page-alice', 'rev' => 1, 'tools' => $tools,
+        ])->status();
+        $many = fn (int $n) => array_map(fn (int $i) => $this->tool(['name' => "t.{$i}", 'llmName' => "t_{$i}"]), range(1, $n));
+
+        // MAX_TOOLS = 200.
+        $this->assertSame(204, $post($many(200)));
+        $this->assertSame(422, $post($many(201)));
+        // MAX_DESCRIPTION_CHARS = 1024 characters (not bytes), for the description and the title.
+        $this->assertSame(204, $post([$this->tool(['description' => str_repeat('é', 1024), 'title' => str_repeat('t', 1024)])]));
+        $this->assertSame(422, $post([$this->tool(['description' => str_repeat('d', 1025)])]));
+        $this->assertSame(422, $post([$this->tool(['title' => str_repeat('t', 1025)])]));
+        // Name patterns.
+        $this->assertSame(422, $post([$this->tool(['name' => str_repeat('n', 129)])]));
+        $this->assertSame(422, $post([$this->tool(['llmName' => str_repeat('l', 65)])]));
+        $this->assertSame(422, $post([$this->tool(['llmName' => "a\n"])]));
+    }
+
+    public function test_body_size_limit(): void
+    {
+        $this->connectPage($this->alice, $this->aliceConversation, 'page-alice');
+        $message = fn (string $padding) => json_encode([
+            ...$this->resultMessage('page-alice', 'unknown-call', ['status' => 'error', 'message' => $padding]),
+        ], JSON_THROW_ON_ERROR);
+        $overhead = strlen($message(''));
+
+        // 1 048 576 bytes (the page's maxMessageBytes) is accepted for processing; one more is 413.
+        $atLimit = $message(str_repeat('x', 1_048_576 - $overhead));
+        $this->assertSame(1_048_576, strlen($atLimit));
+        $this->assertSame(404, $this->postRaw($atLimit));
+        $this->assertSame(413, $this->postRaw($message(str_repeat('x', 1_048_577 - $overhead))));
+    }
+
+    public function test_json_depth_limit(): void
+    {
+        $this->connectPage($this->alice, $this->aliceConversation, 'page-alice');
+        // Containers: message (1) → result (2) → data's nested arrays. json_decode's depth 64 counts
+        // the value level below the innermost container too, so it admits 63 nested containers.
+        $message = fn (int $arrays) => '{"protocol":1,"type":"result","clientId":"page-alice","id":"unknown-call",'
+            .'"result":{"status":"ok","data":'.str_repeat('[', $arrays).str_repeat(']', $arrays).'}}';
+
+        $this->assertSame(404, $this->postRaw($message(61))); // 63 containers: decoded, unknown id
+        $this->assertSame(422, $this->postRaw($message(62))); // 64 containers: rejected
+        $this->assertSame(422, $this->postRaw('{"protocol":1,')); // not JSON
+        $this->assertSame(422, $this->postRaw('"a string"')); // not an object
+    }
+
+    private function postRaw(string $body): int
+    {
+        return $this->actingAs($this->alice)->call(
+            'POST',
+            $this->bridgeUrl($this->aliceConversation),
+            server: ['CONTENT_TYPE' => 'application/json', 'HTTP_ACCEPT' => 'application/json'],
+            content: $body,
+        )->status();
+    }
+
+    /**
+     * @param array<string, mixed> $overrides
+     * @return array<string, mixed>
+     */
+    private function tool(array $overrides = []): array
+    {
+        return [
+            'name' => 'challenges.create.fill',
+            'llmName' => 'challenges_create_fill',
+            'description' => 'Fill the create challenge form.',
+            'hints' => (object) [],
+            ...$overrides,
+        ];
+    }
 }
