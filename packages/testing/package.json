@@ -1,6 +1,6 @@
 {
   "name": "@toolmark/testing",
-  "version": "1.0.0-next.4",
+  "version": "1.0.0",
   "description": "Testing helpers for Toolmark: a Vitest test registry and a Playwright fixture that drives page tools.",
   "keywords": [
     "toolmark",

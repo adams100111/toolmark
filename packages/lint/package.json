@@ -1,6 +1,6 @@
 {
   "name": "@toolmark/lint",
-  "version": "1.0.0-next.4",
+  "version": "1.0.0",
   "description": "Static lint for Toolmark tool manifests: naming, descriptions, schemas and LLM-facing hygiene, with an optional TypeSafe judge.",
   "keywords": [
     "toolmark",

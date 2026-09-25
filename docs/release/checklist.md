@@ -237,3 +237,20 @@ on Firefox against built `dist` (`release-dry-run` is Chromium-only).
   (2026-09-25); the live run is Task 7d.
 - **SC4 / D3:** `check-no-app-code: 141 file(s) scanned, 0 match(es)` (gate 5).
 - **D28:** `check-docs: ok` (gate 3), which includes the experimental-label check.
+
+## 1.0.0 (Task 7c step 1) — 2026-09-25T09:05Z
+
+`pnpm changeset pre exit && pnpm changeset version` → `check-release-versions --exact 1.0.0`: PASS 8 @toolmark/* packages at 1.0.0.
+
+Fresh pack → `tarball-smoke`: 108 passed, 0 failed; `check-release-versions --tarballs`: 8 passed, 0 failed.
+
+```
+9e2ae6c9c830d988ac4dd8882dc5a497f3f2bc01bc63184f820c3e891057d83b  toolmark-core-1.0.0.tgz
+451eb0f6042928d5eac64d42c85c31920b2189c9ffd8a246b81817ac075556ed  toolmark-inertia-1.0.0.tgz
+a37a86726b3a0818d1cde78af7d6c146170a715b8f07d3ff87a977bcb9ec9466  toolmark-judge-typesafe-1.0.0.tgz
+8680ac95245c5ddeae61df106e89ab9502a03035421b4dd335279c91a67cda81  toolmark-lint-1.0.0.tgz
+d691a793fa9f6cb807fe97ddd3a084b55e1740ddf6b9e8961c690daf0ec79985  toolmark-mcp-1.0.0.tgz
+35c2177b2719df26c6e95fa010a0d84364c7e3693bacc59f0abf7e8c40e1fa50  toolmark-react-1.0.0.tgz
+02689eb70e7a44fde6d7bdc44f5638a18e334b7d074ab86e126044a85f1615f4  toolmark-testing-1.0.0.tgz
+122e5877f2a9776620f30439dd5bc49e9c869d8319a6360bdc171c25e5a512ea  toolmark-tour-1.0.0.tgz
+```

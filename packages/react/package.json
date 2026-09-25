@@ -1,6 +1,6 @@
 {
   "name": "@toolmark/react",
-  "version": "1.0.0-next.4",
+  "version": "1.0.0",
   "description": "React bindings for Toolmark: provider, hooks, scopes, form tools and the react-hook-form adapter.",
   "keywords": [
     "toolmark",
