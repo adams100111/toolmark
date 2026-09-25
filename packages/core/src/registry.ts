@@ -708,6 +708,8 @@ export function createToolmark(options: ToolmarkOptions = {}): Toolmark {
     setAnchor(name, param, el) {
       if (!browser || typeof name !== 'string') return
       if (param !== undefined && typeof param !== 'string') return
+      // Untyped callers may pass anything; only DOM elements (or null to clear) are stored.
+      if (el != null && !(typeof Element !== 'undefined' && el instanceof Element)) return
       anchorOverrides.set(name, param, el ?? null)
     },
     state(name) {
