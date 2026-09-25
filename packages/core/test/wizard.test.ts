@@ -484,6 +484,88 @@ describe('wizard tools', () => {
     expect(({} as Record<string, unknown>).x).toBeUndefined()
   })
 
+  it('wizard_commit_throw_restores_data_and_registers_no_undo', async () => {
+    const s = setup({ adapter: true })
+    const form = s.w.forms.basicInfo!
+    const before = structuredClone(s.w.data)
+    form.setValues = () => {
+      throw new Error('boom')
+    }
+    // basicInfo (current, mounted) throws in setValues; details is data-backed and would have
+    // already been written via setData before the throw.
+    const r = await s.fill({ basicInfo: { category: 'x' }, details: { budget: 20 } })
+    expect(r).toEqual({ status: 'error', message: 'Tool failed' })
+    // Parent data is restored to its pre-fill snapshot (the details write is rolled back).
+    expect(s.w.data).toEqual(before)
+    // Nothing is left to undo: the throw happened before the wizard's own registerUndo call.
+    expect((await s.tm.undo(s.lastCallId())).status).toBe('refused')
+  })
+
+  it('wizard_commit_reset_current_throw_restores_data', async () => {
+    const s = setup({ resetCurrent: true })
+    const before = structuredClone(s.w.data)
+    s.resetCurrent.mockImplementation(() => {
+      throw new Error('boom')
+    })
+    const r = await s.fill({ basicInfo: { category: 'x' }, details: { budget: 20 } })
+    expect(r).toEqual({ status: 'error', message: 'Tool failed' })
+    expect(s.w.data).toEqual(before)
+    expect((await s.tm.undo(s.lastCallId())).status).toBe('refused')
+  })
+
+  it('wizard_schema_defs_definitions_collision_prefixed_distinctly', () => {
+    const collide: WizardStep = {
+      name: 'mix',
+      input: z.object({}).passthrough(),
+      jsonSchema: {
+        type: 'object',
+        properties: { a: { $ref: '#/$defs/definitions.x' }, b: { $ref: '#/definitions/x' } },
+        $defs: { 'definitions.x': { type: 'string', title: 'defs-entry' } },
+        definitions: { x: { type: 'number', title: 'definitions-entry' } },
+      },
+    }
+    const s = setup({ steps: [collide] })
+    const schema = s.tm.describe('create.fill')!.inputSchema
+    const stepsNode = (schema.properties as Record<string, JsonSchema>).steps!
+    const mixNode = (stepsNode.properties as Record<string, JsonSchema>).mix!
+    // Both entries land under distinct, non-colliding keys instead of one clobbering the other.
+    expect(mixNode.properties).toMatchObject({
+      a: { $ref: '#/$defs/mix.defs.definitions.x' },
+      b: { $ref: '#/$defs/mix.definitions.x' },
+    })
+    expect(schema.$defs).toMatchObject({
+      'mix.defs.definitions.x': { type: 'string', title: 'defs-entry' },
+      'mix.definitions.x': { type: 'number', title: 'definitions-entry' },
+    })
+  })
+
+  it('wizard_schema_does_not_rewrite_ref_inside_const_default_enum', () => {
+    const trap: WizardStep = {
+      name: 'trap',
+      input: z.object({}).passthrough(),
+      jsonSchema: {
+        type: 'object',
+        properties: {
+          template: {
+            type: 'object',
+            default: { $ref: '#/definitions/x' },
+            const: { $ref: '#/$defs/y' },
+            enum: [{ $ref: '#/definitions/x' }],
+          },
+        },
+      },
+    }
+    const s = setup({ steps: [trap] })
+    const schema = s.tm.describe('create.fill')!.inputSchema
+    const stepsNode = (schema.properties as Record<string, JsonSchema>).steps!
+    const trapNode = (stepsNode.properties as Record<string, JsonSchema>).trap!
+    const templateNode = (trapNode.properties as Record<string, JsonSchema>).template!
+    // Data values are preserved verbatim: no attempt to rewrite a `$ref`-shaped key inside them.
+    expect(templateNode.default).toEqual({ $ref: '#/definitions/x' })
+    expect(templateNode.const).toEqual({ $ref: '#/$defs/y' })
+    expect(templateNode.enum).toEqual([{ $ref: '#/definitions/x' }])
+  })
+
   it('wizard_dispose_removes_tools', () => {
     const s = setup({
       steps: [
@@ -592,5 +674,45 @@ describe('stepwise wizard tools', () => {
       await s.tm.call('create.step.fill', { values: { budget: 5 } }, { caller: 'inapp' }),
     ).toMatchObject({ status: 'ok' })
     expect(s.w.form!.values).toEqual({ budget: 5 })
+  })
+
+  it('stepwise_refresh_retries_after_failed_registration', async () => {
+    // Production registry: a failed registration reports an event instead of throwing.
+    const tm = createToolmark({ __environment: 'browser' })
+    const stepList = steps()
+    const w = { index: 0, form: new StepForm({ title: '' }) as StepForm | undefined }
+    const next = vi.fn(() => {
+      w.index++
+      w.form = new StepForm({})
+      return Promise.resolve(ok({ step: stepList[w.index]!.name }))
+    })
+    // A scope the test can dispose on demand, to force the next registration to fail.
+    const scope = tm.scope('w')
+    const wizardOpts = {
+      name: 'create',
+      description: 'The new-challenge wizard.',
+      currentAdapter: () => w.form,
+      currentStep: () => stepList[w.index]!,
+      next,
+      previous: () => undefined,
+      submit: () => Promise.resolve(ok({ done: true })),
+      scope,
+    }
+    const tools = createStepwiseWizardTools(tm, wizardOpts)
+    expect(tm.describe('w.create.step.fill')!.description).toContain('(current step: basicInfo)')
+
+    await tm.call('w.create.next', {}, { caller: 'inapp' })
+    // The step advanced to "details", but its registration will fail: the scope is disposed.
+    scope.dispose()
+    tools.refresh()
+    // Nothing is registered for the failed attempt...
+    expect(tm.describe('w.create.step.fill')).toBeUndefined()
+
+    // ...and because `currentStep` only follows a *successful* registration, a later refresh()
+    // for the same target step ("details") is not treated as a no-op: it retries.
+    const scope2 = tm.scope('w2')
+    wizardOpts.scope = scope2
+    tools.refresh()
+    expect(tm.describe('w2.create.step.fill')!.description).toContain('(current step: details)')
   })
 })

@@ -188,19 +188,33 @@ const encodeToken = (name: string): string => name.replaceAll('~', '~0').replace
  * The step's fill `values` schema with its definitions moved to the wizard root under
  * `<step>.<name>` (`definitions` entries under `<step>.definitions.<name>`), every local `$ref`
  * rewritten accordingly, so steps with same-named definitions cannot collide.
+ *
+ * When a step declares both `$defs` and `definitions`, a `$defs` entry literally named e.g.
+ * `"definitions.x"` would otherwise land on the same renamed key as a `definitions` entry named
+ * `"x"` (`<step>.definitions.x`), silently clobbering one; both kinds are then given their own
+ * distinct, non-overlapping prefix (`<step>.defs.<name>` / `<step>.definitions.<name>`) so no
+ * name can collide across them. A step using only one of the two keeps the plain `<step>.<name>`
+ * form (unchanged, since same-kind names are already unique object keys).
  */
 function namespaceStepSchema(
   step: string,
   fillSchema: JsonSchema | undefined,
 ): { values: unknown; defs: Record<string, unknown> } {
+  const hasBoth = isPlainObject(fillSchema?.$defs) && isPlainObject(fillSchema?.definitions)
   const rename = (kind: string, name: string): string =>
-    `${step}.${kind === 'definitions' ? 'definitions.' : ''}${name}`
+    `${step}.${kind === 'definitions' ? 'definitions.' : hasBoth ? 'defs.' : ''}${name}`
   const rewrite = (node: unknown, depth: number): unknown => {
     if (depth > 64) return node
     if (Array.isArray(node)) return node.map((n) => rewrite(n, depth + 1))
     if (typeof node !== 'object' || node === null) return node
     const out: Record<string, unknown> = {}
     for (const [key, value] of Object.entries(node)) {
+      // `const`/`default`/`enum` hold literal data, not schema: a `$ref`-shaped property inside
+      // one of them is a data value, never a schema reference, and must pass through untouched.
+      if (key === 'const' || key === 'default' || key === 'enum') {
+        define(out, key, value)
+        continue
+      }
       const m =
         key === '$ref' && typeof value === 'string'
           ? /^#\/(\$defs|definitions)\/([^/]+)(.*)$/.exec(value)
@@ -455,32 +469,42 @@ export function createWizardTools(
   let fillToolName = `${opts.name}.fill`
   let warnedUnsynced = false
 
-  /** Writes the staged values: one `setData`, then the mounted form, then `resetCurrent`. */
+  /**
+   * Writes the staged values: one `setData`, then the mounted form, then `resetCurrent`. If a
+   * mounted form's `setValues` or `resetCurrent` throws after `setData` already ran, the previous
+   * parent data is restored (`setData(prev)`) and the error is rethrown, so a throwing step leaves
+   * parent data unchanged (the call yields `error` "Tool failed" and nothing is left to undo).
+   */
   const commit = (ports: StepPort[], source: 'agent' | 'undo'): void => {
     const written = ports.filter((p) => p.pending.size > 0)
     const dataPorts = written.filter((p) => !p.live)
+    const prev = opts.getData()
     let next: Data | undefined
     if (dataPorts.length > 0) {
-      const data = opts.getData()
-      next = isPlainObject(data) ? { ...data } : {}
+      next = isPlainObject(prev) ? { ...prev } : {}
       for (const p of dataPorts) define(next, p.name, p.getValues())
       opts.setData(next)
     }
-    for (const p of written) if (p.live) p.live.setValues(p.staged(), { source })
-    for (const p of dataPorts) {
-      if (!p.current) continue
-      if (opts.resetCurrent) {
-        opts.resetCurrent(dataSlice(next, p.name))
-      } else if (!warnedUnsynced) {
-        warnedUnsynced = true
-        emitEvent(tm, 'error', {
-          code: 'wizard_current_step_unsynced',
-          message:
-            `Wizard "${opts.name}" wrote its current step "${p.name}" into parent data, but has ` +
-            `neither currentAdapter nor resetCurrent: the visible step form may show stale values`,
-          tool: fillToolName,
-        })
+    try {
+      for (const p of written) if (p.live) p.live.setValues(p.staged(), { source })
+      for (const p of dataPorts) {
+        if (!p.current) continue
+        if (opts.resetCurrent) {
+          opts.resetCurrent(dataSlice(next, p.name))
+        } else if (!warnedUnsynced) {
+          warnedUnsynced = true
+          emitEvent(tm, 'error', {
+            code: 'wizard_current_step_unsynced',
+            message:
+              `Wizard "${opts.name}" wrote its current step "${p.name}" into parent data, but has ` +
+              `neither currentAdapter nor resetCurrent: the visible step form may show stale values`,
+            tool: fillToolName,
+          })
+        }
       }
+    } catch (e) {
+      if (dataPorts.length > 0) opts.setData(prev)
+      throw e
     }
   }
 
@@ -841,12 +865,15 @@ export function createStepwiseWizardTools(
       fillReg = undefined
       fillPrivate = undefined
       if (!next) return
-      currentStep = next.step
+      // `currentStep` follows the step only once its registration lands: a failed registration
+      // (e.g. a production duplicate-name collision) leaves it unchanged, so the next refresh()
+      // for the same target step retries instead of treating it as a no-op.
       const reg = tm.register(next.def, opts.scope ? { scope: opts.scope } : undefined)
       if (!isLive(state, reg)) {
         next.dispose()
         return
       }
+      currentStep = next.step
       fillReg = reg
       fillPrivate = next
     },
