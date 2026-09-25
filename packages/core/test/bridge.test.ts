@@ -486,12 +486,13 @@ describe('bridge', () => {
     expect(errors).toEqual([])
   })
 
-  it('caller_other_than_inapp_rejected_at_creation', () => {
+  it('caller_other_than_inapp_or_mcp_rejected_at_creation', () => {
     const t = fakeTransport()
-    for (const caller of ['human', 'mcp', 'test', '', 42]) {
+    for (const caller of ['human', 'test', 'webmcp', 'tour', '', 42]) {
       expect(() => bridge({ transport: t.transport, caller: caller as 'inapp' })).toThrow(TypeError)
     }
     expect(() => bridge({ transport: t.transport, caller: 'inapp' })).not.toThrow()
+    expect(() => bridge({ transport: t.transport, caller: 'mcp' })).not.toThrow()
     expect(() => bridge({ transport: t.transport })).not.toThrow()
   })
 

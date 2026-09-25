@@ -37,9 +37,12 @@ import type {
   ToolDefinition,
   ToolHints,
   ToolOrigin,
+  ToolState,
 } from './tool.js'
+import { anchorFromSpec, createAnchorOverrides } from './anchors.js'
 import { createCallRuntime } from './call.js'
 import { filesConfig, type FilesConfig, type FilesOptions } from './files.js'
+import { inputSensitiveHookOf } from './input-redaction.js'
 import type { PendingConfirmation } from './confirm.js'
 
 /** A confirmation request handed to the inline `confirm` handler. */
@@ -116,6 +119,11 @@ export interface ToolInfo {
   origin: ToolOrigin
   /** The native `toolname` of a `'native-form'` tool. */
   nativeName?: string
+  /**
+   * The tool's sensitive input paths (`ToolDefinition.sensitivePaths()`, evaluated on every
+   * `info` call; `[]` when it has none). Consumers redact these from state and telemetry.
+   */
+  sensitivePaths: string[]
 }
 
 /** The tool registry (spec §5). */
@@ -155,6 +163,31 @@ export interface Toolmark {
    * @param name - Full tool name.
    */
   info(name: string): ToolInfo | undefined
+  /**
+   * The element a tool (or one of its params) is anchored to, for tours (spec §13). Precedence with
+   * `param`: {@link Toolmark.setAnchor} override → `anchors.params[param]()` →
+   * `anchors.resolve(param)` → `null`; without `param`: override → `anchors.element()` → `null`.
+   * `null` for unknown tools. Never throws: a throwing anchor function gives `null` (and a
+   * development `error` event `tool_threw`).
+   * @param tool - Full tool name.
+   * @param param - Input path, e.g. `email` or `items.0.qty`.
+   */
+  anchor(tool: string, param?: string): Element | null
+  /**
+   * Overrides the anchor of `(tool, param)` (`param` `undefined` = the tool's own element), e.g. for
+   * custom widgets. `null` clears the override. Overrides are dropped when the tool is disposed.
+   * @param tool - Full tool name.
+   * @param param - Input path, or `undefined` for the tool itself.
+   * @param el - The element, or `null` to clear.
+   */
+  setAnchor(tool: string, param: string | undefined, el: Element | null): void
+  /**
+   * The tool's current state from its `state()` hook, or `undefined` for unknown tools and tools
+   * without one. Synchronous and side-effect free; never throws (a throwing hook gives `undefined`
+   * and a development `error` event `tool_threw`).
+   * @param tool - Full tool name.
+   */
+  state(tool: string): ToolState<unknown> | undefined
   /** Calls a tool. Never throws; every outcome is a {@link ToolResult}. */
   call(
     name: string,
@@ -188,8 +221,8 @@ export interface Entry {
   readonly scope: ScopeNode
   readonly cls: HintClass
   readonly source: ManifestSource
-  /** Registry-only facts (`tm.info`). */
-  readonly info: ToolInfo
+  /** Registry-only static facts (`tm.info`; `sensitivePaths` is evaluated per call). */
+  readonly info: Omit<ToolInfo, 'sensitivePaths'>
   alive: boolean
   readonly registration: Registration
   /** Detaches the registration's abort listener (I5). */
@@ -279,6 +312,49 @@ export function isDevRegistry(tm: Toolmark): boolean {
 /** @internal */
 export function registryState(tm: Toolmark): RegistryState | undefined {
   return stateOf.get(tm)
+}
+
+/**
+ * @internal The `nativeName` of a live tool (`tm.info(name).nativeName`) without evaluating its
+ * `sensitivePaths()` — for consumers that only need the static facts on a hot path (WebMCP sync).
+ * @param tm - The registry.
+ * @param name - Full tool name.
+ */
+export function nativeNameOf(tm: Toolmark, name: string): string | undefined {
+  const entry = stateOf.get(tm)?.entries.get(name)
+  return entry?.alive === true ? entry.info.nativeName : undefined
+}
+
+/**
+ * @internal The sensitive paths of a live tool expressed in the shape of its call *input*, for
+ * consumers that redact inputs (the OTel exporter). A tool carrying the `INPUT_SENSITIVE_PATHS`
+ * hook (form and wizard fills: `values.<p>`, `steps.<step>.<p>`) answers through it; any other
+ * tool's `sensitivePaths()` is used as-is. Paths may contain `[]` wildcards. `[]` for an unknown
+ * tool; `null` when the hook throws or returns a non-array (reported as `tool_threw`), in which
+ * case the consumer must not record the input at all.
+ * @param tm - The registry.
+ * @param name - Full tool name.
+ */
+export function inputSensitivePaths(tm: Toolmark, name: string): string[] | null {
+  const state = stateOf.get(tm)
+  const entry = state?.entries.get(name)
+  if (!state || entry?.alive !== true) return []
+  const hook = inputSensitiveHookOf(entry.tool)
+  if (!hook) return tm.info(name)?.sensitivePaths ?? []
+  let paths: unknown
+  try {
+    paths = hook()
+  } catch (cause) {
+    state.report({
+      code: 'tool_threw',
+      message: `input redaction of "${entry.fullName}" threw`,
+      tool: entry.fullName,
+      cause,
+    })
+    return null
+  }
+  if (!Array.isArray(paths)) return null
+  return (paths as unknown[]).filter((p): p is string => typeof p === 'string')
 }
 
 const ORIGINS: readonly ToolOrigin[] = ['code', 'native-form', 'dom', 'server']
@@ -410,10 +486,13 @@ export function createToolmark(options: ToolmarkOptions = {}): Toolmark {
     queueMicrotask(flush)
   }
 
+  const anchorOverrides = createAnchorOverrides()
+
   const removeEntry = (entry: Entry): void => {
     if (!entry.alive) return
     entry.alive = false
     entry.detach?.()
+    anchorOverrides.drop(entry.fullName)
     if (llmNames.get(entry.source.llmName) === entry) llmNames.delete(entry.source.llmName)
     if (entries.get(entry.fullName) === entry) entries.delete(entry.fullName)
     runtime.onEntryRemoved(entry)
@@ -530,7 +609,7 @@ export function createToolmark(options: ToolmarkOptions = {}): Toolmark {
       name: fullName,
       dispose: () => removeEntry(entry),
     }
-    const info: ToolInfo = {
+    const info: Entry['info'] = {
       origin: ORIGINS.includes(def.origin as ToolOrigin) ? (def.origin as ToolOrigin) : 'code',
     }
     if (typeof def.nativeName === 'string') info.nativeName = def.nativeName
@@ -595,6 +674,51 @@ export function createToolmark(options: ToolmarkOptions = {}): Toolmark {
     }
   }
 
+  const liveEntry = (name: string): Entry | undefined => {
+    if (!browser) return undefined
+    const entry = entries.get(name)
+    return entry?.alive === true ? entry : undefined
+  }
+
+  /** Reports a throwing tool hook (development only: tours poll these hooks). */
+  const hookThrew = (entry: Entry, hook: string, cause: unknown): void => {
+    if (dev) {
+      report({
+        code: 'tool_threw',
+        message: `${hook} of "${entry.fullName}" threw`,
+        tool: entry.fullName,
+        cause,
+      })
+    }
+  }
+
+  const sensitivePathsOf = (entry: Entry): string[] => {
+    const tool = entry.tool
+    if (typeof tool.sensitivePaths !== 'function') return []
+    let paths: unknown
+    try {
+      paths = tool.sensitivePaths()
+    } catch (cause) {
+      // Always reported: a failed redaction list is a privacy problem, not tour noise.
+      report({
+        code: 'tool_threw',
+        message: `sensitivePaths() of "${entry.fullName}" threw`,
+        tool: entry.fullName,
+        cause,
+      })
+      return []
+    }
+    if (!Array.isArray(paths)) {
+      report({
+        code: 'tool_threw',
+        message: `sensitivePaths() of "${entry.fullName}" did not return an array`,
+        tool: entry.fullName,
+      })
+      return []
+    }
+    return (paths as unknown[]).filter((p): p is string => typeof p === 'string')
+  }
+
   const tm: Toolmark = {
     clientId: newId(),
     get rev() {
@@ -610,9 +734,41 @@ export function createToolmark(options: ToolmarkOptions = {}): Toolmark {
       return buildManifestEntry(entry.source)
     },
     info(name) {
-      if (!browser) return undefined
-      const entry = entries.get(name)
-      return entry?.alive === true ? { ...entry.info } : undefined
+      const entry = liveEntry(name)
+      return entry ? { ...entry.info, sensitivePaths: sensitivePathsOf(entry) } : undefined
+    },
+    anchor(name, param) {
+      const entry = liveEntry(name)
+      if (!entry) return null
+      const override = anchorOverrides.get(name, param)
+      if (override) return override
+      try {
+        return anchorFromSpec(entry.tool.anchors, param) ?? null
+      } catch (cause) {
+        hookThrew(entry, param === undefined ? 'anchor' : `anchor("${param}")`, cause)
+        return null
+      }
+    },
+    setAnchor(name, param, el) {
+      if (!browser || typeof name !== 'string') return
+      if (param !== undefined && typeof param !== 'string') return
+      // Untyped callers may pass anything; only DOM elements (or null to clear) are stored.
+      if (
+        el != null &&
+        (typeof el !== 'object' || (typeof Element !== 'undefined' && !(el instanceof Element)))
+      )
+        return
+      anchorOverrides.set(name, param, el ?? null)
+    },
+    state(name) {
+      const entry = liveEntry(name)
+      if (!entry || typeof entry.tool.state !== 'function') return undefined
+      try {
+        return entry.tool.state()
+      } catch (cause) {
+        hookThrew(entry, 'state()', cause)
+        return undefined
+      }
     },
     call: (name, input, opts) => runtime.call(name, input, opts),
     pendingConfirmations: () => (browser ? runtime.pendingConfirmations() : []),

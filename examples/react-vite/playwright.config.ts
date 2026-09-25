@@ -7,6 +7,8 @@ const port = Number(process.env.TOOLMARK_EXAMPLE_PORT ?? 5173)
 export default defineConfig({
   testDir: 'e2e',
   testMatch: '**/*.spec.ts',
+  // Builds `@toolmark/mcp` (and its workspace dependencies) once: the MCP specs spawn its CLI.
+  globalSetup: './e2e/global-setup.ts',
   fullyParallel: true,
   forbidOnly: Boolean(process.env.CI),
   retries: process.env.CI ? 2 : 0,

@@ -1,6 +1,7 @@
 import { useEffect, useState, type JSX } from 'react'
 import { usePendingConfirmations } from '@toolmark/react'
 import { ChallengesPage } from './challenge-form.js'
+import { PairMcpPanel } from './pair-mcp.js'
 import { WizardPage } from './wizard.js'
 
 /** Renders every pending deferred confirmation as a card with Approve / Reject. */
@@ -52,13 +53,17 @@ function useHashRoute(): string {
   return hash
 }
 
-/** The example app: the current page (by hash) plus the confirm cards of pending agent actions. */
+/**
+ * The example app: the current page (by hash), the confirm cards of pending agent actions and the
+ * "Pair with desktop MCP" panel.
+ */
 export function App(): JSX.Element {
   const hash = useHashRoute()
   return (
     <main>
       {hash === '#/wizard' ? <WizardPage /> : <ChallengesPage />}
       <ConfirmCards />
+      <PairMcpPanel />
     </main>
   )
 }

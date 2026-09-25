@@ -1,7 +1,7 @@
 {
   "name": "@toolmark/core",
-  "version": "0.1.0-next.1",
-  "description": "Framework-agnostic tool registry, policy, confirmation, form tools and bridge protocol for agent-operable web apps.",
+  "version": "0.1.0-next.2",
+  "description": "Framework-agnostic tool registry, policy, confirmation, form tools and bridge protocol for agent-operable web apps (WebMCP adapter experimental)",
   "license": "MIT",
   "type": "module",
   "sideEffects": false,
@@ -59,6 +59,16 @@
       "types": "./dist/dom.d.ts",
       "import": "./dist/dom.js"
     },
+    "./webmcp": {
+      "@toolmark/source": "./src/webmcp/index.ts",
+      "types": "./dist/webmcp.d.ts",
+      "import": "./dist/webmcp.js"
+    },
+    "./otel": {
+      "@toolmark/source": "./src/otel/index.ts",
+      "types": "./dist/otel.d.ts",
+      "import": "./dist/otel.js"
+    },
     "./package.json": "./package.json"
   },
   "scripts": {
@@ -66,7 +76,23 @@
     "typecheck": "tsc -p tsconfig.test.json",
     "lint": "eslint ."
   },
+  "peerDependencies": {
+    "@mcp-b/webmcp-polyfill": "^5.0.0",
+    "@opentelemetry/api": "^1.9.0"
+  },
+  "peerDependenciesMeta": {
+    "@mcp-b/webmcp-polyfill": {
+      "optional": true
+    },
+    "@opentelemetry/api": {
+      "optional": true
+    }
+  },
   "devDependencies": {
+    "@mcp-b/webmcp-polyfill": "5.1.0",
+    "@opentelemetry/api": "1.9.1",
+    "@opentelemetry/sdk-metrics": "2.11.0",
+    "@opentelemetry/sdk-trace-base": "2.11.0",
     "@types/node": "catalog:",
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
@@ -78,6 +104,7 @@
     "react": "catalog:",
     "react-dom": "catalog:",
     "tsx": "catalog:",
+    "webmcp-types": "0.1.9",
     "zod": "catalog:",
     "zod-to-json-schema": "catalog:"
   }
