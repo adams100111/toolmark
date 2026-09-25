@@ -2,7 +2,7 @@
 // The release workflow's publish loop (M5 final review I-4), as a tested script so that the
 // `release-dry-run` job runs the same code as `publish`.
 //
-//   node scripts/publish-tarballs.mjs [--dry-run] <pack-dir> [--released <file>] [--root <dir>]
+//   node scripts/publish-tarballs.mjs [--dry-run | --released <file>] [--root <dir>] <pack-dir>
 //
 // <pack-dir> is a `changesets pack` output (`publish-plan.json` + `packages/*.tgz`). The script:
 //   1. requires npm >= 11.5.1 (trusted publishing with provenance);
@@ -31,24 +31,41 @@ const MIN_NPM = [11, 5, 1]
 function usage(message) {
   if (message) console.error(message)
   console.error(
-    'usage: publish-tarballs.mjs [--dry-run] <pack-dir> [--released <file>] [--root <dir>]',
+    'usage: publish-tarballs.mjs [--dry-run | --released <file>] [--root <dir>] <pack-dir>',
   )
   process.exit(2)
 }
 
+/**
+ * Strict argv (n-4): options first, each at most once, then exactly one <pack-dir> and nothing
+ * after it. An option value must be non-empty and must not look like an option, and --dry-run
+ * and --released are exclusive (a dry run records no releases). Anything else exits 2.
+ */
 function parseArgs(argv) {
   const out = { dryRun: false, dir: undefined, released: undefined, root: process.cwd() }
+  const seen = new Set()
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]
-    const value = () => (i + 1 < argv.length ? argv[++i] : usage(`${arg} needs a value`))
+    if (out.dir !== undefined) usage(`unexpected argument after <pack-dir>: ${arg}`)
+    if (!arg.startsWith('-')) {
+      if (arg === '') usage('empty <pack-dir>')
+      out.dir = arg
+      continue
+    }
+    if (!['--dry-run', '--released', '--root'].includes(arg)) usage(`unknown option ${arg}`)
+    if (seen.has(arg)) usage(`${arg} given twice`)
+    seen.add(arg)
+    const value = () => {
+      const v = argv[++i]
+      if (v === undefined || v === '' || v.startsWith('-')) usage(`${arg} needs a value`)
+      return v
+    }
     if (arg === '--dry-run') out.dryRun = true
     else if (arg === '--released') out.released = value()
-    else if (arg === '--root') out.root = resolve(value())
-    else if (arg.startsWith('-')) usage(`unknown option ${arg}`)
-    else if (out.dir === undefined) out.dir = arg
-    else usage(`unexpected argument ${arg}`)
+    else out.root = resolve(value())
   }
   if (out.dir === undefined) usage('missing <pack-dir>')
+  if (out.dryRun && out.released !== undefined) usage('--dry-run and --released are exclusive')
   return out
 }
 

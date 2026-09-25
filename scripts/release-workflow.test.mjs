@@ -54,7 +54,7 @@ test('sec_15_release_step_runs_the_tag_guard_before_and_after_each_release', () 
 
 test('sec_16_publish_checks_plan_against_packed_manifests_first', () => {
   const plan = stepIndex('publish', /check-release-versions\.mjs --plan dist-pack/)
-  const publish = stepIndex('publish', /publish-tarballs\.mjs dist-pack/)
+  const publish = stepIndex('publish', /publish-tarballs\.mjs --released released\.tsv dist-pack/)
   assert.ok(plan >= 0, 'publish runs check-release-versions --plan')
   assert.ok(plan < publish, 'before any npm publish')
   // The loop's own re-checks (path, name, tag, workspace version, integrity) are tested by
@@ -65,7 +65,7 @@ test('sec_16_publish_checks_plan_against_packed_manifests_first', () => {
 test('sec_22_publish_asks_npm_what_each_tarball_is_before_publishing', () => {
   const plan = stepIndex('publish', /check-release-versions\.mjs --plan dist-pack/)
   const npm = stepIndex('publish', /check-release-versions\.mjs --npm-dry-run dist-pack/)
-  const publish = stepIndex('publish', /publish-tarballs\.mjs dist-pack/)
+  const publish = stepIndex('publish', /publish-tarballs\.mjs --released released\.tsv dist-pack/)
   assert.ok(npm > plan, 'after the packed-manifest check')
   assert.ok(npm < publish, 'before any npm publish')
   // No token reaches the dry-run step (the script also strips the environment it gives npm).
@@ -100,6 +100,11 @@ test('i4_release_dry_run_runs_the_publish_checks_and_loop_in_order', () => {
     [...order].sort((a, b) => a - b),
     order,
     'in the publish job order',
+  )
+  // n-4: the loop's argv is strict (--dry-run excludes --released; <pack-dir> comes last).
+  assert.match(
+    workflow.jobs[job].steps[order.at(-1)].run,
+    /publish-tarballs\.mjs --dry-run dist-pack$/,
   )
   for (const step of workflow.jobs[job].steps) {
     assert.doesNotMatch(step.run ?? '', /npm publish/, 'release-dry-run never runs npm publish')

@@ -94,14 +94,13 @@ const RELEASED = '@toolmark/core\t1.0.0\tpackages/core\n@toolmark/react\t1.0.0\t
 test('publish_tarballs_dry_run_checks_everything_and_never_publishes', () => {
   const f = fixture()
   try {
-    const r = run(f.dir, ['--dry-run', 'dist-pack', '--released', 'released.tsv'], {
+    const r = run(f.dir, ['--dry-run', 'dist-pack'], {
       FAKE_NPM_PUBLISHED: '@toolmark/core@1.0.0',
     })
     assert.equal(r.status, 0, r.out)
     assert.deepEqual(r.publishes, [])
     assert.match(r.out, /@toolmark\/core@1\.0\.0 is already on the registry; skipping/)
     assert.match(r.out, /would publish @toolmark\/react@1\.0\.0/)
-    assert.equal(r.released, RELEASED)
   } finally {
     f.cleanup()
   }
@@ -110,7 +109,7 @@ test('publish_tarballs_dry_run_checks_everything_and_never_publishes', () => {
 test('publish_tarballs_publishes_with_provenance_and_skips_published_versions', () => {
   const f = fixture()
   try {
-    const r = run(f.dir, ['dist-pack', '--released', 'released.tsv'], {
+    const r = run(f.dir, ['--released', 'released.tsv', 'dist-pack'], {
       FAKE_NPM_PUBLISHED: '@toolmark/core@1.0.0',
       NPM_BOOTSTRAP_TOKEN: 'tok',
     })
@@ -206,7 +205,9 @@ test('publish_tarballs_requires_npm_11_5_1', () => {
 test('publish_tarballs_stops_at_a_failed_publish', () => {
   const f = fixture()
   try {
-    const r = run(f.dir, ['dist-pack', '--released', 'released.tsv'], { FAKE_NPM_PUBLISH_RC: '1' })
+    const r = run(f.dir, ['--released', 'released.tsv', 'dist-pack'], {
+      FAKE_NPM_PUBLISH_RC: '1',
+    })
     assert.equal(r.status, 1)
     assert.equal(r.publishes.length, 1)
     assert.equal(r.released, '')
@@ -220,6 +221,34 @@ test('publish_tarballs_usage_errors_exit_2', () => {
   try {
     assert.equal(run(f.dir, []).status, 2)
     assert.equal(run(f.dir, ['--bogus', 'dist-pack']).status, 2)
+  } finally {
+    f.cleanup()
+  }
+})
+
+test('n4_publish_tarballs_argv_is_strict', () => {
+  const f = fixture()
+  try {
+    const bad = [
+      ['--released', '--dry-run', 'dist-pack'], // an option-like value
+      ['--released', '', 'dist-pack'], // an empty value
+      ['--root', '-x', 'dist-pack'],
+      ['--dry-run', '--dry-run', 'dist-pack'], // duplicates
+      ['--released', 'a.tsv', '--released', 'b.tsv', 'dist-pack'],
+      ['--root', '.', '--root', '.', 'dist-pack'],
+      ['--dry-run', '--released', 'released.tsv', 'dist-pack'], // conflicting
+      ['--released', 'released.tsv', '--dry-run', 'dist-pack'],
+      ['dist-pack', '--dry-run'], // anything after the positional <pack-dir>
+      ['dist-pack', '--released', 'released.tsv'],
+      ['dist-pack', 'other'],
+      ['--dry-run=true', 'dist-pack'],
+      ['--released'],
+    ]
+    for (const argv of bad) {
+      const r = run(f.dir, argv)
+      assert.equal(r.status, 2, `${JSON.stringify(argv)} → ${r.status}\n${r.out}`)
+      assert.deepEqual(r.publishes, [], JSON.stringify(argv))
+    }
   } finally {
     f.cleanup()
   }
