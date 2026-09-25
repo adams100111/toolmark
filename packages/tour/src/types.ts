@@ -66,9 +66,11 @@ export interface TourState {
    * - `idle` — not started yet.
    * - `running` — on a step (in `do` mode: its call may be in flight).
    * - `waiting` — `guide` mode: the user's input has issues (see `message`).
-   * - `confirming` — `do` mode: an inline confirmation of the step's call is pending (a
-   *   consequential/destructive tool, or `ctx.confirm` inside its `run`); the app's confirmation
-   *   UI must stay usable.
+   * - `confirming` — any inline confirmation is pending, per the registry's `confirm` events: the
+   *   step's own `do` call (a consequential/destructive tool, or `ctx.confirm` inside its `run`)
+   *   or any other tool and caller (e.g. an MCP/WebMCP agent) while the tour runs. The app's
+   *   confirmation UI must stay usable; the status returns to `running`/`waiting` once none is
+   *   pending.
    * - `done` — every step completed.
    * - `stopped` — `stop()`, an aborted signal, a failed `do` call or no valid steps.
    */
