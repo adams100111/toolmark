@@ -51,8 +51,11 @@ const tm = createToolmark({ confirm: queue.handler })
   `PendingConfirmation.input` (`tm.pendingConfirmations()`, `usePendingConfirmations`) and
   `ctx.confirm` changes carry `'[redacted]'` at the tool's sensitive paths (`sensitivePaths()`,
   mapped onto the input shape for form and wizard fills; the whole input when that list cannot be
-  read). The approved run still gets the real input. An approval that edits `input` replaces it
-  whole, so it must supply sensitive values again.
+  read). The approved run still gets the real input. An approval that edits `input` (inline,
+  deferred or through `ctx.confirm`) may send the public input back with its changes: every
+  sensitive path that still holds the literal `'[redacted]'` gets its real value back before the
+  edit is validated, so a secret is never replaced by the placeholder; a sensitive path the
+  approver changed keeps the new value. `'[redacted]'` outside the sensitive paths is ordinary text.
 - A deferred form or wizard submit approved after the form's values changed is refused `stale`
   ("Form changed since confirmation was requested").
 - **Registration check.** Registering a consequential or destructive tool fails
@@ -60,7 +63,9 @@ const tm = createToolmark({ confirm: queue.handler })
   inline-mode caller without a `confirm` handler simply does not see such tools (and a call from it
   is `refused` `not_allowed`); a development-only `missing_confirm_handler` warning event says so.
 - **`ctx.confirm({ summary, changes? })`** inside `run` asks mid-run: `human` → approved; an inline
-  caller → awaits the handler (bounded by the call signal and the expiry); a deferred caller or no
+  caller → awaits the handler (bounded by the call signal and the expiry, and not by
+  `callTimeoutMs`: the call deadline is paused while the confirmation is open and resumes with the
+  time that was left); a deferred caller or no
   handler → `{ approved: false, reason: 'confirmation_unavailable' }` plus the development event
   `ctx_confirm_unavailable`. It never throws. Tools that always need confirmation should declare
   `consequential` instead.
