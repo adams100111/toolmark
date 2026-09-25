@@ -1,5 +1,5 @@
 // Regression tests for the 2026 release security review (docs/security/review-2026.md).
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import {
   createFormTools,
@@ -168,5 +168,60 @@ describe('SEC-2: fill never writes an undeclared path, even under an open schema
     expect(r.status).toBe('invalid')
     expect(JSON.stringify(r)).toContain('isAdmin')
     expect(data).toEqual({ one: { name: '' } })
+  })
+})
+
+describe('SEC-3: confirmation expiry does not depend on timers alone', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  const saveTool = (run: () => void) => ({
+    name: 'save',
+    description: 'd',
+    hints: { consequential: true },
+    run: () => {
+      run()
+      return ok(true)
+    },
+  })
+
+  it('sec_3_confirm_pending_after_expires_at_refused_even_if_timer_late', async () => {
+    // Only `Date` is faked: the expiry timer never fires, as in a frozen background tab.
+    vi.useFakeTimers({ toFake: ['Date'] })
+    const tm = createTestRegistry({ confirmExpiryMs: 1000 })
+    const stages: string[] = []
+    tm.events.on('confirm', (e) => stages.push(e.stage))
+    let ran = 0
+    tm.register(saveTool(() => ran++))
+    const r = await tm.call('save', {}, { caller: 'inapp' })
+    if (r.status !== 'needs_confirmation') throw new Error('expected needs_confirmation')
+    vi.setSystemTime(Date.now() + 1000)
+    expect(tm.pendingConfirmations()).toEqual([])
+    expect(await tm.confirmPending(r.confirmId, { approved: true })).toMatchObject({
+      status: 'refused',
+      code: 'confirmation_expired',
+    })
+    expect(ran).toBe(0)
+    expect(stages).toEqual(['pending', 'expired'])
+  })
+
+  it('sec_3_inline_approval_after_deadline_is_expired', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    const stages: string[] = []
+    const tm = createTestRegistry({
+      confirmExpiryMs: 1000,
+      confirm: () => {
+        vi.setSystemTime(Date.now() + 1000)
+        return Promise.resolve({ approved: true })
+      },
+    })
+    tm.events.on('confirm', (e) => stages.push(e.stage))
+    let ran = 0
+    tm.register(saveTool(() => ran++))
+    const r = await tm.call('save', {}, { caller: 'mcp' })
+    expect(r).toEqual({ status: 'cancelled', by: 'operator' })
+    expect(ran).toBe(0)
+    expect(stages).toEqual(['pending', 'expired'])
   })
 })

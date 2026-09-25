@@ -29,6 +29,8 @@ export interface StoredPending<Owner> {
   readonly public: PendingConfirmation
   readonly owner: Owner
   timer: ReturnType<typeof setTimeout> | undefined
+  /** Expiry callback (the timer's, or a sweep that finds the item past `expiresAt`). */
+  readonly onExpire: (p: StoredPending<Owner>) => void
   /** Snapshot taken by the tool's confirm-snapshot hook, if it has one. */
   snapshot?: { value: unknown }
 }
@@ -62,6 +64,7 @@ export class PendingStore<Owner> {
       public: { ...item, input: cloneValue(item.input) },
       owner,
       timer: undefined,
+      onExpire,
       ...(snapshot !== undefined ? { snapshot } : {}),
     }
     stored.timer = setTimeout(
@@ -103,7 +106,21 @@ export class PendingStore<Owner> {
     return out
   }
 
+  /**
+   * Expires every item past its `expiresAt` (SEC-3): timers are delayed in background or frozen
+   * tabs and across device sleep, so expiry is also checked against the clock on every read.
+   */
+  sweep(now = Date.now()): void {
+    for (const [id, stored] of [...this.#items]) {
+      if (now < stored.public.expiresAt) continue
+      this.#items.delete(id)
+      clearTimeout(stored.timer)
+      stored.onExpire(stored)
+    }
+  }
+
   list(): PendingConfirmation[] {
+    this.sweep()
     return [...this.#items.values()].map((s) => copyPending(s.public))
   }
 }

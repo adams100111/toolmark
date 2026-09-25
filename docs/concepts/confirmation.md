@@ -44,6 +44,9 @@ const tm = createToolmark({ confirm: queue.handler })
 - A pending confirmation expires (default 10 minutes, `confirmExpiryMs`) and is dropped when its
   scope is disposed. A `confirmId` is **single use**: the first `confirmPending` consumes it, any
   later one gets `refused` `confirmation_expired`. At most 100 are pending; the oldest expire first.
+  Expiry is checked against the clock at approval time, not only by a timer: browsers delay timers
+  in background tabs and across device sleep, so an approval that arrives after `expiresAt` (inline
+  or deferred) is expired and the tool does not run.
 - A deferred form or wizard submit approved after the form's values changed is refused `stale`
   ("Form changed since confirmation was requested").
 - **Registration check.** Registering a consequential or destructive tool fails

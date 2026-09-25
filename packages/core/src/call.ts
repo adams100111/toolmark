@@ -186,12 +186,16 @@ export function createCallRuntime(state: RegistryState): CallRuntime {
     }
     const requestAbort = new AbortController()
     confirmRequestSignals.set(request, requestAbort.signal)
+    const deadline = Date.now() + expiryMs()
     emitConfirm(confirmId, entry, 'pending')
     return new Promise<InlineOutcome>((resolve) => {
       let done = false
-      const finish = (outcome: InlineOutcome): void => {
+      const finish = (settled: InlineOutcome): void => {
         if (done) return
         done = true
+        // SEC-3: an approval that arrives after the deadline (the timer fired late) is expired.
+        const outcome: InlineOutcome =
+          settled.kind === 'approved' && Date.now() >= deadline ? { kind: 'expired' } : settled
         clearTimeout(timer)
         signal?.removeEventListener('abort', onAbort)
         requestAbort.abort()
@@ -528,6 +532,12 @@ export function createCallRuntime(state: RegistryState): CallRuntime {
     if (!stored) return expiredResult()
     for (const fn of [...state.pendingConsumed]) safeCall(fn, 'pending confirmation listener')
     const entry = stored.owner
+    // SEC-3: a late expiry timer (frozen tab, device sleep) must not let an expired item run.
+    if (Date.now() >= stored.public.expiresAt) {
+      const r = expiredResult()
+      emitConfirm(confirmId, entry, 'expired', r)
+      return r
+    }
     if (outcome.approved !== true) {
       const r = cancelled('operator')
       emitConfirm(confirmId, entry, 'rejected', r)
