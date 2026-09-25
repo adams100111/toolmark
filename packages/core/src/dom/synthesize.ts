@@ -2,11 +2,16 @@ import { fileFieldSchema, type FileFieldSpec } from '../files.js'
 import { unsafePatternReason } from '../json-schema/pattern-safety.js'
 import type { JsonSchema } from '../tool.js'
 import {
+  cap,
   discover,
+  getAttr,
   inputType,
   isDenseIndexKeys,
+  isReadOnly,
   kindOf,
   labelText,
+  MAX_DESCRIPTION,
+  MAX_OPTION_TITLE,
   pathTree,
   type FormField,
   type PathTree,
@@ -33,7 +38,10 @@ export interface SynthesizedForm {
   validationSchema: JsonSchema
   /** File fields by dot path, for `FormToolOptions.files`. */
   files: Record<string, FileFieldSpec>
-  /** Named controls left out (invalid names, colliding paths) and `pattern`s that were dropped. */
+  /**
+   * Named controls left out (invalid names, colliding paths, read-only fields — reason
+   * `read-only`) and `pattern`s that were dropped.
+   */
   skipped: SkippedControl[]
 }
 
@@ -44,6 +52,8 @@ interface Leaf {
 }
 
 const collapse = (s: string): string => s.replace(/\s+/g, ' ').trim()
+/** Page text used as a description: collapsed and capped. */
+const pageText = (s: string): string => cap(collapse(s), MAX_DESCRIPTION)
 
 function attrNumber(el: Element, name: string): number | undefined {
   const raw = el.getAttribute(name)
@@ -62,22 +72,26 @@ function isMultipleOf(value: number, step: number): boolean {
   return Math.abs(r - Math.round(r)) < 1e-9
 }
 
-/** Field description: `toolparamdescription` → form `data-tool-param-<name>` → label → `aria-description`. */
+/**
+ * Field description (each source capped at {@link MAX_DESCRIPTION} characters):
+ * `toolparamdescription` → form `data-tool-param-<name>` → label → `aria-description`.
+ */
 function describe(field: FormField, form: HTMLFormElement): string {
   for (const c of field.controls) {
-    const own = c.getAttribute('toolparamdescription')
-    if (own !== null && collapse(own) !== '') return collapse(own)
+    const own = getAttr(c, 'toolparamdescription')
+    if (own !== null && collapse(own) !== '') return pageText(own)
   }
-  const fromForm = form.getAttribute(`data-tool-param-${field.name}`)
-  if (fromForm !== null && collapse(fromForm) !== '') return collapse(fromForm)
+  // Through the prototype: a control named `getAttribute` clobbers the form's own.
+  const fromForm = getAttr(form, `data-tool-param-${field.name}`)
+  if (fromForm !== null && collapse(fromForm) !== '') return pageText(fromForm)
   // Labels of radios / grouped checkboxes are option titles, not the field's description.
   if (field.shape === 'single' || field.shape === 'list') {
-    const label = labelText(field.controls[0]!)
+    const label = labelText(field.controls[0]!, form)
     if (label !== '') return label
   }
   for (const c of field.controls) {
-    const aria = c.getAttribute('aria-description')
-    if (aria !== null && collapse(aria) !== '') return collapse(aria)
+    const aria = getAttr(c, 'aria-description')
+    if (aria !== null && collapse(aria) !== '') return pageText(aria)
   }
   return ''
 }
@@ -91,7 +105,11 @@ function selectOptions(
   for (const o of Array.from(select.options)) {
     if (o.value === '' || o.matches(':disabled') || seen.has(o.value)) continue
     seen.add(o.value)
-    out.push({ value: o.value, title: collapse(o.label) || o.value, selected: o.defaultSelected })
+    out.push({
+      value: o.value,
+      title: cap(collapse(o.label) || o.value, MAX_OPTION_TITLE),
+      selected: o.defaultSelected,
+    })
   }
   return out
 }
@@ -280,7 +298,7 @@ function fieldLeaf(field: FormField, form: HTMLFormElement, skipped: SkippedCont
       for (const c of field.controls) {
         const value = (c as HTMLInputElement).value
         if (value === '' || options.some((o) => o.value === value)) continue
-        options.push({ value, title: labelText(c) || value })
+        options.push({ value, title: cap(labelText(c, form) || value, MAX_OPTION_TITLE) })
       }
       const checked = field.controls.find((c) => (c as HTMLInputElement).defaultChecked)
       let schema = withDescription(
@@ -392,7 +410,15 @@ function treeSchema(
  * @param form - The form.
  */
 export function synthesizeForm(form: HTMLFormElement): SynthesizedForm {
-  const { fields, skipped } = discover(form)
+  const discovered = discover(form)
+  const skipped = discovered.skipped
+  // Read-only fields are context, not inputs: left out of the schema (so
+  // `additionalProperties: false` rejects their paths) and reported.
+  const fields = discovered.fields.filter((f) => {
+    if (!f.controls.some(isReadOnly)) return true
+    skipped.push({ path: f.name, reason: 'read-only' })
+    return false
+  })
   const leaves: Array<[string, Leaf]> = fields.map((f) => [f.path, fieldLeaf(f, form, skipped)])
   const files: Record<string, FileFieldSpec> = {}
   for (const [path, leaf] of leaves) {
@@ -415,8 +441,8 @@ export function synthesizeForm(form: HTMLFormElement): SynthesizedForm {
 
 /**
  * Synthesizes a JSON Schema (draft 2020-12, the `fromJsonSchema` subset) for a DOM form (spec
- * §10.2). Only fields count: named controls of `form.elements`, minus hidden, password, `cc-*`,
- * disabled and `[data-tool-ignore]` controls. Text controls map to strings with
+ * §10.2). Only fields count: named controls of `form.elements`, minus hidden, password, `cc-*`
+ * (and other secret `autocomplete` tokens), disabled, read-only and `[data-tool-ignore]` controls. Text controls map to strings with
  * `minLength`/`maxLength` and an anchored `pattern` (a pattern that is invalid or fails the ReDoS
  * safety check is left out); `email`/`url` add `format`; `number`/`range` map to `integer` or
  * `number` from `step` and `min`, with `minimum`/`maximum`/`multipleOf`; dates and times get a
@@ -426,7 +452,9 @@ export function synthesizeForm(form: HTMLFormElement): SynthesizedForm {
  * array; files to {@link fileFieldSchema}. `required` attributes become `required`, load-time
  * values `default`, and every object has `additionalProperties: false`. Descriptions come from
  * `toolparamdescription`, the form's `data-tool-param-<name>`, the control's `<label>`, then
- * `aria-description` — the form must be app-authored markup (spec §14).
+ * `aria-description` (each capped at 500 characters, option titles at 200; labels inside
+ * `[data-tool-ignore]` or editable regions are ignored) — the form must be app-authored markup
+ * (spec §14).
  * @param form - The form to describe.
  * @returns The form values' JSON Schema.
  */

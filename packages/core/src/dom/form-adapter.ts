@@ -3,11 +3,14 @@ import { deepEqual, getPath, setPath } from '../forms/paths.js'
 import { invalid, ok, type ToolResult } from '../result.js'
 import {
   discover,
+  formElements,
   isExcluded,
+  isReadOnly,
   kindOf,
   labelText,
   nestValues,
   readField,
+  rootOf,
   writeField,
   type FormField,
 } from './elements.js'
@@ -34,9 +37,11 @@ const isUnder = (path: string, base: string): boolean =>
  * Adapts an uncontrolled (or framework-controlled) DOM form to form tools (spec §8.1, §10.2).
  *
  * - **Fields** are the named controls of `form.elements` (`form=`-associated controls and
- *   form-associated custom elements included). Hidden (e.g. CSRF `_token`), password,
- *   `autocomplete="cc-*"`, disabled and `[data-tool-ignore]` controls are never read, reported or
- *   written. Names map to dot paths (`a[b]` → `a.b`, `a[0][b]` → `a.0.b`; `a[]` or a repeated
+ *   form-associated custom elements included). Hidden (e.g. CSRF `_token`), password (also after a
+ *   "show password" toggle), `autocomplete` `cc-*` / `current-password` / `new-password` /
+ *   `one-time-code`, disabled and `[data-tool-ignore]` controls are never read, reported or
+ *   written. Read-only fields (`readonly` or `aria-readonly="true"` on any of their controls) are
+ *   read (`getValues`, `fields()`) as context but never written. Names map to dot paths (`a[b]` → `a.b`, `a[0][b]` → `a.0.b`; `a[]` or a repeated
  *   name → an array; `fieldset[name]` prefixes its descendants).
  * - **`setValues`** writes through the prototypes' native setters (text, `select`,
  *   `option.selected`, `files` via `DataTransfer`) and dispatches bubbling `input` and `change`;
@@ -44,9 +49,12 @@ const isUnder = (path: string, base: string): boolean =>
  *   update their state.
  * - **`dirtyPaths`** = fields whose value differs from the load snapshot and is not the value the
  *   agent last set, plus fields touched by trusted (`isTrusted`) `input`/`change` events; a form
- *   `reset` (not cancelled) re-snapshots and clears both.
+ *   `reset` (not cancelled) re-snapshots and clears both. This protects the user's edits from being
+ *   overwritten; it is not a security boundary — synthetic events are ignored, but page scripts
+ *   can still change values (reported through the snapshot diff) or trigger trusted events.
  * - **`submit`** (default): `form.checkValidity()` fails → `invalid` with each invalid field's
- *   `validationMessage` at its path (an excluded control is reported at `""` without its name);
+ *   `validationMessage` at its path (an excluded or read-only control is reported at `""` without
+ *   its name);
  *   else `form.requestSubmit()` → `ok({ submitted: true })`.
  *
  * @param form - The form element.
@@ -65,14 +73,21 @@ export function domFormAdapter(
   const agentSet = new Map<string, unknown>()
   const touched = new Set<string>()
 
-  /** The field a user event came from (the first field control on its composed path). */
-  const pathOf = (event: Event): string | undefined => {
-    const list = fields()
-    for (const target of event.composedPath()) {
-      const field = list.find((f) => f.controls.includes(target as HTMLElement))
-      if (field) return field.path
+  // Trusted events are recorded by target (their composed path) and mapped to field paths lazily
+  // in `dirtyPaths`, so typing does not re-run discovery per keystroke.
+  const pending = new Map<EventTarget, EventTarget[]>()
+  const flushPending = (list: FormField[]): void => {
+    for (const composed of pending.values()) {
+      // The field an event came from: the first field control on its composed path.
+      for (const target of composed) {
+        const field = list.find((f) => f.controls.includes(target as HTMLElement))
+        if (field) {
+          touched.add(field.path)
+          break
+        }
+      }
     }
-    return undefined
+    pending.clear()
   }
 
   // Events fired while the adapter writes (a `click()`'s activation fires trusted `input`/`change`)
@@ -80,8 +95,9 @@ export function domFormAdapter(
   let writing = false
   const onUserEvent = (event: Event): void => {
     if (!event.isTrusted || writing) return
-    const path = pathOf(event)
-    if (path !== undefined) touched.add(path)
+    const composed = event.composedPath()
+    const first = composed[0]
+    if (first !== undefined && !pending.has(first)) pending.set(first, composed)
   }
   let resetTimer: ReturnType<typeof setTimeout> | undefined
   const onReset = (event: Event): void => {
@@ -92,15 +108,17 @@ export function domFormAdapter(
       if (event.defaultPrevented) return
       snapshot = values(fields())
       touched.clear()
+      pending.clear()
       agentSet.clear()
     }, 0)
   }
 
   // `form=`-associated controls live outside the form, so user events are observed on its root.
-  const root = form.getRootNode() as Document | ShadowRoot
+  const root = rootOf(form)
   root.addEventListener('input', onUserEvent, true)
   root.addEventListener('change', onUserEvent, true)
-  form.addEventListener('reset', onReset)
+  // Through the prototype: a control named `addEventListener` clobbers the form's own.
+  EventTarget.prototype.addEventListener.call(form, 'reset', onReset)
 
   const adapter: DomFormAdapter = {
     getValues() {
@@ -124,7 +142,9 @@ export function domFormAdapter(
 
     dirtyPaths() {
       const out: string[] = []
-      for (const field of fields()) {
+      const list = fields()
+      flushPending(list)
+      for (const field of list) {
         const path = field.path
         const value = readField(field)
         if (!snapshot.has(path)) snapshot.set(path, value) // appeared after load
@@ -140,14 +160,16 @@ export function domFormAdapter(
 
     submit() {
       if (opts?.submit) return opts.submit(form)
-      if (!form.checkValidity()) return Promise.resolve(invalid(validityIssues(form)))
-      form.requestSubmit()
+      if (!HTMLFormElement.prototype.checkValidity.call(form)) {
+        return Promise.resolve(invalid(validityIssues(form)))
+      }
+      HTMLFormElement.prototype.requestSubmit.call(form)
       return Promise.resolve(ok({ submitted: true }))
     },
 
     fields(): FieldInfo[] {
       return fields().map((f) => {
-        const label = labelText(f.controls[0]!)
+        const label = labelText(f.controls[0]!, form)
         return { path: f.path, element: f.controls[0]!, ...(label !== '' ? { label } : {}) }
       })
     },
@@ -155,7 +177,8 @@ export function domFormAdapter(
     dispose() {
       root.removeEventListener('input', onUserEvent, true)
       root.removeEventListener('change', onUserEvent, true)
-      form.removeEventListener('reset', onReset)
+      EventTarget.prototype.removeEventListener.call(form, 'reset', onReset)
+      pending.clear()
       if (resetTimer !== undefined) clearTimeout(resetTimer)
       resetTimer = undefined
     },
@@ -163,10 +186,14 @@ export function domFormAdapter(
   return adapter
 }
 
-/** Writes flat `{ path: value }` entries to the fields they address. */
+/**
+ * Writes flat `{ path: value }` entries to the fields they address. Fields with a read-only control
+ * are never written (checked on every call).
+ */
 function write(list: FormField[], input: Record<string, unknown>, affected: Set<FormField>): void {
+  const writable = list.filter((f) => !f.controls.some(isReadOnly))
   for (const [path, value] of Object.entries(input)) {
-    for (const field of list) {
+    for (const field of writable) {
       try {
         if (isUnder(field.path, path)) {
           // The field is the path, or lies under it (an array / object written as a unit).
@@ -193,11 +220,15 @@ type Validatable = Element & {
   willValidate?: boolean
 }
 
-/** One issue per invalid field (list items at `<path>.<index>`); excluded controls at `""`, unnamed. */
+/**
+ * One issue per invalid field (list items at `<path>.<index>`); excluded and read-only controls at
+ * `""`, unnamed (the agent cannot fix them).
+ */
 function validityIssues(form: HTMLFormElement): Array<{ path: string; message: string }> {
   const issues = new Map<string, string>()
   const known = new Set<Element>()
   for (const field of discover(form).fields) {
+    if (field.controls.some(isReadOnly)) continue
     field.controls.forEach((c, i) => {
       known.add(c)
       const v = c as Validatable
@@ -206,7 +237,7 @@ function validityIssues(form: HTMLFormElement): Array<{ path: string; message: s
       if (!issues.has(path)) issues.set(path, v.validationMessage ?? 'Invalid value')
     })
   }
-  for (const el of Array.from(form.elements)) {
+  for (const el of formElements(form)) {
     const v = el as Validatable
     if (known.has(el) || v.willValidate !== true || v.validity?.valid !== false) continue
     if (kindOf(el) === undefined && el.localName !== 'input') continue

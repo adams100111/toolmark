@@ -59,6 +59,46 @@ export interface Discovery {
 const NON_FIELD_INPUT_TYPES = new Set(['submit', 'reset', 'button', 'image'])
 const UNSAFE_SEGMENTS = new Set(['__proto__', 'prototype', 'constructor'])
 
+// ---------------------------------------------------------------------------------------------
+// DOM-clobbering-safe access. A form's named controls shadow its own properties
+// (`<input name="elements">` replaces `form.elements`), so form methods are called through the
+// prototypes, looked up at call time.
+
+/** @internal `form.elements`, immune to a control named `elements`. */
+export function formElements(form: HTMLFormElement): Element[] {
+  const elements = Reflect.get(HTMLFormElement.prototype, 'elements', form) as HTMLCollection
+  return Array.from(elements)
+}
+
+/** @internal `el.getAttribute(name)`, immune to a control named `getAttribute` (on forms). */
+export function getAttr(el: Element, name: string): string | null {
+  return Element.prototype.getAttribute.call(el, name)
+}
+
+/** @internal `node.getRootNode()`, immune to clobbering. */
+export function rootOf(node: Node): Document | ShadowRoot {
+  return Node.prototype.getRootNode.call(node) as Document | ShadowRoot
+}
+
+/** @internal `ancestor.contains(node)`, immune to clobbering. */
+export function containsNode(ancestor: Node, node: Node): boolean {
+  return Node.prototype.contains.call(ancestor, node)
+}
+
+/** @internal Truncates to at most `max` characters, ending in `…` when cut (no split surrogates). */
+export function cap(text: string, max: number): string {
+  if (text.length <= max) return text
+  let end = max - 1
+  const code = text.charCodeAt(end - 1)
+  if (code >= 0xd800 && code <= 0xdbff) end--
+  return `${text.slice(0, end)}…`
+}
+
+/** @internal Maximum length of a field description or label taken from the page. */
+export const MAX_DESCRIPTION = 500
+/** @internal Maximum length of an option title taken from the page. */
+export const MAX_OPTION_TITLE = 200
+
 /** @internal The lower-cased `type` of an `<input>` (`text` when absent or unknown). */
 export function inputType(el: Element): string {
   return (el as HTMLInputElement).type.toLowerCase()
@@ -79,17 +119,26 @@ export function kindOf(el: Element): ControlKind | undefined {
   }
 }
 
-function hasCcAutocomplete(el: Element): boolean {
-  const ac = el.getAttribute('autocomplete')
+/** Autocomplete tokens of secrets that are excluded even when the control is not `type=password`. */
+const SECRET_AUTOCOMPLETE = new Set(['current-password', 'new-password', 'one-time-code'])
+
+function hasSensitiveAutocomplete(el: Element): boolean {
+  const ac = getAttr(el, 'autocomplete')
   return (
     ac !== null &&
     ac
       .trim()
       .toLowerCase()
       .split(/\s+/)
-      .some((token) => token.startsWith('cc-'))
+      .some((token) => token.startsWith('cc-') || SECRET_AUTOCOMPLETE.has(token))
   )
 }
+
+/**
+ * Controls ever seen as `type="password"`: a "show password" toggle flips the type to `text`, and
+ * the control stays excluded (sticky, for the page's lifetime).
+ */
+const seenAsPassword = new WeakSet<Element>()
 
 function isDisabled(el: Element): boolean {
   try {
@@ -101,16 +150,33 @@ function isDisabled(el: Element): boolean {
 
 /**
  * @internal Whether a control is excluded from schemas, values, `changes`, `skipped`, `fields()`
- * and writes (spec §10.2, §14): `type="hidden"` (CSRF tokens), `type="password"`,
- * `autocomplete="cc-*"`, disabled controls (incl. inside a disabled `fieldset`) and anything under
- * `[data-tool-ignore]`.
+ * and writes (spec §10.2, §14): `type="hidden"` (CSRF tokens), `type="password"` (and any control
+ * once seen as one, so a "show password" toggle does not expose it), `autocomplete` tokens `cc-*`,
+ * `current-password`, `new-password` and `one-time-code`, disabled controls (incl. inside a
+ * disabled `fieldset`) and anything under `[data-tool-ignore]`.
  */
 export function isExcluded(el: Element): boolean {
+  if (seenAsPassword.has(el)) return true
   if (el.localName === 'input') {
     const type = inputType(el)
-    if (type === 'hidden' || type === 'password') return true
+    if (type === 'password') {
+      seenAsPassword.add(el)
+      return true
+    }
+    if (type === 'hidden') return true
   }
-  return hasCcAutocomplete(el) || isDisabled(el) || el.closest('[data-tool-ignore]') !== null
+  return hasSensitiveAutocomplete(el) || isDisabled(el) || el.closest('[data-tool-ignore]') !== null
+}
+
+/**
+ * @internal Whether a control is read-only (`readonly` attribute or `aria-readonly="true"`;
+ * attribute-based, so checkboxes, radios and selects are covered). Read-only fields are readable
+ * context but never written or advertised.
+ */
+export function isReadOnly(el: Element): boolean {
+  return (
+    el.hasAttribute('readonly') || getAttr(el, 'aria-readonly')?.trim().toLowerCase() === 'true'
+  )
 }
 
 /**
@@ -158,7 +224,7 @@ const isPrefix = (a: string, b: string): boolean => b.startsWith(`${a}.`)
 export function discover(form: HTMLFormElement): Discovery {
   const skipped: SkippedControl[] = []
   const groups = new Map<string, { controls: HTMLElement[]; array: boolean; name: string }>()
-  for (const el of Array.from(form.elements) as HTMLElement[]) {
+  for (const el of formElements(form) as HTMLElement[]) {
     if (kindOf(el) === undefined) continue
     const name = el.getAttribute('name') ?? ''
     if (name === '' || isExcluded(el)) continue
@@ -308,16 +374,20 @@ function dispatchInputAndChange(el: HTMLElement): void {
   el.dispatchEvent(new Event('change', { bubbles: true }))
 }
 
-/** Sets a checkbox/radio `checked` state: `click()` (React derives `onChange` from it), else the native setter. */
+/**
+ * Sets a checkbox/radio `checked` state with `click()` (React derives `onChange` from it; the
+ * activation fires `input` and `change`). When the page cancels or reverts the click, the control
+ * is left as the page wants it (never forced). Unchecking a radio cannot be done by clicking, so
+ * it uses the native setter.
+ */
 function setChecked(input: HTMLInputElement, checked: boolean): void {
   if (input.checked === checked) return
-  // Unchecking a radio cannot be done by clicking it.
-  if (!(input.type === 'radio' && !checked)) {
-    input.click() // fires `input` and `change` itself
-    if (input.checked === checked) return
+  if (input.type === 'radio' && !checked) {
+    setNative(input, HTMLInputElement.prototype, 'checked', false)
+    dispatchInputAndChange(input)
+    return
   }
-  setNative(input, HTMLInputElement.prototype, 'checked', checked)
-  dispatchInputAndChange(input)
+  input.click()
 }
 
 const scalar = (v: unknown): string | undefined =>
@@ -507,11 +577,16 @@ function textOf(node: Node, control: Element): string {
   return Array.from(el.childNodes, (c) => textOf(c, control)).join('')
 }
 
+/** Labels inside these regions are page/user content, never field descriptions. */
+const UNTRUSTED_LABEL_REGION = '[data-tool-ignore],[contenteditable]:not([contenteditable="false"])'
+
 /**
  * @internal The text of a control's associated `<label>`s (nested controls and
- * `[data-tool-ignore]` content left out, whitespace collapsed), or `''`.
+ * `[data-tool-ignore]` content left out, whitespace collapsed, capped at {@link MAX_DESCRIPTION}),
+ * or `''`. Labels under `[data-tool-ignore]` or an editable (`contenteditable`) region are dropped;
+ * when `form` is given and some labels are inside it, only those count.
  */
-export function labelText(el: HTMLElement): string {
+export function labelText(el: HTMLElement, form?: HTMLFormElement): string {
   let labels: Element[]
   const own = (el as HTMLInputElement).labels as NodeListOf<HTMLLabelElement> | null | undefined
   if (own) {
@@ -522,15 +597,21 @@ export function labelText(el: HTMLElement): string {
     const wrapping = el.closest('label')
     if (wrapping) labels.push(wrapping)
     if (el.id) {
-      const root = el.getRootNode() as Document | ShadowRoot
+      const root = rootOf(el)
       for (const l of Array.from(root.querySelectorAll(`label[for="${CSS.escape(el.id)}"]`))) {
         if (!labels.includes(l)) labels.push(l)
       }
     }
   }
-  return labels
+  labels = labels.filter((l) => l.closest(UNTRUSTED_LABEL_REGION) === null)
+  if (form) {
+    const inside = labels.filter((l) => containsNode(form, l))
+    if (inside.length > 0) labels = inside
+  }
+  const text = labels
     .map((l) => textOf(l, el))
     .join(' ')
     .replace(/\s+/g, ' ')
     .trim()
+  return cap(text, MAX_DESCRIPTION)
 }
