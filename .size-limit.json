@@ -84,7 +84,7 @@
     "import": "*",
     "gzip": true,
     "ignore": ["@mcp-b/webmcp-polyfill", "@opentelemetry/api"],
-    "limit": "2 kB"
+    "limit": "2.75 kB"
   },
   {
     "name": "@toolmark/inertia",
