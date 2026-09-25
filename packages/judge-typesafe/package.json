@@ -2,20 +2,36 @@
   "name": "@toolmark/judge-typesafe",
   "version": "0.1.0-next.3",
   "description": "Optional TypeSafe judge plugin for @toolmark/lint: Node-only probabilistic checks for description quality, tool overlap and consequential-hint coverage.",
+  "keywords": [
+    "toolmark",
+    "ai",
+    "agents",
+    "llm",
+    "tools",
+    "lint",
+    "typesafe",
+    "judge"
+  ],
+  "homepage": "https://github.com/adams100111/toolmark/tree/main/packages/judge-typesafe#readme",
+  "bugs": {
+    "url": "https://github.com/adams100111/toolmark/issues"
+  },
   "license": "MIT",
-  "type": "module",
-  "sideEffects": false,
+  "author": "adams100111",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/adams100111/toolmark.git",
     "directory": "packages/judge-typesafe"
   },
+  "type": "module",
+  "sideEffects": false,
   "engines": {
     "node": ">=22.12"
   },
   "files": [
     "dist",
-    "src"
+    "src",
+    "CHANGELOG.md"
   ],
   "exports": {
     ".": {
@@ -40,5 +56,9 @@
     "@toolmark/core": "workspace:*",
     "@toolmark/lint": "workspace:*",
     "@types/node": "catalog:"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
   }
 }

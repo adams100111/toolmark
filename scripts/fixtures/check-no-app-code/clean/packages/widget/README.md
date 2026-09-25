@@ -1,0 +1,3 @@
+# widget
+
+A generic widget.

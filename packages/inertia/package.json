@@ -2,20 +2,36 @@
   "name": "@toolmark/inertia",
   "version": "0.1.0-next.3",
   "description": "Inertia.js adapter for Toolmark form tools (useForm).",
+  "keywords": [
+    "toolmark",
+    "ai",
+    "agents",
+    "llm",
+    "tools",
+    "inertia",
+    "laravel",
+    "react"
+  ],
+  "homepage": "https://github.com/adams100111/toolmark/tree/main/packages/inertia#readme",
+  "bugs": {
+    "url": "https://github.com/adams100111/toolmark/issues"
+  },
   "license": "MIT",
-  "type": "module",
-  "sideEffects": false,
+  "author": "adams100111",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/adams100111/toolmark.git",
     "directory": "packages/inertia"
   },
+  "type": "module",
+  "sideEffects": false,
   "engines": {
     "node": ">=22.12"
   },
   "files": [
     "dist",
-    "src"
+    "src",
+    "CHANGELOG.md"
   ],
   "exports": {
     ".": {
@@ -50,5 +66,9 @@
     "react-dom": "catalog:",
     "react-hook-form": "catalog:",
     "zod": "catalog:"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
   }
 }

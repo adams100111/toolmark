@@ -2,20 +2,36 @@
   "name": "@toolmark/react",
   "version": "0.1.0-next.3",
   "description": "React bindings for Toolmark: provider, hooks, scopes, form tools and the react-hook-form adapter.",
+  "keywords": [
+    "toolmark",
+    "ai",
+    "agents",
+    "llm",
+    "tools",
+    "react",
+    "hooks",
+    "react-hook-form"
+  ],
+  "homepage": "https://github.com/adams100111/toolmark/tree/main/packages/react#readme",
+  "bugs": {
+    "url": "https://github.com/adams100111/toolmark/issues"
+  },
   "license": "MIT",
-  "type": "module",
-  "sideEffects": false,
+  "author": "adams100111",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/adams100111/toolmark.git",
     "directory": "packages/react"
   },
+  "type": "module",
+  "sideEffects": false,
   "engines": {
     "node": ">=22.12"
   },
   "files": [
     "dist",
-    "src"
+    "src",
+    "CHANGELOG.md"
   ],
   "exports": {
     ".": {
@@ -59,5 +75,9 @@
     "react-dom": "catalog:",
     "react-hook-form": "catalog:",
     "zod": "catalog:"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
   }
 }
