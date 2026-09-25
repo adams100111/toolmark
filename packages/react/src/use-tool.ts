@@ -1,7 +1,12 @@
 import { useEffect, useRef } from 'react'
-import type { ToolDefinition, ToolState } from '@toolmark/core'
+import type { Scope, ToolDefinition, Toolmark, ToolState } from '@toolmark/core'
 import { useCurrentScope } from './scope.js'
 import { useToolmark } from './provider.js'
+
+// Bundlers (webpack, Next.js, esbuild) statically replace `process.env.NODE_ENV`; declaring the
+// ambient shape (instead of depending on `@types/node`, which this package doesn't have) lets that
+// replacement/dead-code-elimination happen without a real Node `process` at runtime.
+declare const process: { env: Record<string, string | undefined> } | undefined
 
 /** @internal Best-effort dev-mode detection with no bundler-specific dependency. */
 function isDevEnvironment(): boolean {
@@ -14,29 +19,29 @@ function isDevEnvironment(): boolean {
   } catch {
     // Not bundled with a `define`d `import.meta.env`; fall through.
   }
-  try {
-    const proc = (globalThis as unknown as { process?: { env?: { NODE_ENV?: string } } }).process
-    if (proc?.env?.NODE_ENV) return proc.env.NODE_ENV !== 'production'
-  } catch {
-    // No `process` global either; assume production.
+  if (typeof process !== 'undefined' && process.env.NODE_ENV) {
+    return process.env.NODE_ENV !== 'production'
   }
   return false
 }
 
-/** @internal Registration timestamps per tool name, for the churn warning. */
-const churnTimestamps = new Map<string, number[]>()
+/** @internal Registration timestamps per (registry, scope path + name), for the churn warning. */
+const churnTimestamps = new WeakMap<Toolmark, Map<string, number[]>>()
 const CHURN_WINDOW_MS = 1000
 const CHURN_THRESHOLD = 3
 
-function warnIfChurning(name: string): void {
+function warnIfChurning(toolmark: Toolmark, scope: Scope | undefined, name: string): void {
   if (!isDevEnvironment()) return
+  const key = `${scope?.path ?? ''}.${name}`
+  let byKey = churnTimestamps.get(toolmark)
+  if (!byKey) churnTimestamps.set(toolmark, (byKey = new Map<string, number[]>()))
   const now = Date.now()
-  const times = (churnTimestamps.get(name) ?? []).filter((t) => now - t < CHURN_WINDOW_MS)
+  const times = (byKey.get(key) ?? []).filter((t) => now - t < CHURN_WINDOW_MS)
   times.push(now)
-  churnTimestamps.set(name, times)
+  byKey.set(key, times)
   if (times.length === CHURN_THRESHOLD + 1) {
     console.warn(
-      `[toolmark] useTool("${name}") re-registered ${times.length} times in the last second; ` +
+      `[toolmark] useTool("${key}") re-registered ${times.length} times in the last second; ` +
         `hoist its input/output schema (and any hints object) outside the component so their ` +
         `identity stays stable across renders.`,
     )
@@ -79,7 +84,7 @@ export function useTool<I, O>(def: ToolDefinition<I, O>): void {
     // live again, which re-runs this effect with a fresh `scope`.
     if (scope?.disposed) return undefined
     const current = defRef.current
-    warnIfChurning(current.name)
+    warnIfChurning(toolmark, scope, current.name)
     const registration = toolmark.register(
       {
         name: current.name,
@@ -89,7 +94,12 @@ export function useTool<I, O>(def: ToolDefinition<I, O>): void {
         ...(current.output !== undefined ? { output: current.output } : {}),
         ...(current.jsonSchema !== undefined ? { jsonSchema: current.jsonSchema } : {}),
         ...(current.hints !== undefined ? { hints: current.hints } : {}),
-        summary: (input) => defRef.current.summary?.(input) ?? '',
+        // Only wrap `summary` when the caller declared one: core falls back to `title ?? the
+        // full tool name` for confirmation text (`call.ts` `summaryOf`) when a tool has none, and
+        // an always-present wrapper returning `''` would silently defeat that fallback (I1).
+        ...(current.summary !== undefined
+          ? { summary: (input: I): string => defRef.current.summary?.(input) ?? '' }
+          : {}),
         ...(current.anchors !== undefined ? { anchors: current.anchors } : {}),
         ...(current.state !== undefined
           ? {
@@ -112,5 +122,6 @@ export function useTool<I, O>(def: ToolDefinition<I, O>): void {
     def.input,
     def.output,
     def.jsonSchema,
+    def.summary !== undefined,
   ])
 }

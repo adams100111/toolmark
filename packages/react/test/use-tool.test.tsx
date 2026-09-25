@@ -81,9 +81,13 @@ describe('useTool', () => {
       </ToolmarkProvider>,
     )
 
+    // Let the registry's queued microtask flush (resets its internal notify-pending gate) before
+    // reading `rev`, so a real re-registration after the clicks would still be visible as a bump.
+    await Promise.resolve()
     const revBefore = tm.rev
     fireEvent.click(screen.getByText('inc'))
     fireEvent.click(screen.getByText('inc'))
+    await Promise.resolve()
 
     expect(tm.rev).toBe(revBefore)
     const result = await tm.call('counter', undefined, { caller: 'test' })
@@ -118,6 +122,49 @@ describe('useTool', () => {
 
     expect(tm.describe('d')?.description).toBe('second')
     expect(tm.rev).toBeGreaterThan(revBefore)
+  })
+
+  it('consequential_tool_without_summary_falls_back_to_title', async () => {
+    const tm = createToolmark({ dev: true })
+
+    function Titled(): null {
+      useTool({
+        name: 'titled',
+        title: 'Titled Tool',
+        description: 'A consequential tool with no summary()',
+        hints: { consequential: true },
+        run: () => ok(null),
+      })
+      return null
+    }
+    function Untitled(): null {
+      useTool({
+        name: 'untitled',
+        description: 'A consequential tool with no title or summary()',
+        hints: { consequential: true },
+        run: () => ok(null),
+      })
+      return null
+    }
+
+    render(
+      <ToolmarkProvider toolmark={tm}>
+        <Titled />
+        <Untitled />
+      </ToolmarkProvider>,
+    )
+
+    const titledCall = await tm.call('titled', undefined, { caller: 'test' })
+    expect(titledCall.status).toBe('needs_confirmation')
+    if (titledCall.status === 'needs_confirmation') {
+      expect(titledCall.summary).toBe('Titled Tool')
+    }
+
+    const untitledCall = await tm.call('untitled', undefined, { caller: 'test' })
+    expect(untitledCall.status).toBe('needs_confirmation')
+    if (untitledCall.status === 'needs_confirmation') {
+      expect(untitledCall.summary).toBe('untitled')
+    }
   })
 
   it('unmount_disposes', () => {
