@@ -53,9 +53,9 @@ describe('useTool', () => {
     )
 
     expect(tm.manifest().tools.map((t) => t.name)).toEqual(['a.tool'])
-    expect(errors.filter((e) => e.code === 'scope_disposed' || e.code === 'duplicate_name')).toEqual(
-      [],
-    )
+    expect(
+      errors.filter((e) => e.code === 'scope_disposed' || e.code === 'duplicate_name'),
+    ).toEqual([])
   })
 
   it('latest_closure_used', async () => {

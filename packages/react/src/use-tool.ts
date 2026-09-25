@@ -103,8 +103,7 @@ export function useTool<I, O>(def: ToolDefinition<I, O>): void {
         ...(current.anchors !== undefined ? { anchors: current.anchors } : {}),
         ...(current.state !== undefined
           ? {
-              state: (): ToolState<I> =>
-                defRef.current.state?.() ?? { values: {}, issues: [] },
+              state: (): ToolState<I> => defRef.current.state?.() ?? { values: {}, issues: [] },
             }
           : {}),
         run: (input, ctx) => defRef.current.run(input, ctx),

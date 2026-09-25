@@ -21,7 +21,11 @@ export interface ToolmarkTestHook {
   /** Full manifest entry of one tool, or `undefined` when unknown/hidden for `caller`. */
   describe(name: string, opts?: { caller?: TestHookCaller }): ToolManifest | undefined
   /** Calls a tool; `caller` defaults to `'test'`. */
-  call(name: string, input: unknown, opts?: { caller?: TestHookCaller }): Promise<ToolResult<unknown>>
+  call(
+    name: string,
+    input: unknown,
+    opts?: { caller?: TestHookCaller },
+  ): Promise<ToolResult<unknown>>
   /** Completes a pending deferred confirmation. */
   confirmPending(confirmId: string, outcome: ConfirmOutcome): Promise<ToolResult<unknown>>
   /** Deferred confirmations currently pending. */

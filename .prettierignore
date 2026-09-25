@@ -2,3 +2,6 @@ pnpm-lock.yaml
 **/dist/
 # verbatim upstream copy
 packages/core/src/standard-schema.ts
+docs/superpowers/
+docs/ROADMAP.md
+.changeset/

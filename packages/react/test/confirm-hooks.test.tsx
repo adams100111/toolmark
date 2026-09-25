@@ -3,11 +3,7 @@ import { renderToString } from 'react-dom/server'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createConfirmQueue, createToolmark, ok, type ToolResult } from '@toolmark/core'
-import {
-  ToolmarkProvider,
-  useConfirmQueue,
-  usePendingConfirmations,
-} from '../src/index.js'
+import { ToolmarkProvider, useConfirmQueue, usePendingConfirmations } from '../src/index.js'
 
 afterEach(cleanup)
 

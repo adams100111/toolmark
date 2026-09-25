@@ -7,12 +7,12 @@ Status: pre-1.0, under active development. See `docs/ROADMAP.md`.
 
 ## Packages
 
-| Package | Purpose |
-| --- | --- |
-| `@toolmark/core` | Tool model, registry, policy, confirmation, form tools, bridge protocol v1 |
-| `@toolmark/react` | React bindings and the react-hook-form adapter |
-| `@toolmark/inertia` | Inertia `useForm` adapter |
-| `@toolmark/testing` | Vitest helpers and the Playwright fixture |
+| Package             | Purpose                                                                    |
+| ------------------- | -------------------------------------------------------------------------- |
+| `@toolmark/core`    | Tool model, registry, policy, confirmation, form tools, bridge protocol v1 |
+| `@toolmark/react`   | React bindings and the react-hook-form adapter                             |
+| `@toolmark/inertia` | Inertia `useForm` adapter                                                  |
+| `@toolmark/testing` | Vitest helpers and the Playwright fixture                                  |
 
 ## Development
 

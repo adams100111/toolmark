@@ -39,7 +39,9 @@ test('simple_form_within_3_rounds', async ({ page }) => {
   expect(filled).toMatchObject({ type: 'result', result: { status: 'ok' } })
 
   // Round 3: submit → needs_confirmation (the in-app caller's deferred mode).
-  const [submitted] = await recorder.turn([{ type: 'call', id: 'r3-submit', tool: SUBMIT, input: {} }])
+  const [submitted] = await recorder.turn([
+    { type: 'call', id: 'r3-submit', tool: SUBMIT, input: {} },
+  ])
   if (submitted?.type !== 'result' || submitted.result.status !== 'needs_confirmation') {
     throw new Error(`expected needs_confirmation, got ${JSON.stringify(submitted)}`)
   }

@@ -16,7 +16,9 @@ export interface ToolmarkProviderProps {
  * @param props - See {@link ToolmarkProviderProps}.
  */
 export function ToolmarkProvider(props: ToolmarkProviderProps): JSX.Element {
-  return <ToolmarkContext.Provider value={props.toolmark}>{props.children}</ToolmarkContext.Provider>
+  return (
+    <ToolmarkContext.Provider value={props.toolmark}>{props.children}</ToolmarkContext.Provider>
+  )
 }
 
 /**

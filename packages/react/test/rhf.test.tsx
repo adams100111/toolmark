@@ -226,11 +226,7 @@ describe('rhfAdapter', () => {
     )
     await userEvent.type(screen.getByTestId('title'), 'User typed')
 
-    const result = await tm.call(
-      'x.fill',
-      { values: { title: 'Agent value' } },
-      { caller: 'test' },
-    )
+    const result = await tm.call('x.fill', { values: { title: 'Agent value' } }, { caller: 'test' })
     expect(result.status).toBe('ok')
     if (result.status === 'ok') {
       expect((result.data as { skipped: string[] }).skipped).toContain('title')

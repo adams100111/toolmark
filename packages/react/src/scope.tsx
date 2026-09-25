@@ -1,11 +1,4 @@
-import {
-  useContext,
-  useEffect,
-  useReducer,
-  useRef,
-  type JSX,
-  type ReactNode,
-} from 'react'
+import { useContext, useEffect, useReducer, useRef, type JSX, type ReactNode } from 'react'
 import type { Scope } from '@toolmark/core'
 import { ScopeContext } from './context.js'
 import { isServerEnvironment } from './is-server.js'

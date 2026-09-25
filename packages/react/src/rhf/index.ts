@@ -37,7 +37,9 @@ function trueLeafPaths(node: unknown, prefix: string, out: string[]): void {
   }
   if (node === false || node === null || typeof node !== 'object') return
   if (Array.isArray(node)) {
-    node.forEach((child, i) => trueLeafPaths(child, prefix === '' ? String(i) : `${prefix}.${i}`, out))
+    node.forEach((child, i) =>
+      trueLeafPaths(child, prefix === '' ? String(i) : `${prefix}.${i}`, out),
+    )
     return
   }
   for (const [key, child] of Object.entries(node as Record<string, unknown>)) {
@@ -57,7 +59,10 @@ function errorsToIssues(errors: unknown, prefix = ''): ToolIssue[] {
     if (value === undefined || value === null) continue
     const path = prefix === '' ? key : `${prefix}.${key}`
     if (isFieldErrorLike(value)) {
-      out.push({ path, message: typeof value.message === 'string' ? value.message : 'Invalid value' })
+      out.push({
+        path,
+        message: typeof value.message === 'string' ? value.message : 'Invalid value',
+      })
     } else if (typeof value === 'object') {
       out.push(...errorsToIssues(value, path))
     }
@@ -135,14 +140,20 @@ export function rhfAdapter<V extends FieldValues>(
         // `formState.isSubmitSuccessful` true when `onValid` resolves without throwing — catching
         // the error inside `onValid` (and merely recording an `error` outcome) would make RHF think
         // the submission succeeded even though it failed.
-        await form.handleSubmit(async (values) => {
-          const result: unknown = await opts.onSubmit(values)
-          outcome = { status: 'ok', data: isJsonSafe(result) ? result : {} }
-        }, (errors) => {
-          outcome = { status: 'invalid', issues: errorsToIssues(errors) }
-        })()
+        await form.handleSubmit(
+          async (values) => {
+            const result: unknown = await opts.onSubmit(values)
+            outcome = { status: 'ok', data: isJsonSafe(result) ? result : {} }
+          },
+          (errors) => {
+            outcome = { status: 'invalid', issues: errorsToIssues(errors) }
+          },
+        )()
       } catch (cause) {
-        outcome = { status: 'error', message: cause instanceof Error ? cause.message : String(cause) }
+        outcome = {
+          status: 'error',
+          message: cause instanceof Error ? cause.message : String(cause),
+        }
       }
       return outcome
     },

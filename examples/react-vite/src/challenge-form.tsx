@@ -38,7 +38,9 @@ function elementFor(path: string): Element | null {
   return document.querySelector(`[name="${CSS.escape(path)}"]`)
 }
 
-function CreateChallengeForm(props: { onCreated: (values: ChallengeValues) => number }): JSX.Element {
+function CreateChallengeForm(props: {
+  onCreated: (values: ChallengeValues) => number
+}): JSX.Element {
   const form = useForm<ChallengeValues>({
     defaultValues: { title: { ar: '', en: '' }, type: 'workshop', startsAt: '' },
     resolver,

@@ -71,6 +71,8 @@ test('bridge_round_trip_via_in_page_agent', async ({ page }) => {
   expect(describe).toMatchObject({ type: 'result', id: 'rt-1', result: { status: 'ok' } })
   expect(call).toMatchObject({ type: 'result', id: 'rt-2', result: { status: 'ok' } })
   await expect(page.getByLabel('Title (English)')).toHaveValue('Innovation challenge')
-  const tools = await page.evaluate(() => globalThis.__toolmark_agent__!.manifest!.tools.map((t) => t.name))
+  const tools = await page.evaluate(() =>
+    globalThis.__toolmark_agent__!.manifest!.tools.map((t) => t.name),
+  )
   expect(tools).toEqual(expect.arrayContaining([FILL, SUBMIT]))
 })

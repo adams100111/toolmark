@@ -54,7 +54,12 @@ describe('useFormTool', () => {
       </ToolmarkProvider>,
     )
 
-    expect(tm.manifest().tools.map((t) => t.name).sort()).toEqual(['f.form.fill', 'f.form.submit'])
+    expect(
+      tm
+        .manifest()
+        .tools.map((t) => t.name)
+        .sort(),
+    ).toEqual(['f.form.fill', 'f.form.submit'])
   })
 
   it('form_tool_stable_across_renders', async () => {
@@ -85,7 +90,12 @@ describe('useFormTool', () => {
     await Promise.resolve()
 
     expect(tm.rev).toBe(revBefore)
-    expect(tm.manifest().tools.map((t) => t.name).sort()).toEqual(['form.fill', 'form.submit'])
+    expect(
+      tm
+        .manifest()
+        .tools.map((t) => t.name)
+        .sort(),
+    ).toEqual(['form.fill', 'form.submit'])
   })
 
   it('strict_mode_form_tool_inside_scope_registered_once', () => {
@@ -110,12 +120,17 @@ describe('useFormTool', () => {
       </StrictMode>,
     )
 
-    expect(tm.manifest().tools.map((t) => t.name).sort()).toEqual(['f.form.fill', 'f.form.submit'])
+    expect(
+      tm
+        .manifest()
+        .tools.map((t) => t.name)
+        .sort(),
+    ).toEqual(['f.form.fill', 'f.form.submit'])
     // `missing_confirm_handler` is an expected dev-mode advisory here (no inline `confirm` handler
     // was configured, so `.submit` is hidden from webmcp/mcp/tour); StrictMode-safety means no
     // `duplicate_name`/`scope_disposed` error, not a wholly event-free registration.
-    expect(errors.filter((e) => e.code === 'scope_disposed' || e.code === 'duplicate_name')).toEqual(
-      [],
-    )
+    expect(
+      errors.filter((e) => e.code === 'scope_disposed' || e.code === 'duplicate_name'),
+    ).toEqual([])
   })
 })

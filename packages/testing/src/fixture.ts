@@ -42,12 +42,15 @@ async function waitForHook(page: Page): Promise<void> {
 function createToolsFixture(page: Page): ToolsFixture {
   let auto = false
 
-  const confirm = async (confirmId: string, outcome: ConfirmOutcome): Promise<ToolResult<unknown>> => {
+  const confirm = async (
+    confirmId: string,
+    outcome: ConfirmOutcome,
+  ): Promise<ToolResult<unknown>> => {
     await waitForHook(page)
-    return page.evaluate(
-      ([id, o]) => globalThis.__toolmark_test__!.confirmPending(id, o),
-      [confirmId, outcome] as const,
-    )
+    return page.evaluate(([id, o]) => globalThis.__toolmark_test__!.confirmPending(id, o), [
+      confirmId,
+      outcome,
+    ] as const)
   }
 
   const call = async (name: string, input: unknown = {}): Promise<ToolResult<unknown>> => {
@@ -72,10 +75,10 @@ function createToolsFixture(page: Page): ToolsFixture {
     },
     get: async (name) => {
       await waitForHook(page)
-      return page.evaluate(
-        ([n, c]) => globalThis.__toolmark_test__!.describe(n, { caller: c }),
-        [name, CALLER] as const,
-      ) as Promise<ToolManifest>
+      return page.evaluate(([n, c]) => globalThis.__toolmark_test__!.describe(n, { caller: c }), [
+        name,
+        CALLER,
+      ] as const) as Promise<ToolManifest>
     },
     call,
     confirm,
