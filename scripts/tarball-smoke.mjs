@@ -12,14 +12,26 @@
 //     and 7.0.2, each in `nodenext` and `preserve`/`bundler` mode (`strict`, `skipLibCheck: false`,
 //     `types: ['node']`, no `customConditions`);
 // (c) every declared `bin` runs with `--help`, and with `<subcommand> --help` for the documented
-//     subcommands in BIN_SUBCOMMANDS (`toolmark lint --help`).
+//     subcommands in BIN_SUBCOMMANDS (`toolmark lint --help`), each exiting 0 and printing usage
+//     text; and with an unknown flag, which must exit non-zero. Every run is repeated through a
+//     symlink to the bin (what npm/npx `.bin` entries are), so a bin whose "is main module" guard
+//     compares against the symlink path — and so silently does nothing — fails.
 //
 // Prints one line per check and exits 0 (all passed) or 1. Dependencies: Node and pnpm only.
 // pnpm >= 11 no longer reads the `pnpm` field of package.json, so the tarball overrides are
 // written to the temp project's `pnpm-workspace.yaml` (`overrides:`).
 import { spawnSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
-import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import {
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -30,6 +42,9 @@ const BROWSER_ONLY = []
 
 /** Documented subcommands per bin name, each also run as `<bin> <subcommand> --help`. */
 const BIN_SUBCOMMANDS = { toolmark: ['lint'] }
+
+/** A flag no bin accepts: a bad invocation that must exit non-zero. */
+const BAD_FLAG = '--toolmark-smoke-bad-flag'
 
 const TYPESCRIPT_6 = '6.0.3'
 const TYPESCRIPT_7 = '7.0.2'
@@ -402,7 +417,9 @@ async function main() {
       }
     }
 
-    // (c) bins.
+    // (c) bins, run directly and through a symlink.
+    const linkDir = join(project, '.smoke-bin-links')
+    await mkdir(linkDir, { recursive: true })
     for (const { manifest } of packages) {
       const pkgDir = join(project, 'node_modules', ...manifest.name.split('/'))
       const bins =
@@ -410,14 +427,28 @@ async function main() {
           ? { [manifest.name.split('/').pop()]: manifest.bin }
           : (manifest.bin ?? {})
       for (const [bin, file] of Object.entries(bins)) {
-        for (const argv of [
-          ['--help'],
-          ...(BIN_SUBCOMMANDS[bin] ?? []).map((c) => [c, '--help']),
+        // The real file (pnpm's `node_modules/<pkg>` is itself a symlink into `.pnpm/`).
+        const target = await realpath(join(pkgDir, file))
+        const link = join(linkDir, bin)
+        await symlink(target, link)
+        for (const [via, path] of [
+          ['', target],
+          [' (symlink)', link],
         ]) {
-          const label = `bin ${bin} ${argv.join(' ')}`
-          const r = run(process.execPath, [join(pkgDir, file), ...argv], project, 60000)
-          if (r.status === 0) pass(label)
-          else fail(label, firstLines(r.output, 8))
+          for (const argv of [
+            ['--help'],
+            ...(BIN_SUBCOMMANDS[bin] ?? []).map((c) => [c, '--help']),
+          ]) {
+            const label = `bin ${bin}${via} ${argv.join(' ')}`
+            const r = run(process.execPath, [path, ...argv], project, 60000)
+            if (r.status !== 0) fail(label, `exit ${r.status}: ${firstLines(r.output, 8)}`)
+            else if (!/usage/i.test(r.output)) fail(label, 'exit 0 but printed no usage text')
+            else pass(label)
+          }
+          const label = `bin ${bin}${via} ${BAD_FLAG}`
+          const r = run(process.execPath, [path, BAD_FLAG], project, 60000)
+          if (r.status !== 0 && r.status !== null) pass(label, `exit ${r.status}`)
+          else fail(label, `a bad invocation must exit non-zero, got ${r.status}`)
         }
       }
     }

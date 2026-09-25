@@ -13,7 +13,7 @@ const SMOKE = join(here, 'tarball-smoke.mjs')
 const RENDER = join(here, 'render-round-budget.mjs')
 
 /** Packs a one-entry fixture package into a fresh directory and returns that directory. */
-async function packFixture({ extraExports = {}, extraFiles = {} } = {}) {
+async function packFixture({ extraExports = {}, extraFiles = {}, bin } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'toolmark-smoke-fixture-'))
   const src = join(root, 'pkg')
   const out = join(root, 'tarballs')
@@ -29,6 +29,7 @@ async function packFixture({ extraExports = {}, extraFiles = {} } = {}) {
       ...extraExports,
       './package.json': './package.json',
     },
+    ...(bin ? { bin } : {}),
   }
   await writeFile(join(src, 'package.json'), `${JSON.stringify(pkg, null, 2)}\n`)
   await writeFile(join(src, 'index.js'), 'export function answer() {\n  return 42\n}\n')
@@ -125,6 +126,65 @@ test('smoke_passes_minimal_valid_package', { timeout: 300000 }, async () => {
     assert.match(output, /PASS tsc 6\.0\.3 nodenext/)
     assert.match(output, /PASS tsc 7\.0\.2 bundler/)
     assert.doesNotMatch(output, /FAIL/)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+/** A bin that prints usage on `--help` and exits 2 on anything else — but only when `isMain`. */
+function binSource(guarded) {
+  return [
+    '#!/usr/bin/env node',
+    "import { pathToFileURL } from 'node:url'",
+    'function main() {',
+    "  if (process.argv.includes('--help')) {",
+    "    process.stdout.write('Usage: fixture-bin [options]\\n')",
+    '    return',
+    '  }',
+    "  process.stderr.write('Usage: fixture-bin [options]\\nunknown option\\n')",
+    '  process.exitCode = 2',
+    '}',
+    guarded
+      ? 'if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main()'
+      : 'main()',
+    '',
+  ].join('\n')
+}
+
+test(
+  'smoke_runs_bins_through_a_symlink (guarded bin is a no-op there)',
+  { timeout: 300000 },
+  async () => {
+    const { root, out } = await packFixture({
+      bin: { 'fixture-bin': './bin.js' },
+      extraFiles: { 'bin.js': binSource(true) },
+    })
+    try {
+      const run = runSmoke(out)
+      const output = `${run.stdout}\n${run.stderr}`
+      assert.equal(run.status, 1, output)
+      assert.match(output, /PASS bin fixture-bin --help\b/)
+      assert.match(output, /FAIL bin fixture-bin \(symlink\) --help/)
+      assert.match(output, /FAIL bin fixture-bin \(symlink\) --toolmark-smoke-bad-flag/)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  },
+)
+
+test('smoke_runs_bins_through_a_symlink (unguarded bin passes)', { timeout: 300000 }, async () => {
+  const { root, out } = await packFixture({
+    bin: { 'fixture-bin': './bin.js' },
+    extraFiles: { 'bin.js': binSource(false) },
+  })
+  try {
+    const run = runSmoke(out)
+    const output = `${run.stdout}\n${run.stderr}`
+    assert.equal(run.status, 0, output)
+    assert.match(output, /PASS bin fixture-bin --help\b/)
+    assert.match(output, /PASS bin fixture-bin \(symlink\) --help/)
+    assert.match(output, /PASS bin fixture-bin \(symlink\) --toolmark-smoke-bad-flag/)
+    assert.match(output, /PASS bin fixture-bin --toolmark-smoke-bad-flag/)
   } finally {
     await rm(root, { recursive: true, force: true })
   }

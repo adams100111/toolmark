@@ -220,3 +220,20 @@ test('an unclosed php fence exits 1', async () => {
     await rm(f.dir, { recursive: true, force: true })
   }
 })
+
+test('an app/Toolmark file without a guide block exits 1 (reverse direction)', async () => {
+  const m = matching()
+  m.files['app/Toolmark/Extra.php'] = PROPS.replace('Props', 'Extra')
+  const f = await fixture(m)
+  try {
+    await mkdir(join(f.root, 'app', 'Toolmark', 'Nested'), { recursive: true })
+    await writeFile(join(f.root, 'app', 'Toolmark', 'Nested', 'Deep.php'), PROPS)
+    const r = run(f)
+    assert.equal(r.status, 1, `${r.stdout}\n${r.stderr}`)
+    assert.match(r.stderr, /app\/Toolmark\/Extra\.php has no guide block/)
+    assert.match(r.stderr, /app\/Toolmark\/Nested\/Deep\.php has no guide block/)
+    assert.doesNotMatch(r.stderr, /BrowserBridge\.php has no guide block/)
+  } finally {
+    await rm(f.dir, { recursive: true, force: true })
+  }
+})
