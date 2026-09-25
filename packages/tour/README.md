@@ -35,6 +35,9 @@ events.
 
 Guide (modes, modality, planners, overlay options): [docs/guides/tours.md](https://github.com/adams100111/toolmark/blob/main/docs/guides/tours.md).
 
+Docs: [Tours guide](https://adams100111.github.io/toolmark/guides/tours) ·
+[API reference](https://adams100111.github.io/toolmark/api/@toolmark/tour/).
+
 ## License
 
 MIT

@@ -47,6 +47,9 @@ optional TypeSafe judge.
 
 Guide (manifest shapes, rules, judges): [docs/guides/lint.md](https://github.com/adams100111/toolmark/blob/main/docs/guides/lint.md).
 
+Docs: [Lint guide](https://adams100111.github.io/toolmark/guides/lint) ·
+[API reference](https://adams100111.github.io/toolmark/api/@toolmark/lint/).
+
 ## License
 
 MIT

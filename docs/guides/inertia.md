@@ -1,5 +1,9 @@
 # Inertia: pages, server-declared tools and navigation
 
+`@toolmark/inertia` supports `@inertiajs/react` 2 and 3 on React ≥ 18.3.
+**Inertia 3 requires React 19** (`@inertiajs/react` 2 works with React 18.3 or 19); the CI matrix
+never runs React 18.3 × Inertia 3, because that combination cannot exist.
+
 `@toolmark/inertia` (`@inertiajs/react` 2 and 3) adds three things in M2 (spec §10.1, §12.4):
 
 - `inertiaPages` — a page scope per visit that registers **server-declared tools** from the

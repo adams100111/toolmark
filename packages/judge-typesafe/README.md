@@ -51,6 +51,9 @@ Findings: `judge/description-quality`, `judge/consequential-hint`, `judge/overla
 `judge/timeout` (warn, when a page's requests don't finish within `pageTimeoutMs`; each request is
 retried at most once, so a slow or unreachable API never stalls `toolmark lint`).
 
+Docs: [Lint guide](https://adams100111.github.io/toolmark/guides/lint) ·
+[API reference](https://adams100111.github.io/toolmark/api/@toolmark/judge-typesafe/).
+
 ## License
 
 MIT

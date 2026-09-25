@@ -43,6 +43,9 @@ export const App = () => (
 
 Protocol and server contract: [docs/protocol-v1.md](https://github.com/adams100111/toolmark/blob/main/docs/protocol-v1.md).
 
+Docs: [React guide](https://adams100111.github.io/toolmark/guides/react) ·
+[API reference](https://adams100111.github.io/toolmark/api/@toolmark/react/).
+
 ## License
 
 MIT
