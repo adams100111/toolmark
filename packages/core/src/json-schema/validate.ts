@@ -1,6 +1,7 @@
 import { ToolmarkError } from '../errors.js'
 import { deepEqual } from '../forms/paths.js'
 import type { JsonSchema } from '../tool.js'
+import { unsafePatternReason } from './pattern-safety.js'
 
 /** One validation issue: `path` segments are property names and array indexes (numbers). */
 export interface SchemaIssue {
@@ -18,6 +19,13 @@ type Node = boolean | Record<string, unknown>
 
 /** Maximum schema-evaluation depth (bounds `$ref` cycles that consume no input). */
 const MAX_DEPTH = 256
+
+/**
+ * Longest string (in UTF-16 code units) ever run against a `pattern`. A longer value is not
+ * matched and gets the issue "Value too long for pattern", bounding polynomial backtracking.
+ * @internal
+ */
+export const MAX_PATTERN_INPUT_LENGTH = 10000
 
 const REF = /^#\/\$defs\/([^/]+)$/
 
@@ -98,8 +106,10 @@ function describe(v: unknown): string {
 /**
  * Compiles a schema of the supported JSON-Schema subset (M2 constraints) into a validator. Every
  * supported subschema position is checked at construction: a `$ref` other than a resolvable
- * `#/$defs/<name>` or a `pattern` that is not a valid `u`-flag regular expression throws a
- * `ToolmarkError` `schema_conversion_failed`. Other keywords are ignored.
+ * `#/$defs/<name>`, a `pattern` that is not a valid `u`-flag regular expression, or a `pattern` rejected by the
+ * ReDoS heuristic (see {@link unsafePatternReason}: backreferences, nested quantifiers, ambiguous
+ * repeated alternation) throws a `ToolmarkError` `schema_conversion_failed`. Other keywords are
+ * ignored.
  * @internal
  */
 export function compileJsonSchema(schema: JsonSchema | boolean): SchemaValidator {
@@ -135,18 +145,24 @@ export function compileJsonSchema(schema: JsonSchema | boolean): SchemaValidator
     if (Object.hasOwn(node, 'pattern')) {
       const p = node.pattern
       if (typeof p !== 'string') fail('"pattern" must be a string')
+      let re: RegExp
       try {
-        patterns.set(p, new RegExp(p, 'u'))
+        re = new RegExp(p, 'u')
       } catch {
         fail(`invalid "pattern" ${JSON.stringify(p)}`)
       }
+      const unsafe = unsafePatternReason(p)
+      if (unsafe !== undefined) fail(`unsafe "pattern" ${JSON.stringify(p)}: ${unsafe}`)
+      patterns.set(p, re)
     }
     for (const key of ['properties', '$defs'] as const) {
       const map = own(node, key)
       if (isRecord(map)) for (const k of Object.keys(map)) check(map[k], depth + 1)
     }
-    const items = own(node, 'items')
-    if (items !== undefined) check(items, depth + 1)
+    for (const key of ['items', 'additionalProperties'] as const) {
+      const sub = own(node, key)
+      if (sub !== undefined) check(sub, depth + 1)
+    }
     for (const key of ['anyOf', 'oneOf', 'allOf'] as const) {
       const list = own(node, key)
       if (Array.isArray(list)) for (const b of list) check(b, depth + 1)
@@ -201,8 +217,9 @@ export function compileJsonSchema(schema: JsonSchema | boolean): SchemaValidator
       if (typeof min === 'number' && len < min) at(`Must be at least ${min} characters`)
       if (typeof max === 'number' && len > max) at(`Must be at most ${max} characters`)
       const pattern = own(node, 'pattern')
-      if (typeof pattern === 'string' && !patterns.get(pattern)!.test(value)) {
-        at(`Must match the pattern ${pattern}`)
+      if (typeof pattern === 'string') {
+        if (value.length > MAX_PATTERN_INPUT_LENGTH) at('Value too long for pattern')
+        else if (!patterns.get(pattern)!.test(value)) at(`Must match the pattern ${pattern}`)
       }
       const format = own(node, 'format')
       const test =
@@ -247,12 +264,15 @@ export function compileJsonSchema(schema: JsonSchema | boolean): SchemaValidator
       }
       const props = own(node, 'properties')
       const declared = isRecord(props) ? props : {}
+      const extra = own(node, 'additionalProperties')
       for (const key of Object.keys(value)) {
         const sub = own(declared, key)
         if (typeof sub === 'boolean' || isRecord(sub)) {
           issues.push(...validate(sub, value[key], [...path, key], depth + 1))
-        } else if (own(node, 'additionalProperties') === false) {
+        } else if (extra === false) {
           issues.push({ path: [...path, key], message: 'Unknown field' })
+        } else if (isRecord(extra)) {
+          issues.push(...validate(extra, value[key], [...path, key], depth + 1))
         }
       }
     }

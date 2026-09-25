@@ -9,12 +9,19 @@ import { compileJsonSchema } from './validate.js'
  * their input like any other tool, and M1's schema resolution reads the schema back unchanged.
  *
  * Supported keywords (exact list): `type` (string or array of types), `enum`, `const`,
- * `properties`, `required`, `additionalProperties` (boolean), `items`, `minItems`, `maxItems`,
- * `uniqueItems`, `minLength`, `maxLength` (code points), `pattern` (unanchored, `u` flag),
+ * `properties`, `required`, `additionalProperties` (boolean or a schema for undeclared keys), `items`, `minItems`, `maxItems`,
+ * `uniqueItems`, `minLength`, `maxLength` (code points), `pattern` (unanchored, `u` flag; see below),
  * `minimum`, `maximum`, `multipleOf`, `format` (`date`, `time`, `date-time`, `email`, `uri`),
  * `anyOf`, `oneOf`, `allOf`, `$defs`, `$ref` (local `#/$defs/<name>` only), and the annotations
  * `default`, `title`, `description` (`default` is not applied: the output is the input value).
  * Every other keyword is ignored. Issue paths are property names and array indexes (numbers).
+ *
+ * `pattern` hardening (ReDoS): a pattern with a backreference (`\1`, `\k<name>`), nested
+ * quantifiers (a quantified group whose body has a `*`, `+`, `?`, `{n,}` or `{n,m}` quantifier,
+ * e.g. `(a+)+`, `(.*a){11}`), or a repeated alternation whose branches are not fixed-length
+ * literals with distinct first characters (e.g. `(a|a)*`) is rejected at construction. A string
+ * longer than 10000 UTF-16 code units is never run against a pattern; it gets the issue
+ * `"Value too long for pattern"`.
  *
  * @example
  * ```ts
@@ -30,7 +37,7 @@ import { compileJsonSchema } from './validate.js'
  *   `.output()` return a deep copy of `schema` for target `'draft-2020-12'` and throw for any
  *   other target.
  * @throws ToolmarkError `schema_conversion_failed` when the schema has a `$ref` other than a
- *   resolvable `#/$defs/<name>`, an invalid `pattern`, or is not a JSON object.
+ *   resolvable `#/$defs/<name>`, an invalid or unsafe `pattern`, or is not a JSON object.
  */
 export function fromJsonSchema<T = unknown>(
   schema: JsonSchema,
