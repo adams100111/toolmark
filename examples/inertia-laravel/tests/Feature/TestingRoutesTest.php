@@ -22,6 +22,25 @@ final class TestingRoutesTest extends TestCase
         $this->assertAuthenticatedAs($alice);
         // `next` is a same-site path only (no open redirect).
         $this->get('/testing/login/alice@example.test?next=//evil.example/x')->assertRedirect('/');
+        // Control characters are rejected: browsers drop a tab or newline, so `/\t/evil.example`
+        // would become the protocol-relative `//evil.example`.
+        foreach ([
+            '/%09/evil.example',
+            '/%0A/evil.example',
+            '/%0D%0A/evil.example',
+            '/%00/evil.example',
+            '/%7F/evil.example',
+            '/wiz%09ard',
+            '/%5C/evil.example',
+            'http://evil.example/x',
+            'https://localhost/wizard',
+            '//localhost/wizard',
+            'wizard',
+            'javascript:alert(1)',
+        ] as $next) {
+            $this->get('/testing/login/alice@example.test?next='.$next)->assertRedirect('/');
+        }
+        $this->get('/testing/login/alice@example.test?next=/wizard%3Fstep%3D2')->assertRedirect('/wizard?step=2');
         // The scripted agent needs a session.
         auth()->logout();
         $this->postJson('/testing/agent/script', [])->assertUnauthorized();
@@ -40,24 +59,5 @@ final class TestingRoutesTest extends TestCase
             $this->assertTrue(Route::has('tour.plan'));
             $this->assertTrue(Route::has('toolmark.bridge'));
         });
-    }
-
-    /** Boots a fresh application under `$env`, runs `$check`, then restores the testing app. */
-    private function withEnvironment(string $env, \Closure $check): void
-    {
-        $previous = getenv('APP_ENV');
-        $set = function (string $value): void {
-            putenv("APP_ENV={$value}");
-            $_ENV['APP_ENV'] = $value;
-            $_SERVER['APP_ENV'] = $value;
-        };
-        $set($env);
-        try {
-            $this->refreshApplication();
-            $check();
-        } finally {
-            $set($previous === false ? 'testing' : $previous);
-            $this->refreshApplication();
-        }
     }
 }
