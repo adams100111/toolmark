@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { WebSocketServer } from 'ws'
-import { ok, type ToolDefinition } from '@toolmark/core'
+import { createConfirmQueue, ok, type ToolDefinition } from '@toolmark/core'
 import { createTestToolmark } from '@toolmark/testing/vitest'
 import { mcpPairing, type McpPairingStatus } from '../src/client/index.js'
 import { createPairingServer } from '../src/index.js'
+import { SUPERSEDED_TEXT } from '../src/pairing/page-link.js'
 import {
   captureStderr,
   installOriginWebSocket,
@@ -122,6 +123,38 @@ describe('mcpPairing', () => {
     expect(first.statuses.at(-1)).toBe('superseded')
     await until(() => link.state() === 'paired')
     expect(second.statuses.at(-1)).toBe('paired')
+  })
+
+  it('superseded_page_withdraws_inflight_confirmation', async () => {
+    const { link, err, port } = await start()
+    const queue = createConfirmQueue()
+    const tm = createTestToolmark({ confirm: queue.handler })
+    const run = vi.fn(() => ok('deleted'))
+    tm.register({
+      name: 'crm.delete',
+      description: 'Deletes a contact.',
+      hints: { consequential: true },
+      run,
+    })
+    const statuses: McpPairingStatus[] = []
+    cleanups.push(tm.use(mcpPairing({ code: err.code(), port, onStatus: (s) => statuses.push(s) })))
+    await until(() => link.state() === 'paired')
+    await until(() => err.codes().length === 2)
+
+    const pending = link.call('crm.delete', {}, { signal: new AbortController().signal })
+    await until(() => queue.getPending() !== null)
+
+    // Page B takes over the pairing while page A's confirmation is still open.
+    const second = page({ code: err.code(), port })
+    await until(() => statuses.includes('superseded'))
+    await until(() => second.statuses.includes('paired'))
+
+    expect(queue.getPending()).toBeNull()
+    queue.approve()
+    await new Promise((r) => setTimeout(r, 50))
+    expect(run).not.toHaveBeenCalled()
+    expect(tm.calls.at(-1)?.result.status).toBe('cancelled')
+    await expect(pending).resolves.toEqual({ status: 'error', message: SUPERSEDED_TEXT })
   })
 
   it('rejected_code_stops_and_reports', async () => {

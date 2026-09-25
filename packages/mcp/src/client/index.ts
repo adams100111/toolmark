@@ -65,7 +65,10 @@ function writeToken(key: string, token: string | null): void {
  * `{ type: 'pair', code }` (or `{ type: 'resume', token }` with the session token kept in
  * `sessionStorage` under `toolmark:mcp:<port>`), waits for `paired`, then serves the registry as a
  * bridge with caller `mcp` (inline confirmation). Close codes `4400`, `4401`, `4408` and `4409`
- * stop reconnecting; others reconnect with backoff and resume.
+ * stop reconnecting and detach the bridge: calls still running for the CLI are aborted and their
+ * inline confirmations withdrawn. Other closes (including `1001`, the CLI shutting down) reconnect
+ * with backoff and resume, keeping running calls (a restarted CLI rejects the old token with
+ * `4401`, which then ends them).
  * @param o - The code, port and status callback.
  * @returns A consumer for `tm.use`. Without a code and without a stored token it is inert (no
  * socket; the disposer does nothing).
@@ -96,6 +99,17 @@ export function mcpPairing(o: McpPairingOptions = {}): (tm: Toolmark) => () => v
     let everPaired = false
     let terminalReported = false
     let disposed = false
+    let detach: (() => void) | undefined
+    /**
+     * Detaches the bridge once the pairing ends for good (I2): its disposer aborts the calls still
+     * running for the CLI, which withdraws their inline confirmations, so an approval given after
+     * a takeover or rejection can never run a tool whose result has nowhere to go.
+     */
+    const release = (): void => {
+      const d = detach
+      detach = undefined
+      d?.()
+    }
 
     const onStatus = (s: WebSocketTransportStatus): void => {
       if (disposed) return
@@ -126,6 +140,7 @@ export function mcpPairing(o: McpPairingOptions = {}): (tm: Toolmark) => () => v
           // A stop without a terminal close code is a failed handshake on a live socket.
           if (!terminalReported) report('rejected')
           terminalReported = true
+          release()
           return
       }
     }
@@ -174,11 +189,11 @@ export function mcpPairing(o: McpPairingOptions = {}): (tm: Toolmark) => () => v
       },
     })
 
-    const detach = tm.use(bridge({ transport, caller: 'mcp' }))
+    detach = tm.use(bridge({ transport, caller: 'mcp' }))
     return () => {
       if (disposed) return
       disposed = true
-      detach()
+      release()
     }
   }
 }

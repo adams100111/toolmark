@@ -13,6 +13,7 @@ import {
 } from './helpers/origin-websocket.js'
 
 const RELOAD_TEXT = 'The page reloaded before the result arrived; the outcome is unknown.'
+const SUPERSEDED_TEXT = 'Another page took over the MCP connection before the result arrived.'
 
 const cleanups: (() => Promise<void> | void)[] = []
 beforeEach(() => {
@@ -340,6 +341,36 @@ describe('PageLink', () => {
     const b = await rawPage(port, { type: 'resume', token: a.token })
     b.s.send({ protocol: 1, type: 'manifest', clientId: 'page-b', rev: 1, tools: [summary('a.b')] })
     expect(await pending).toEqual({ status: 'error', message: RELOAD_TEXT })
+  })
+
+  it('takeover_by_another_page_fails_pending_calls_as_superseded', async () => {
+    const { link, err, port } = await start()
+    const a = await rawPage(port, { type: 'pair', code: err.code() })
+    a.s.send({ protocol: 1, type: 'manifest', clientId: 'page-a', rev: 1, tools: [summary('a.b')] })
+    await until(() => link.state() === 'paired')
+    await until(() => err.codes().length === 2)
+    const pending = link.call('a.b', {}, { signal: new AbortController().signal })
+    await a.s.next()
+    const b = await rawPage(port, { type: 'pair', code: err.code() })
+    b.s.send({ protocol: 1, type: 'manifest', clientId: 'page-b', rev: 1, tools: [summary('a.b')] })
+    expect(await pending).toEqual({ status: 'error', message: SUPERSEDED_TEXT })
+  })
+
+  it('inbound_changed_frames_are_ignored', async () => {
+    const { link, err, port } = await start()
+    const { s } = await rawPage(port, { type: 'pair', code: err.code() })
+    s.send({ protocol: 1, type: 'manifest', clientId: 'page-a', rev: 1, tools: [summary('a.b')] })
+    await until(() => link.state() === 'paired')
+    let changes = 0
+    link.onChange(() => changes++)
+    s.send({ protocol: 1, type: 'changed', clientId: 'page-a', rev: 7 })
+    await new Promise((r) => setTimeout(r, 100))
+    const pending = link.call('a.b', {}, { signal: new AbortController().signal })
+    const frame = (await s.next()) as { type: string; id: string; rev: number }
+    expect(frame).toMatchObject({ type: 'call', rev: 1 })
+    s.send({ protocol: 1, type: 'result', clientId: 'page-a', id: frame.id, result: ok(1) })
+    expect(await pending).toEqual(ok(1))
+    expect(changes).toBe(0)
   })
 
   it('page_gone_fails_pending_calls_after_grace', async () => {
