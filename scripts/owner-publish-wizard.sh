@@ -392,15 +392,19 @@ fi
 # ── 12 ────────────────────────────────────────────────────────────────────
 stage "O-i · Publish 1.0.0"
 warn "This is the irreversible step: npm versions can never be reused."
-confirm "Dispatch release.yml on main (${MAIN_SHA:0:7}) now?" || { warn "stopped before publishing"; exit 1; }
-gh workflow run release.yml --repo "$REPO" --ref main
-sleep 5
-run_url=$(gh run list --repo "$REPO" --workflow release.yml --event workflow_dispatch --limit 1 --json url -q '.[0].url')
-open_url "$run_url"
-step "Check the run is on ${MAIN_SHA:0:7} (shown at the top of the run)."
-step "Wait for 'pack' to finish, then 'Review deployments' → tick $ENV_NAME → Approve."
-note "If publish fails part-way: 'Re-run failed jobs' on this same run, never a new dispatch."
-pause "Enter when the publish job is green"
+if confirm "Dispatch release.yml on main (${MAIN_SHA:0:7}) now? (N skips: e.g. you re-ran a failed run)"; then
+  gh workflow run release.yml --repo "$REPO" --ref main
+  sleep 5
+  run_url=$(gh run list --repo "$REPO" --workflow release.yml --event workflow_dispatch --limit 1 --json url -q '.[0].url')
+  open_url "$run_url"
+  step "Check the run is on ${MAIN_SHA:0:7} (shown at the top of the run)."
+  step "Wait for 'pack' to finish, then 'Review deployments' → tick $ENV_NAME → Approve."
+  note "If publish fails part-way: 'Re-run failed jobs' on this same run, never a new dispatch."
+  pause "Enter when the publish job is green"
+else
+  note "Skipped the dispatch. Make sure the publish job of your run is green before going on."
+  pause "Enter to continue"
+fi
 
 # ── 13 ────────────────────────────────────────────────────────────────────
 stage "Check the packages on npm"
