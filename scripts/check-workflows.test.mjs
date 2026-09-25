@@ -113,3 +113,75 @@ test('check_workflows_rejects_workflow_env_secrets_on_pull_request', () => {
   assert.equal(r.status, 1, r.output)
   assert.match(r.output, /FAIL .*workflow-level `env` uses secrets/)
 })
+
+// Release pipeline review (SEC-14, SEC-19, SEC-21 in docs/security/review-2026.md).
+
+test('check_workflows_rejects_workflow_run', () => {
+  const r = check('workflow-run.yml')
+  assert.equal(r.status, 1, r.output)
+  assert.match(r.output, /FAIL .*must not trigger on `workflow_run`/)
+})
+
+test('check_workflows_rejects_untrusted_expressions_in_run', () => {
+  const r = check('run-injection.yml')
+  assert.equal(r.status, 1, r.output)
+  for (const expr of [
+    'github.head_ref',
+    'inputs.name',
+    'github.event.pull_request.title',
+    'steps.meta.outputs.keys',
+    'needs.greet.outputs.value',
+  ]) {
+    assert.match(
+      r.output,
+      new RegExp(`FAIL .*\\$\\{\\{ ${expr.replace(/\./g, '\\.')} \\}\\}.*run:.*env:`),
+      expr,
+    )
+  }
+})
+
+test('check_workflows_accepts_env_passed_values_in_run', () => {
+  const r = check('run-safe.yml')
+  assert.equal(r.status, 0, r.output)
+})
+
+test('check_workflows_rejects_cache_in_privileged_jobs', () => {
+  const r = check('privileged-cache.yml')
+  assert.equal(r.status, 1, r.output)
+  // id-token: write
+  assert.match(r.output, /FAIL .*job "publish".*cache/)
+  // feeds `publish` through `needs`
+  assert.match(r.output, /FAIL .*job "build".*cache/)
+  // uses secrets
+  assert.match(r.output, /FAIL .*job "notify".*cache/)
+  // write permission, setup-node without `package-manager-cache: false`
+  assert.match(r.output, /FAIL .*job "label".*package-manager-cache: false/)
+  // Unprivileged jobs may cache; a privileged-feeding job that disables the cache passes.
+  assert.doesNotMatch(r.output, /job "test"/)
+  assert.doesNotMatch(r.output, /job "plan"/)
+})
+
+test('check_workflows_accepts_privileged_jobs_without_cache', () => {
+  const r = check('privileged-no-cache.yml')
+  assert.equal(r.status, 0, r.output)
+})
+
+test('check_workflows_rejects_unpinned_foreign_checkout', () => {
+  const r = check('foreign-checkout.yml')
+  assert.equal(r.status, 1, r.output)
+  assert.match(r.output, /FAIL .*job "wpt".*web-platform-tests\/wpt.*40-char commit SHA/)
+  assert.doesNotMatch(r.output, /job "pinned"/)
+})
+
+test('check_workflows_accepts_version_comment_without_v', () => {
+  const r = check('pin-comment-no-v.yml')
+  assert.equal(r.status, 0, r.output)
+})
+
+test('check_workflows_passes_repository_workflows', () => {
+  // The real workflows: spec-watch's step output reaches `run:` through env (SEC-20), wpt is
+  // pinned (SEC-14), no privileged job restores a cache (SEC-14) and every pin comment parses.
+  const r = spawnSync(process.execPath, [SCRIPT], { encoding: 'utf8' })
+  assert.equal(r.status, 0, r.stdout + r.stderr)
+  assert.match(r.stdout, /check-workflows: \d+ passed, 0 failed/)
+})

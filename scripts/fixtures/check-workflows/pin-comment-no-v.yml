@@ -1,0 +1,18 @@
+name: Pin comment without v
+
+on:
+  push:
+
+permissions: {}
+
+concurrency:
+  group: x-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  php:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2

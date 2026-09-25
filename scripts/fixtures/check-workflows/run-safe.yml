@@ -1,0 +1,31 @@
+name: Run safe
+
+on:
+  workflow_dispatch:
+    inputs:
+      name:
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: x-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  greet:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      matrix:
+        os: [linux]
+    steps:
+      - id: meta
+        run: echo "keys=a" >> "$GITHUB_OUTPUT"
+      - env:
+          NAME: ${{ inputs.name }}
+          KEYS: ${{ steps.meta.outputs.keys }}
+        run: |
+          echo "hello $NAME $KEYS"
+          echo "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }} ${{ matrix.os }}"
