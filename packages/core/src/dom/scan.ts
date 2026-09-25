@@ -1,6 +1,6 @@
 import { ToolmarkError } from '../errors.js'
-import { createFormTools } from '../forms/form-tools.js'
-import type { OptionsProvider } from '../forms/types.js'
+import { createFormTools, markAutosubmit } from '../forms/form-tools.js'
+import type { FormToolOptions, OptionsProvider } from '../forms/types.js'
 import { fromJsonSchema } from '../json-schema/from-json-schema.js'
 import { isValidToolName } from '../names.js'
 import { emitEvent, registryState, type Toolmark } from '../registry.js'
@@ -386,8 +386,8 @@ export function scanDom(opts: ScanDomOptions = {}): (tm: Toolmark) => () => void
               ? { destructive: true, untrustedContent: true }
               : { consequential: true, untrustedContent: true }
           const adapter = domFormAdapter(form)
-          const handle = guarded(`${full}.fill`, () =>
-            createFormTools(tm, adapter, {
+          const handle = guarded(`${full}.fill`, () => {
+            const formOpts: FormToolOptions<Record<string, unknown>> & { scope?: Scope } = {
               name,
               description,
               input: fromJsonSchema(s.validationSchema),
@@ -402,8 +402,10 @@ export function scanDom(opts: ScanDomOptions = {}): (tm: Toolmark) => () => void
                 ? { submitSummary: () => cap(confirmText, MAX_CONFIRM_SUMMARY) }
                 : {}),
               ...(group !== undefined ? { scope: scopeFor(group)! } : {}),
-            }),
-          )
+            }
+            // Only a `toolautosubmit` form may register a submit below `consequential`.
+            return createFormTools(tm, adapter, autosubmit ? markAutosubmit(formOpts) : formOpts)
+          })
           if (!handle || tm.info(`${full}.fill`) === undefined) {
             handle?.dispose()
             adapter.dispose()

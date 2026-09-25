@@ -873,3 +873,41 @@ describe('form tools', () => {
     })
   })
 })
+
+describe('form tools: submit hint floor (final review M3)', () => {
+  it('app_supplied_submit_hints_cannot_remove_the_confirmation', async () => {
+    for (const submit of [
+      {},
+      { readOnly: true },
+      { consequential: false },
+      { untrustedContent: true },
+    ]) {
+      const tm = createTestRegistry()
+      const adapter = new FakeAdapter()
+      const submitSpy = vi.spyOn(adapter, 'submit')
+      createFormTools(tm, adapter, {
+        name: 'f',
+        description: 'F.',
+        input: schema,
+        hints: { submit },
+      })
+      const hints = tm.describe('f.submit')!.hints
+      expect(hints?.consequential, JSON.stringify(submit)).toBe(true)
+      expect(hints?.readOnly).toBeUndefined()
+      const r = await tm.call('f.submit', {}, { caller: 'inapp' })
+      expect(r.status, JSON.stringify(submit)).toBe('needs_confirmation')
+      expect(submitSpy).not.toHaveBeenCalled()
+    }
+  })
+
+  it('destructive_submit_hint_is_kept', () => {
+    const tm = createTestRegistry()
+    createFormTools(tm, new FakeAdapter(), {
+      name: 'f',
+      description: 'F.',
+      input: schema,
+      hints: { submit: { destructive: true } },
+    })
+    expect(tm.describe('f.submit')!.hints).toMatchObject({ destructive: true })
+  })
+})

@@ -83,8 +83,11 @@ export interface UseWizardToolOptions {
    */
   submit(data: Record<string, Record<string, unknown>>): Promise<ToolResult<unknown>>
   /**
-   * User-facing submit confirmation summary. In stepwise mode (no {@link data}) this is called
-   * with `{}` — the hook has no parent data to hand it in that mode.
+   * User-facing submit confirmation summary. In parent-state mode it is called with a copy of
+   * {@link data} in which the current step is replaced by its live values (the mounted
+   * {@link currentAdapter}'s values when present), so the confirmation reflects edits on the visible
+   * step that have not been synced into `data` yet. In stepwise mode (no {@link data}) this is
+   * called with `{}` — the hook has no parent data to hand it in that mode.
    */
   submitSummary?: (data: Record<string, Record<string, unknown>>) => string
 }

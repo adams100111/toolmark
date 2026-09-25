@@ -223,19 +223,20 @@ for production that still passes `dev: true` sees the development behaviour (for
 
 `error` event codes (full list with M1–M4 codes: [`docs/reference/codes.md`](../reference/codes.md)):
 
-| Code                           | When                                                                        | Development / production                                         |
-| ------------------------------ | --------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| `wizard_misconfigured`         | Wizard with no steps, an invalid or duplicate step name, missing callbacks  | Throws / event, nothing registered                               |
-| `files_misconfigured`          | Invalid `files` options or `FileFieldSpec`                                  | Throws / event; URL fetching off, or the form registers no tools |
-| `files_not_configured`         | A `{ ref }` arrived and no `files.resolve` exists (changed from M1's throw) | Event (development only), next to `refused` `file_rejected`      |
-| `invalid_props_tool`           | A server-declared props entry is malformed or violates a limit              | Event in both, never thrown; the entry is skipped                |
-| `options_url_rejected`         | A `data-tool-options-url` is not a same-origin http(s) URL                  | Event in both, never thrown                                      |
-| `wizard_current_step_unsynced` | A wizard wrote the current step into parent data with no way to show it     | Event in both (once per wizard), never thrown                    |
+| Code                           | When                                                                                                                  | Development / production                                         |
+| ------------------------------ | --------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| `wizard_misconfigured`         | Wizard with no steps, an invalid or duplicate step name, missing callbacks                                            | Throws / event, nothing registered                               |
+| `files_misconfigured`          | Invalid `files` options or `FileFieldSpec`                                                                            | Throws / event; URL fetching off, or the form registers no tools |
+| `files_not_configured`         | A `{ ref }` arrived and no `files.resolve` exists (changed from M1's throw)                                           | Event (development only), next to `refused` `file_rejected`      |
+| `invalid_props_tool`           | A server-declared props entry is malformed or violates a limit                                                        | Event in both, never thrown; the entry is skipped                |
+| `options_url_rejected`         | A `data-tool-options-url` is invalid, too long, not same-origin http(s), or has credentials; the field gets no lookup | Event in both, never thrown                                      |
+| `wizard_current_step_unsynced` | A wizard wrote the current step into parent data with no way to show it                                               | Event in both (once per wizard), never thrown                    |
 
 Reused M1 codes with new sources: `duplicate_name` (props tool collisions, a second
 `inertiaPages`; events, never thrown), `invalid_name` (DOM tool, group, column and field names;
 buttons without a description), `schema_conversion_failed` (`fromJsonSchema`; a dropped DOM
-`pattern` in development), `tool_threw` (an options provider failed).
+`pattern` in development), `tool_threw` (an options provider failed; registering a DOM tool
+threw a non-Toolmark error, which is reported as an event and that tool is skipped, never thrown).
 
 `refused` codes used by M2: `file_rejected` (files), `navigation_failed` (navigation tool),
 `not_allowed` (disabled or hidden DOM button; stepwise fill with no mounted step form) and

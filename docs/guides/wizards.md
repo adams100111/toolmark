@@ -109,7 +109,9 @@ schema is validated (the current step from its mounted form, the others from par
 issue → `invalid` with `<step>.<path>` paths and no confirmation. The tool is `consequential`; a
 confirmation approved after the wizard's data or the mounted step values changed is refused
 `stale`. The default confirmation summary is `"Submit <title ?? name>"`; pass `submitSummary(data)`
-to change it.
+to change it. `data` is a copy of the parent data with the current step replaced by its **live**
+values (the mounted step form's values when `currentAdapter` returns one), so the confirmation shows
+what the user sees, including edits on the current step not yet synced into parent data.
 
 With `useWizardTool`, the app's `submit` is called with the **merged parent data** as its argument
 (`submit(data)`), after the current step's values were synced into it. `setData` usually schedules
@@ -155,7 +157,8 @@ wizard.dispose()
 `setData(next)` (called at most once per fill or undo), `getCurrent()`, `goTo(step)`,
 `currentAdapter?: () => FormAdapter | undefined`, `resetCurrent?(values)`, `submit()`,
 `submitSummary?(data)`. `getData`, `getCurrent` and `currentAdapter` are read at call time: pass
-getters backed by the latest state.
+getters backed by the latest state. The step list is read at creation: re-create the wizard tools
+(`createWizardTools`) when steps change.
 
 `WizardStep`: `name` (`A–Z a–z 0–9 _ -`, 1–64 characters, unique, not `__proto__`/`prototype`/
 `constructor`), `title?`, `input`, `jsonSchema?`, `files?`, `options?`, `sensitive?` (dot paths
@@ -164,7 +167,6 @@ always redacted).
 `createStepwiseWizardTools(tm, opts)` takes `StepwiseWizardOptions` (`name`, `description`,
 `title?`, `currentAdapter()`, `currentStep()` → `{ name, input, jsonSchema? }`, `next()`,
 `previous()`, `submit()`, `submitSummary?()`) plus `scope?`, and returns `{ dispose(), refresh() }`.
-The step list is read at creation: re-create the wizard tools when steps change.
 
 ## Manifest schema
 

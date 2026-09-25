@@ -83,8 +83,13 @@ naming the accepted types and the size limit. For `multiple`, it is an array of 
 
 Every rule below applies to both `ref` and `url` files unless it says otherwise.
 
-1. **Shape first.** More than `maxFiles` references → `invalid` at the field (`"Too many files (at most N)"`) before anything is resolved or fetched. An empty or over-long `ref`/`url` → `invalid`
-   at `<path>.ref` / `<path>.url`. A dotted key running through a file path → `invalid`
+1. **Shape first.** One fill carries at most `MAX_FILE_REFS_PER_FILL` (100) file references in
+   total — every file field, every item of a `[]` array path and every entry of a `multiple` list
+   counted together (a wizard `fill` counts all its steps together); more → `invalid` at the root
+   (`"Too many files (at most 100 per fill)"`) before anything is resolved or fetched. More than
+   `maxFiles` references in one `multiple` field → `invalid` at the field
+   (`"Too many files (at most N)"`), also before anything is resolved or fetched. An empty or
+   over-long `ref`/`url` → `invalid` at `<path>.ref` / `<path>.url`. A dotted key running through a file path → `invalid`
    (`"Expected a file reference"`). `null` clears the field.
 2. **Resolution.** All references of one fill are resolved (sequentially) before anything is
    written. Any failure → `refused` `file_rejected` and **nothing** is set. Resolution happens

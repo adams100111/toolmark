@@ -187,7 +187,8 @@ agent-UX and defence in depth, not access control.
 definition for `tm.register`:
 
 - Input `{ route, params? }` (`NavigationInput`): `route` is an enum of the `routes` keys.
-- Returns `ok({ url })` right after starting the visit, **before** the page swap disposes the page
+- Returns `ok({ url })` — `url` is the canonical absolute href that was visited — right after
+  starting the visit, **before** the page swap disposes the page
   scope; a `changed`/manifest follows (D23). Register it at the **root** scope with
   `tm.register(...)`, never inside the page scope, so it survives navigation.
 - **GET only.** A route whose method is not `get` (case-insensitive) → `refused`
@@ -195,7 +196,8 @@ definition for `tm.register`:
   throwing `visit` → `refused` `navigation_failed`. The visit receives the canonical absolute URL.
 - `params` keys `__proto__`/`constructor`/`prototype` (any depth) → `invalid`. Parameters a route
   does not consume may become query-string values, as Wayfinder and Ziggy do.
-- Default name `navigate`, description `"Navigate to a page in this app. Use route names from the enum."`. Empty `routes` gives an empty enum: every call is `invalid`.
+- Default name `navigate`, description `"Navigate to a page in this app. Use route names from the enum."`. Empty `routes` throws a
+  `TypeError` (`"navigationTool needs at least one route"`) when the tool is built.
 
 A `RouteFn` is `(params?) => { url, method }`.
 
@@ -291,7 +293,9 @@ Outcome mapping of `submit()`:
 - `finish` with `cancelled` or `interrupted` → `cancelled` `signal`;
 - **a bare `finish` → `ok({})`.** This differs from the per-visit mapping above, where a bare
   `onFinish` is an `error`: here success is only observable through the global `finish`;
-- no mounted ref → `error` `"Form is not mounted"`; `dispose()` settles in-flight submits
+- no mounted ref → `error` `"Form is not mounted"`; no `start` within 1000 ms of the submit (an
+  `onBefore` returned `false`, or the submit was swallowed) → `error`
+  `"Submit did not start a visit"`, listeners removed; `dispose()` settles in-flight submits
   `cancelled` `signal` and removes their listeners.
 
 **Correlation.** The first `start` after `submit()` records `"<method> <visit.url.href>"`; a
