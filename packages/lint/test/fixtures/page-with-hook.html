@@ -1,0 +1,41 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>fixture: page with a fake test hook</title>
+  </head>
+  <body>
+    <p>Fixture page for `collectFromUrl` tests: installs a fake `__toolmark_test__`.</p>
+    <script>
+      window.__toolmark_test__ = {
+        manifest: function (opts) {
+          var tools = [
+            {
+              name: 'demo.run',
+              llmName: 'demo_run',
+              description: 'A fake demo tool used to test toolmark lint --url collection.',
+              hints: { readOnly: true },
+              inputSchema: { type: 'object', properties: {} },
+            },
+          ]
+          var seeded = false
+          try {
+            seeded = window.localStorage.getItem('toolmark-lint-fixture') === 'seeded'
+          } catch (e) {
+            seeded = false
+          }
+          if (seeded) {
+            tools.push({
+              name: 'seeded.run',
+              llmName: 'seeded_run',
+              description: 'Present only when --storage-state seeded localStorage.',
+              hints: { readOnly: true },
+              inputSchema: { type: 'object', properties: {} },
+            })
+          }
+          return { rev: 1, tools: tools }
+        },
+      }
+    </script>
+  </body>
+</html>

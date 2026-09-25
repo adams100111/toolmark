@@ -1,0 +1,17 @@
+{
+  "rev": 1,
+  "tools": [
+    {
+      "name": "search.run",
+      "llmName": "search_run",
+      "description": "Searches the catalog for products matching a free-text query.",
+      "hints": { "readOnly": true },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": { "type": "string", "description": "Free-text search query." }
+        }
+      }
+    }
+  ]
+}
