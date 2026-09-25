@@ -262,6 +262,62 @@ describe('webmcp consumer', () => {
     expect(run).not.toHaveBeenCalled()
   })
 
+  it('execute_rejects_oversized_json_string_without_calling', async () => {
+    const { tm } = setup()
+    const fake = fakeModelContext()
+    const run = vi.fn(() => ok(1))
+    tm.register(tool('echo', { readOnly: true }, { input: anyObject, run }))
+    const calls: string[] = []
+    tm.events.on('call', (e) => calls.push(e.tool))
+    tm.use(webmcp({ modelContext: () => fake.mc }))
+    await settle()
+    const big = JSON.stringify({ q: 'x'.repeat(1024 * 1024) })
+    const r = (await fake.tool('echo').execute(big)) as { status: string }
+    expect(r.status).toBe('invalid')
+    expect(run).not.toHaveBeenCalled()
+    expect(calls).toEqual([])
+  })
+
+  it('execute_rejects_too_deep_input_without_calling', async () => {
+    const { tm } = setup()
+    const fake = fakeModelContext()
+    const run = vi.fn(() => ok(1))
+    tm.register(tool('echo', { readOnly: true }, { input: anyObject, run }))
+    const calls: string[] = []
+    tm.events.on('call', (e) => calls.push(e.tool))
+    tm.use(webmcp({ modelContext: () => fake.mc }))
+    await settle()
+    const deepText = `{"a":${'['.repeat(100)}${']'.repeat(100)}}`
+    const r1 = (await fake.tool('echo').execute(deepText)) as { status: string }
+    expect(r1.status).toBe('invalid')
+    let deep: unknown = 1
+    for (let i = 0; i < 100; i++) deep = { d: deep }
+    const r2 = (await fake.tool('echo').execute({ a: deep })) as { status: string }
+    expect(r2.status).toBe('invalid')
+    // A huge object input (no JSON string) is bounded too.
+    const wide = { list: Array.from({ length: 300_000 }, () => 'xxxx') }
+    const r3 = (await fake.tool('echo').execute(wide)) as { status: string }
+    expect(r3.status).toBe('invalid')
+    expect(run).not.toHaveBeenCalled()
+    expect(calls).toEqual([])
+    // Normal input still runs.
+    await expect(fake.tool('echo').execute('{"q":1}')).resolves.toEqual(ok(1))
+  })
+
+  it('sync_does_not_evaluate_sensitive_paths', async () => {
+    const { tm } = setup()
+    const fake = fakeModelContext()
+    const sensitivePaths = vi.fn(() => ['secret'])
+    tm.register({ ...tool('a'), sensitivePaths })
+    tm.register(tool('dom.order', undefined, { origin: 'native-form', nativeName: 'order' }))
+    tm.use(webmcp({ modelContext: () => fake.mc }))
+    await settle()
+    tm.register(tool('b'))
+    await settle()
+    expect([...fake.live.keys()].sort()).toEqual(['a', 'b', 'dom.order'])
+    expect(sensitivePaths).not.toHaveBeenCalled()
+  })
+
   it('execute_without_options_arg_works', async () => {
     const { tm } = setup()
     const fake = fakeModelContext()

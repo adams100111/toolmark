@@ -1,6 +1,6 @@
 {
   "name": "@toolmark/inertia",
-  "version": "0.1.0-next.0",
+  "version": "0.1.0-next.2",
   "description": "Inertia.js adapter for Toolmark form tools (useForm).",
   "license": "MIT",
   "type": "module",

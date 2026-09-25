@@ -13,6 +13,7 @@ import {
 } from './helpers/origin-websocket.js'
 
 const RELOAD_TEXT = 'The page reloaded before the result arrived; the outcome is unknown.'
+const SUPERSEDED_TEXT = 'Another page took over the MCP connection before the result arrived.'
 
 const cleanups: (() => Promise<void> | void)[] = []
 beforeEach(() => {
@@ -342,6 +343,36 @@ describe('PageLink', () => {
     expect(await pending).toEqual({ status: 'error', message: RELOAD_TEXT })
   })
 
+  it('takeover_by_another_page_fails_pending_calls_as_superseded', async () => {
+    const { link, err, port } = await start()
+    const a = await rawPage(port, { type: 'pair', code: err.code() })
+    a.s.send({ protocol: 1, type: 'manifest', clientId: 'page-a', rev: 1, tools: [summary('a.b')] })
+    await until(() => link.state() === 'paired')
+    await until(() => err.codes().length === 2)
+    const pending = link.call('a.b', {}, { signal: new AbortController().signal })
+    await a.s.next()
+    const b = await rawPage(port, { type: 'pair', code: err.code() })
+    b.s.send({ protocol: 1, type: 'manifest', clientId: 'page-b', rev: 1, tools: [summary('a.b')] })
+    expect(await pending).toEqual({ status: 'error', message: SUPERSEDED_TEXT })
+  })
+
+  it('inbound_changed_frames_are_ignored', async () => {
+    const { link, err, port } = await start()
+    const { s } = await rawPage(port, { type: 'pair', code: err.code() })
+    s.send({ protocol: 1, type: 'manifest', clientId: 'page-a', rev: 1, tools: [summary('a.b')] })
+    await until(() => link.state() === 'paired')
+    let changes = 0
+    link.onChange(() => changes++)
+    s.send({ protocol: 1, type: 'changed', clientId: 'page-a', rev: 7 })
+    await new Promise((r) => setTimeout(r, 100))
+    const pending = link.call('a.b', {}, { signal: new AbortController().signal })
+    const frame = (await s.next()) as { type: string; id: string; rev: number }
+    expect(frame).toMatchObject({ type: 'call', rev: 1 })
+    s.send({ protocol: 1, type: 'result', clientId: 'page-a', id: frame.id, result: ok(1) })
+    expect(await pending).toEqual(ok(1))
+    expect(changes).toBe(0)
+  })
+
   it('page_gone_fails_pending_calls_after_grace', async () => {
     const { link, err, port } = await start()
     const a = await rawPage(port, { type: 'pair', code: err.code() })
@@ -357,6 +388,81 @@ describe('PageLink', () => {
     expect((await link.call('a.b', {}, { signal: new AbortController().signal })).status).toBe(
       'error',
     )
+  })
+
+  it('call_ended_while_detached_cancelled_on_same_client_resume', async () => {
+    const { link, err, port } = await start({ callTimeoutMs: 200 })
+    const a = await rawPage(port, { type: 'pair', code: err.code() })
+    a.s.send({ protocol: 1, type: 'manifest', clientId: 'page-a', rev: 1, tools: [summary('a.b')] })
+    await until(() => link.state() === 'paired')
+    const controller = new AbortController()
+    const timedOut = link.call('a.b', {}, { signal: new AbortController().signal })
+    const aborted = link.call('a.b', {}, { signal: controller.signal })
+    const sent = [(await a.s.next()) as { id: string }, (await a.s.next()) as { id: string }]
+    a.s.ws.close()
+    await a.s.closed
+    controller.abort()
+    // Both end inside the grace while no socket is attached: the page still holds them.
+    expect(await aborted).toEqual({ status: 'cancelled', by: 'signal' })
+    expect(await timedOut).toEqual({ status: 'cancelled', by: 'signal' })
+    const b = await rawPage(port, { type: 'resume', token: a.token })
+    b.s.send({ protocol: 1, type: 'manifest', clientId: 'page-a', rev: 1, tools: [summary('a.b')] })
+    const first = [await b.s.next(), await b.s.next()]
+    expect(first).toEqual([
+      { protocol: 1, type: 'cancel', clientId: 'page-a', id: sent[1]!.id },
+      { protocol: 1, type: 'cancel', clientId: 'page-a', id: sent[0]!.id },
+    ])
+    // Sent once: a later resume of the same page gets none.
+    b.s.ws.close()
+    await b.s.closed
+    const c = await rawPage(port, { type: 'resume', token: a.token })
+    c.s.send({ protocol: 1, type: 'manifest', clientId: 'page-a', rev: 1, tools: [summary('a.b')] })
+    await new Promise((r) => setTimeout(r, 200))
+    expect(c.s.frames).toHaveLength(1)
+  })
+
+  it('call_ended_while_detached_not_cancelled_on_other_client', async () => {
+    const { link, err, port } = await start({ callTimeoutMs: 200 })
+    const a = await rawPage(port, { type: 'pair', code: err.code() })
+    a.s.send({ protocol: 1, type: 'manifest', clientId: 'page-a', rev: 1, tools: [summary('a.b')] })
+    await until(() => link.state() === 'paired')
+    const timedOut = link.call('a.b', {}, { signal: new AbortController().signal })
+    await a.s.next()
+    a.s.ws.close()
+    await a.s.closed
+    expect(await timedOut).toEqual({ status: 'cancelled', by: 'signal' })
+    const b = await rawPage(port, { type: 'resume', token: a.token })
+    b.s.send({ protocol: 1, type: 'manifest', clientId: 'page-b', rev: 1, tools: [summary('a.b')] })
+    await new Promise((r) => setTimeout(r, 200))
+    // Only the `paired` reply: nothing is cancelled on a different page.
+    expect(b.s.frames).toHaveLength(1)
+    // The queue was cleared, so the old page returning later gets nothing either.
+    b.s.ws.close()
+    await b.s.closed
+    const c = await rawPage(port, { type: 'resume', token: a.token })
+    c.s.send({ protocol: 1, type: 'manifest', clientId: 'page-a', rev: 1, tools: [summary('a.b')] })
+    await new Promise((r) => setTimeout(r, 200))
+    expect(c.s.frames).toHaveLength(1)
+  })
+
+  it('grace_expiry_cancels_on_same_client_return', async () => {
+    const { link, err, port } = await start()
+    const a = await rawPage(port, { type: 'pair', code: err.code() })
+    a.s.send({ protocol: 1, type: 'manifest', clientId: 'page-a', rev: 1, tools: [summary('a.b')] })
+    await until(() => link.state() === 'paired')
+    const pending = link.call('a.b', {}, { signal: new AbortController().signal })
+    const sent = (await a.s.next()) as { id: string }
+    a.s.ws.close()
+    expect((await pending).status).toBe('error')
+    expect(link.state()).toBe('unpaired')
+    const b = await rawPage(port, { type: 'resume', token: a.token })
+    b.s.send({ protocol: 1, type: 'manifest', clientId: 'page-a', rev: 1, tools: [summary('a.b')] })
+    expect(await b.s.next()).toEqual({
+      protocol: 1,
+      type: 'cancel',
+      clientId: 'page-a',
+      id: sent.id,
+    })
   })
 
   it('oversize_call_input_fails_fast', async () => {

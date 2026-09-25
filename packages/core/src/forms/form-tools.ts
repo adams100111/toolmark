@@ -3,10 +3,13 @@ import {
   effectiveSpec,
   fileFieldSchema,
   fileLimitIssues,
+  fileRefCount,
   filesConfig,
   fileSpecProblems,
   jsonSafeFiles,
+  MAX_FILE_REFS_PER_FILL,
   resolveFileRef,
+  TOO_MANY_FILES_PER_FILL,
   type FileFieldSpec,
   type FilesConfig,
   type FileRef,
@@ -18,8 +21,9 @@ import { invalid, ok, refuse, type FieldChange, type ToolResult } from '../resul
 import { resolveJsonSchema, stripRequired, validateInput } from '../schema.js'
 import type { Scope } from '../scope.js'
 import type { StandardSchemaV1 } from '../standard-schema.js'
-import type { JsonSchema, ToolDefinition } from '../tool.js'
+import type { AnchorSpec, JsonSchema, ToolDefinition, ToolHints, ToolState } from '../tool.js'
 import { CONFIRM_SNAPSHOT, type ConfirmSnapshotHook } from '../confirm-snapshot.js'
+import { INPUT_SENSITIVE_PATHS } from '../input-redaction.js'
 import {
   applyArrayOp,
   deepEqual,
@@ -36,9 +40,22 @@ import {
   type NodeBudget,
 } from './paths.js'
 import { annotateOptionField, optionsToolDefinition } from './options.js'
-import type { FieldInfo, FormAdapter, FormToolOptions } from './types.js'
-
-const REDACTED = '[redacted]'
+import {
+  REDACTED,
+  createIssueReader,
+  emitInteraction,
+  fieldElement,
+  firstFormOwner,
+  isUnderSensitive,
+  publishSensitive,
+  redactValues,
+  safeFields,
+  sensitiveBelow,
+  sensitiveMemoryOf,
+  stickySensitive,
+  subscribeInteractions,
+} from './hooks.js'
+import type { FormAdapter, FormToolOptions } from './types.js'
 
 interface FillInput {
   values: Record<string, unknown>
@@ -280,65 +297,26 @@ function fillJsonSchema(
   return schema
 }
 
-/** Secret `autocomplete` tokens (besides `cc-*`); mirrors the DOM adapter's exclusion list. */
-const SECRET_AUTOCOMPLETE = new Set(['current-password', 'new-password', 'one-time-code'])
-
-function isSensitiveElement(el: Element | null | undefined): boolean {
-  if (!el || typeof el !== 'object') return false
-  const loose = el as unknown as {
-    tagName?: unknown
-    type?: unknown
-    autocomplete?: unknown
-    getAttribute?: (name: string) => string | null
-  }
-  const attr = (name: string): unknown =>
-    typeof loose.getAttribute === 'function' ? loose.getAttribute(name) : null
-  const type = attr('type') ?? loose.type
-  if (
-    typeof loose.tagName === 'string' &&
-    loose.tagName.toUpperCase() === 'INPUT' &&
-    typeof type === 'string' &&
-    type.toLowerCase() === 'password'
-  ) {
-    return true
-  }
-  const ac = attr('autocomplete') ?? loose.autocomplete
-  return (
-    typeof ac === 'string' &&
-    ac
-      .trim()
-      .toLowerCase()
-      .split(/\s+/)
-      .some((token) => token.startsWith('cc-') || SECRET_AUTOCOMPLETE.has(token))
-  )
-}
-
-function sensitivePaths(opts: { sensitive?: string[] }, fields: FieldInfo[]): string[] {
-  const out = [...(opts.sensitive ?? [])]
-  for (const f of fields)
-    if (f.sensitive === true || isSensitiveElement(f.element)) out.push(f.path)
-  return out
-}
-
 function isUnder(path: string, base: string): boolean {
   return path === base || path.startsWith(`${base}.`)
 }
 
-/** Replaces every sensitive sub-path inside `value` (rooted at `path`) with `'[redacted]'`. */
+/**
+ * Replaces every sensitive sub-path inside `value` (rooted at `path`) with `'[redacted]'`; `[]` in
+ * a sensitive path matches any array index.
+ */
 function redactInside(value: unknown, path: string, sensitive: string[]): unknown {
-  let out = value
-  for (const s of sensitive) {
-    if (!s.startsWith(`${path}.`) || typeof out !== 'object' || out === null) continue
-    const rel = s.slice(path.length + 1)
-    if (isSafePath(rel) && getPath(out, rel) !== undefined) out = setPath(out, rel, REDACTED)
-  }
-  return out
+  if (typeof value !== 'object' || value === null) return value
+  const below = sensitive
+    .map((s) => sensitiveBelow(path, s))
+    .filter((s): s is string => s !== undefined)
+  return below.length > 0 ? redactValues(value, below) : value
 }
 
 /** Redacts sensitive paths and sensitive values nested under changed ancestors (I1). */
 function redact(changes: FieldChange[], sensitive: string[]): FieldChange[] {
   return changes.map((c) =>
-    sensitive.some((s) => isUnder(c.path, s))
+    sensitive.some((s) => isUnderSensitive(c.path, s))
       ? { path: c.path, before: REDACTED, after: REDACTED }
       : {
           path: c.path,
@@ -687,6 +665,17 @@ interface FileSlot {
   key: string
 }
 
+/** Total references of the collected slots (toward {@link MAX_FILE_REFS_PER_FILL}). */
+const slotRefCount = (slots: FileSlot[]): number =>
+  slots.reduce((n, slot) => n + fileRefCount(slot.raw, slot.field.spec), 0)
+
+/**
+ * @internal Carried by a form's `fill` definition: counts the file references a `values` object
+ * holds (0 when the form has no file fields or the input is too complex to walk), so a wizard can
+ * cap the total across all its steps before any step resolves a file.
+ */
+export const FILE_REF_COUNT: unique symbol = Symbol('toolmark.fileRefCount')
+
 const matchesKey = (pattern: string[], segs: string[]): boolean =>
   pattern.length === segs.length &&
   pattern.every((p, i) => (p === '[]' ? /^\d+$/.test(segs[i]!) : p === segs[i]))
@@ -852,11 +841,48 @@ const byPath = (a: { path: string }, b: { path: string }): number =>
  * Registers `<name>.fill` (partial, skips user-edited fields, undoable) and `<name>.submit`
  * (`consequential`) for a form (spec §8.1, D19), plus `<name>.options` (`readOnly`) when
  * `opts.options` declares async option lookups (spec §8.3).
+ *
+ * Tour hooks (spec §13): `.fill` anchors `resolve(path)` to that field's `element` from
+ * `adapter.fields()`; `.fill` and `.submit` anchor to the form owner of the first field element
+ * (`null` without one). Both expose `state()` → `{ values, issues }`: `values` from
+ * `adapter.getValues()` with every sensitive path replaced by `'[redacted]'`, `issues` from a full
+ * validation of the current values (an async schema yields the last settled result, initially
+ * `[]`); `state()` never awaits and never writes the form. Sensitive paths (`sensitivePaths()`,
+ * `tm.info`) are `opts.sensitive`, fields with `FieldInfo.sensitive`, and fields whose element is a
+ * password / `cc-*` / secret-`autocomplete` control. When the adapter has `onUserInteraction`, each
+ * user interaction is emitted as an `interaction` event (`<name>.fill` with `param: <path>` for
+ * `input`/`focus`, `<name>.submit` for `submit`; paths only, never values).
  * @param tm - The registry.
  * @param adapter - The form adapter.
  * @param opts - Form tool options plus an optional target `scope`.
  * @returns A handle whose `dispose()` removes the form's tools.
  */
+/** Options objects the DOM scanner built for a `toolautosubmit` form (see {@link markAutosubmit}). */
+const autosubmitForms = new WeakSet<object>()
+
+/**
+ * @internal Marks a `createFormTools` options object as the DOM scanner's `toolautosubmit` form,
+ * the only case whose `hints.submit` may drop below `consequential` (the browser page itself opted
+ * into agent submission). Not reachable through any public option.
+ */
+export function markAutosubmit<T extends object>(opts: T): T {
+  autosubmitForms.add(opts)
+  return opts
+}
+
+/**
+ * The submit tool's hints: `hints.submit` merged over the floor — a submit is always at least
+ * `consequential` (or `destructive`) and never `readOnly`, except for a scanner-marked
+ * `toolautosubmit` form, whose hints are taken as given.
+ */
+function submitHints(opts: object, given: ToolHints | undefined): ToolHints {
+  if (autosubmitForms.has(opts)) return given !== undefined ? { ...given } : { consequential: true }
+  const hints: ToolHints = { ...given }
+  delete hints.readOnly
+  if (hints.destructive !== true) hints.consequential = true
+  return hints
+}
+
 export function createFormTools<V extends Record<string, unknown>>(
   tm: Toolmark,
   adapter: FormAdapter<V>,
@@ -944,6 +970,12 @@ export function createFormTools<V extends Record<string, unknown>>(
     dirty.some((d) => isSafePath(d) && (isUnder(d, path) || isUnder(path, d))) &&
     differsFromAgent(values, path)
 
+  /** The sensitive rule of this form, sticky for the adapter's lifetime (spec §14). */
+  const sensitiveOf = stickySensitive(
+    opts.sensitive,
+    typeof adapter === 'object' && adapter !== null ? sensitiveMemoryOf(adapter) : undefined,
+  )
+
   async function fill(
     input: FillInput,
     registerUndo: (restore: () => ToolResult<unknown>) => void,
@@ -958,6 +990,11 @@ export function createFormTools<V extends Record<string, unknown>>(
     if (fileFields.length > 0) {
       const collected = collectFileSlots(values, fileFields, budget)
       if (budget.left < 0) return tooComplex()
+      // Total cap (all slots, `[]` items and `multiple` lists together) before any shape check
+      // or resolution: an agent cannot make the resolver / fetch run thousands of times.
+      if (slotRefCount(collected.slots) > MAX_FILE_REFS_PER_FILL) {
+        return invalid([{ ...TOO_MANY_FILES_PER_FILL }])
+      }
       const shapeIssues = [...collected.issues, ...fileShapeIssues(collected.slots)]
       if (shapeIssues.length > 0) return invalid(shapeIssues.sort(byPath))
       const failure = await resolveFileSlots(collected.slots, filesCfg, signal)
@@ -1134,43 +1171,83 @@ export function createFormTools<V extends Record<string, unknown>>(
           undoChanges.push({ path, before: getPath(now, path), after: getPath(restored, path) })
         }
         return ok({
-          changes: redact(undoChanges.map(safeChange), sensitivePaths(opts, adapter.fields())).sort(
-            byPath,
-          ),
+          changes: redact(undoChanges.map(safeChange), sensitiveOf(adapter.fields())).sort(byPath),
           skipped: undoSkipped.sort(),
         })
       })
     }
 
     return ok({
-      changes: redact(changes.map(safeChange), sensitivePaths(opts, adapter.fields())).sort(byPath),
+      changes: redact(changes.map(safeChange), sensitiveOf(adapter.fields())).sort(byPath),
       skipped: skipped.sort(),
     })
   }
 
+  // Tour hooks (spec §13, §14; M3 T2). Redaction is owned here: `state()` redacts every path of
+  // the sensitive rule, and `sensitivePaths()` publishes the same list through `tm.info`.
+  const currentSensitive = (): string[] => sensitiveOf(safeFields(adapter))
+  const readIssues = createIssueReader(() => opts.input)
+  const readState = (): ToolState<V> => {
+    const values = adapter.getValues()
+    return { values: redactValues(values, currentSensitive()), issues: readIssues(values) }
+  }
+  /** `[]` patterns as declared plus their current concrete paths (for exact-path consumers). */
+  const publishedSensitive = (): string[] => {
+    const list = currentSensitive()
+    if (!list.some((p) => p.includes('[]'))) return list
+    let values: unknown
+    try {
+      values = adapter.getValues()
+    } catch {
+      return list
+    }
+    return publishSensitive(list, values)
+  }
+  const formAnchor = (): Element | null => firstFormOwner(safeFields(adapter))
+  const fillAnchors: AnchorSpec = {
+    element: formAnchor,
+    resolve: (path) => fieldElement(safeFields(adapter), path),
+  }
+  const hooks = { state: readState, sensitivePaths: publishedSensitive }
+  // The fill's input is `{ values, overwrite? }`: its sensitive input paths live under `values`
+  // (C1; `[]` patterns are expanded against the input by the consumer).
+  const fillInputSensitive = {
+    [INPUT_SENSITIVE_PATHS]: (): string[] => currentSensitive().map((p) => `values.${p}`),
+  }
+
   const optionKeys = opts.options ? Object.keys(opts.options) : []
   const title = opts.title !== undefined ? { title: opts.title } : {}
-  const fillReg = tm.register(
-    {
-      name: fillName,
-      ...title,
-      ...(opts.origin !== undefined ? { origin: opts.origin } : {}),
-      ...(opts.nativeName?.fill !== undefined ? { nativeName: opts.nativeName.fill } : {}),
-      ...(opts.hints?.fill !== undefined ? { hints: { ...opts.hints.fill } } : {}),
-      description:
-        `${opts.description} Fill form fields: pass a partial object in "values" (null clears a ` +
-        `field). Fields the user edited are skipped unless "overwrite" is true.` +
-        (fileFields.length > 0 ? ' File fields take { "ref": "..." } or { "url": "..." }.' : ''),
-      input: fillInputSchema,
-      jsonSchema: fillJsonSchema(
-        inputSchema,
-        optionKeys.length > 0 ? { form: opts.name, keys: optionKeys } : undefined,
-        fileKeys.map((path, i) => ({ path, schema: fileFieldSchema(fileFields[i]!.spec) })),
-      ),
-      run: (input, ctx) => fill(input, (restore) => ctx.registerUndo(restore), ctx.signal),
-    },
-    opts.scope ? { scope: opts.scope } : undefined,
-  )
+  const countFileRefs = (values: unknown): number => {
+    if (fileFields.length === 0 || !isPlainObject(values)) return 0
+    const budget = nodeBudget()
+    const { slots } = collectFileSlots(values, fileFields, budget)
+    return budget.left < 0 ? 0 : slotRefCount(slots)
+  }
+  const fillDef: ToolDefinition<FillInput, unknown> & {
+    [FILE_REF_COUNT]: (values: unknown) => number
+  } = {
+    name: fillName,
+    ...title,
+    ...(opts.origin !== undefined ? { origin: opts.origin } : {}),
+    ...(opts.nativeName?.fill !== undefined ? { nativeName: opts.nativeName.fill } : {}),
+    ...(opts.hints?.fill !== undefined ? { hints: { ...opts.hints.fill } } : {}),
+    description:
+      `${opts.description} Fill form fields: pass a partial object in "values" (null clears a ` +
+      `field). Fields the user edited are skipped unless "overwrite" is true.` +
+      (fileFields.length > 0 ? ' File fields take { "ref": "..." } or { "url": "..." }.' : ''),
+    input: fillInputSchema,
+    jsonSchema: fillJsonSchema(
+      inputSchema,
+      optionKeys.length > 0 ? { form: opts.name, keys: optionKeys } : undefined,
+      fileKeys.map((path, i) => ({ path, schema: fileFieldSchema(fileFields[i]!.spec) })),
+    ),
+    anchors: fillAnchors,
+    ...hooks,
+    ...fillInputSensitive,
+    run: (input, ctx) => fill(input, (restore) => ctx.registerUndo(restore), ctx.signal),
+    [FILE_REF_COUNT]: countFileRefs,
+  }
+  const fillReg = tm.register(fillDef, opts.scope ? { scope: opts.scope } : undefined)
   // I3: a confirmation is refused `stale` when the form changed after it was requested.
   const snapshotHook: ConfirmSnapshotHook = {
     take: () => snapshotValue(adapter.getValues()),
@@ -1181,11 +1258,13 @@ export function createFormTools<V extends Record<string, unknown>>(
       name: `${opts.name}.submit`,
       ...title,
       description: `${opts.description} Submit the form.`,
-      hints: opts.hints?.submit !== undefined ? { ...opts.hints.submit } : { consequential: true },
+      hints: submitHints(opts, opts.hints?.submit),
       ...(opts.origin !== undefined ? { origin: opts.origin } : {}),
       ...(opts.nativeName?.submit !== undefined ? { nativeName: opts.nativeName.submit } : {}),
       summary: () =>
         opts.submitSummary?.(adapter.getValues()) ?? `Submit ${opts.title ?? opts.name}`,
+      anchors: { element: formAnchor },
+      ...hooks,
       run: () => adapter.submit(),
       [CONFIRM_SNAPSHOT]: snapshotHook,
     }
@@ -1226,8 +1305,19 @@ export function createFormTools<V extends Record<string, unknown>>(
       return { dispose() {} }
     }
   }
+  // Interaction events (spec §13): user-originated only, reported by the adapter; the agent's own
+  // `setValues`/`submit` never produce them. Paths only, never values (sensitive paths included).
+  // A late report from an adapter that ignores its unsubscribe is dropped after dispose.
+  let live = true
+  const offInteraction = state?.browser
+    ? subscribeInteractions(tm, adapter, fillReg.name, (e) => {
+        if (live) emitInteraction(tm, e, { fillTool: fillReg.name, submitTool: submitReg.name })
+      })
+    : () => undefined
   return {
     dispose() {
+      live = false
+      offInteraction()
       fillReg.dispose()
       submitReg.dispose()
       optionsReg?.dispose()

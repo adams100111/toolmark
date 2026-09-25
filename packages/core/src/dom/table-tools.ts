@@ -118,7 +118,7 @@ interface TableQuery {
  * {@link TABLE_RESULT_BUDGET} characters: rows past it are left out and `truncated: true` is set
  * (`total` still counts every match). Rows are the `<tbody>` rows of the
  * table read at call time; a row that holds a column header is skipped. Hints: `readOnly`,
- * `untrustedContent` (cells are page/user content).
+ * `untrustedContent` (cells are page/user content). Its anchor (`tm.anchor(name)`) is the `<table>`.
  * @param table - The table.
  * @param name - Local tool name.
  * @param description - LLM-facing description (from app-authored markup).
@@ -159,6 +159,8 @@ export function tableToolDefinition(
     input,
     hints: { readOnly: true, untrustedContent: true },
     origin: 'dom',
+    // Tour hooks (spec §13): the `<table>` itself.
+    anchors: { element: () => table },
     run(query) {
       const limit = Math.min(query.limit ?? TABLE_DEFAULT_LIMIT, TABLE_MAX_LIMIT)
       const headers = columnHeaders(table)

@@ -34,9 +34,9 @@ Post-1.0 consumer track:          └─► Innov P0 ─► P1 ─► P2 ─► 
 | Unit | Repo | Plan | Depends on | Exit check | Status | Branch | Updated |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | T-M1 Core | toolmark | `…-m1-core.md` | — | CI green; round budget `simple_form_within_3_rounds`; tarball smoke | done | `feat/m1-core` (PR #2) | 2026-09-25 |
-| T-M2 Forms | toolmark | `…-m2-forms.md` | T-M1 | round budget `wizard_within_5_rounds`; tarball smoke | active | `feat/m2-forms` | 2026-09-25 |
-| T-M3 Reach | toolmark | `…-m3-reach.md` | T-M2 | same tool via WebMCP + MCP + Playwright (`reach.spec.ts`); tarball smoke incl. `toolmark-mcp` | todo | — | — |
-| T-M4 Tours & tooling | toolmark | `…-m4-tours-tooling.md` | T-M3 | authored + planned tours (3 browsers, axe-clean); Laravel authored tour; same-tools e2e; Laravel + Next.js suites; `docs:build`; lint clean; tarball smoke | todo | — | — |
+| T-M2 Forms | toolmark | `…-m2-forms.md` | T-M1 | round budget `wizard_within_5_rounds`; tarball smoke | done | `feat/m2-forms` (PR #3) | 2026-09-25 |
+| T-M3 Reach | toolmark | `…-m3-reach.md` | T-M2 | same tool via WebMCP + MCP + Playwright (`reach.spec.ts`); tarball smoke incl. `toolmark-mcp` | active | `feat/m3-reach` | 2026-09-25 |
+| T-M4 Tours & tooling | toolmark | `…-m4-tours-tooling.md` | T-M3 | authored + planned tours (3 browsers, axe-clean); Laravel authored tour; same-tools e2e; Laravel + Next.js suites; `docs:build`; lint clean; tarball smoke | active (T5 blocked: Docker) | `feat/m4-tours` | 2026-09-25 |
 | T-M5 Release | toolmark | `…-m5-release.md` | T-M4 | all §21 gates (incl. round budget + smoke on the RC); publish (owner) | todo | — | — |
 
 **Current focus:** Toolmark M1 → M5 (release). Innovation is post-1.0. Within Toolmark, units are
@@ -60,19 +60,19 @@ its exit check passes. Task numbers refer to the unit's plan.
 - [x] Unit exit: CI green on `main`; `simple_form_within_3_rounds`; tarball smoke logged
 
 ### T-M2 Forms (toolmark)
-- [ ] W0 · A (T1–T4, high, **security**) arrays, `tm.info`, JSON-Schema subset + options, files, wizard
-- [ ] W1 · B (T5–T6, **security**) DOM adapter + scanner · C (T7) `useWizardTool`, RHF arrays · D (T8, **security**) Inertia pages/props/navigation
-- [ ] W2 · E (T9–T12; T11 **security**) Inertia `<Form>`, example pages + wizard round budget, guides + Laravel props builder, tarballs + smoke
-- [ ] Unit exit: `wizard_within_5_rounds` (+ `simple_form_within_3_rounds`); tarball smoke logged
+- [x] W0 · A (T1–T4, high, **security**) arrays, `tm.info`, JSON-Schema subset + options, files, wizard
+- [x] W1 · B (T5–T6, **security**) DOM adapter + scanner · C (T7) `useWizardTool`, RHF arrays · D (T8, **security**) Inertia pages/props/navigation
+- [x] W2 · E (T9–T12; T11 **security**) Inertia `<Form>`, example pages + wizard round budget, guides + Laravel props builder, tarballs + smoke
+- [x] Unit exit: `wizard_within_5_rounds` (+ `simple_form_within_3_rounds`); tarball smoke logged
 
 ### T-M3 Reach (toolmark)
-- [ ] W0 · A (T1, high, **security**) `@toolmark/mcp` skeleton, registry hooks (`tm.anchor`/`state`/`info`), bridge caller
-- [ ] W1 · B (T2, **security**) tour hooks in adapters · C (T3) WebMCP · D (T4–T5, **security**) MCP server + pairing + CLI · E (T6) OTel
-- [ ] W2 · F (T7) example, `reach.spec.ts`, guides, tarballs + smoke
+- [x] W0 · A (T1, high, **security**) `@toolmark/mcp` skeleton, registry hooks (`tm.anchor`/`state`/`info`), bridge caller
+- [x] W1 · B (T2, **security**) tour hooks in adapters · C (T3) WebMCP · D (T4–T5, **security**) MCP server + pairing + CLI · E (T6) OTel
+- [x] W2 · F (T7) example, `reach.spec.ts`, guides, tarballs + smoke
 - [ ] Unit exit: `same_declaration_webmcp_mcp_fixture`; tarball smoke incl. `toolmark-mcp`
 
 ### T-M4 Tours & tooling (toolmark)
-- [ ] W0 · A (T0) skeletons + deps
+- [x] W0 · A (T0) skeletons + deps
 - [ ] W1 · B (T1–T2) tours · C (T3–T4) lint + judge · D (T5, high, **security**) Laravel example (PHP/Composer via Docker when not on PATH) · E (T6) Next.js example
 - [ ] W2 · F (T7–T8) docs site, CI, cross-cutting e2e + same-tools + planned tour, tarballs + smoke
 - [ ] Unit exit: tours (3 browsers) + Laravel authored tour + same-tools + example suites + `docs:build` + lint clean + smoke
@@ -230,3 +230,8 @@ also record progress in Innovation's own branch history.
   `gh pr merge --delete-branch` removed the milestone worktree (code unaffected); ledgers now live in
   the main checkout. Execution switched to the slot scheduler (sdd-lanes, K=4). T-M2 started on
   `feat/m2-forms`.
+- 2026-09-25 — **T-M2 done** (PR #3): `0.1.0-next.1`, round budget wizard 4 / simple form 3, smoke 59/59,
+  CI green; M2 rulings in spec §23. T-M3 and T-M4 run in parallel on the slot scheduler (cross-milestone
+  per-interface rule): M3 all tasks + final review fixes merged, integration with M2 in progress
+  (→ `0.1.0-next.2`); M4 T0–T4 and T6 merged, **T5 (Laravel) blocked: local Docker daemon unresponsive
+  (owner action: restart colima)**. sdd-lanes is now the private plugin `adams100111/sdd-lanes`.

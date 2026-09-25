@@ -1,5 +1,5 @@
 import type { IncomingMessage } from 'node:http'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createPairingServer, isAllowedUpgrade } from '../src/index.js'
 import { normalizeCode } from '../src/pairing/code.js'
 import {
@@ -35,6 +35,9 @@ function socket(port: number, origin?: string | null) {
   })
   return s
 }
+
+/** Waits out the refusal window that follows every `4401`. */
+const cooldown = () => new Promise((r) => setTimeout(r, 300))
 
 async function pair(port: number, code: string) {
   const s = socket(port)
@@ -109,6 +112,7 @@ describe('pairing code', () => {
       await s.opened
       s.send({ type: 'pair', code: 'ZZZZ-ZZZZ' === first ? 'YYYY-YYYY' : 'ZZZZ-ZZZZ' })
       expect(await s.closed).toBe(4401)
+      await cooldown()
     }
     await until(() => err.codes().length === 2)
     const second = err.code()
@@ -119,6 +123,7 @@ describe('pairing code', () => {
     await old.opened
     old.send({ type: 'pair', code: first })
     expect(await old.closed).toBe(4401)
+    await cooldown()
     await pair(port, second)
   })
 
@@ -162,6 +167,7 @@ describe('pairing code', () => {
     const fresh = err.code()
     expect(fresh).not.toBe(code)
     expect(server.link.pairingCode()).toEqual({ code: fresh, expiresInMs: 300_000 })
+    t += 250
     await pair(port, fresh)
   })
 })
@@ -174,15 +180,47 @@ describe('handshake', () => {
     expect(await s.closed).toBe(4408)
   })
 
-  it('pair_timeout_default_is_10000_ms', async () => {
+  it('pair_timeout_default_is_3000_ms', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'], shouldAdvanceTime: true })
+    cleanups.push(() => void vi.useRealTimers())
     const { port } = await start()
     const s = socket(port)
     await s.opened
-    const early = await Promise.race([
-      s.closed,
-      new Promise((r) => setTimeout(() => r('open'), 300)),
-    ])
-    expect(early).toBe('open')
+    const state = () =>
+      Promise.race([s.closed, new Promise((r) => setTimeout(() => r('open'), 50))])
+    await vi.advanceTimersByTimeAsync(2900)
+    expect(await state()).toBe('open')
+    await vi.advanceTimersByTimeAsync(200)
+    expect(await s.closed).toBe(4408)
+  })
+
+  it('oversize_first_frame_closes_4400', async () => {
+    const { port, err } = await start()
+    const s = socket(port)
+    await s.opened
+    s.send(JSON.stringify({ type: 'pair', code: `${err.code()}${' '.repeat(1100)}` }))
+    expect(await s.closed).toBe(4400)
+    const exact = socket(port)
+    await exact.opened
+    exact.send({ type: 'resume', token: 'x'.repeat(1024 - 28) })
+    // At the limit the frame is parsed (and the unknown token refused).
+    expect(await exact.closed).toBe(4401)
+  })
+
+  it('refuses_handshakes_for_250_ms_after_4401', async () => {
+    let t = 1_000_000
+    const { port, err } = await start({ now: () => t })
+    const bad = socket(port)
+    await bad.opened
+    bad.send({ type: 'resume', token: 'A'.repeat(43) })
+    expect(await bad.closed).toBe(4401)
+    const early = socket(port)
+    expect(await early.closed).toBe(4429)
+    t += 249
+    const still = socket(port)
+    expect(await still.closed).toBe(4429)
+    t += 1
+    await pair(port, err.code())
   })
 
   it('invalid_first_frame_closes_4400', async () => {
@@ -245,11 +283,13 @@ describe('session token', () => {
     await s.opened
     s.send({ type: 'resume', token: 'A'.repeat(43) })
     expect(await s.closed).toBe(4401)
+    await cooldown()
     // No token has been issued yet; an empty token is invalid too.
     const e = socket(port)
     await e.opened
     e.send({ type: 'resume', token: '' })
     expect([4400, 4401]).toContain(await e.closed)
+    await cooldown()
     await pair(port, err.code())
   })
 
@@ -265,6 +305,7 @@ describe('session token', () => {
     await stale.opened
     stale.send({ type: 'resume', token: a.token })
     expect(await stale.closed).toBe(4401)
+    await cooldown()
     // Resuming with the current token supersedes the socket holding it.
     const c = socket(port)
     await c.opened

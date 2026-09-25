@@ -12,5 +12,7 @@ export default defineProject({
     root: import.meta.dirname,
     environment: 'node',
     include: ['test/**/*.test.ts'],
+    // Builds `@toolmark/lint` and its workspace dependencies once, for tests that read `dist/cli.js`.
+    globalSetup: ['test/global-setup.ts'],
   },
 })
