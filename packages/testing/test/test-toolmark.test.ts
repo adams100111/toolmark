@@ -1,11 +1,18 @@
 import { describe, expect, it } from 'vitest'
-import { ok, type ToolDefinition, type ToolHints } from '@toolmark/core'
+import { ok, type StandardSchemaV1, type ToolDefinition, type ToolHints } from '@toolmark/core'
 import { createTestToolmark } from '../src/test-toolmark.js'
+
+/** Accepts any input (a tool without `input` accepts only `undefined` or `{}`). */
+const anyInput: StandardSchemaV1 = {
+  '~standard': { version: 1, vendor: 'test', validate: (value) => ({ value }) },
+}
 
 function tool(name: string, hints?: ToolHints): ToolDefinition {
   return {
     name,
     description: `Tool ${name}`,
+    input: anyInput,
+    jsonSchema: { type: 'object' },
     ...(hints ? { hints } : {}),
     run: (input: unknown) => ok({ received: input }),
   }
