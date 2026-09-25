@@ -17,6 +17,7 @@ function fakeTour(): Tour & { set(p: Partial<TourState>): void; listeners(): num
     ],
     anchor: null,
     highlight: null,
+    busy: false,
   } satisfies TourState)
   const subs = new Set<(s: TourState) => void>()
   return {

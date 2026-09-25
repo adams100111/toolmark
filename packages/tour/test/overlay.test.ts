@@ -1,7 +1,7 @@
 import axe from 'axe-core'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 import { page, userEvent } from 'vitest/browser'
-import { createToolmark, ok, type ToolDefinition } from '@toolmark/core'
+import { createToolmark, ok, type ConfirmOutcome, type ToolDefinition } from '@toolmark/core'
 import { startTour, type Tour, type TourState, type TourStep } from '../src/index.js'
 import { computePosition } from '../src/overlay/position.js'
 import { mountTourOverlay } from '../src/overlay/index.js'
@@ -76,6 +76,7 @@ function fakeTour(init: Partial<TourState>): FakeTour {
     steps: STEPS,
     anchor: null,
     highlight: null,
+    busy: false,
     ...init,
   } satisfies TourState)
   const subs = new Set<(s: TourState) => void>()
@@ -431,6 +432,117 @@ describe('overlay', () => {
     expect(dialog.contains(document.activeElement)).toBe(true)
   })
 
+  it('ctx_confirm_in_do_call_releases_trap_until_answered', async () => {
+    const anchor = anchorAt(100, 100)
+    const outside = el('button')
+    outside.textContent = 'Outside'
+    let approve!: (o: ConfirmOutcome) => void
+    let finish!: () => void
+    const finished = new Promise<void>((r) => (finish = r))
+    const tm = createToolmark({
+      confirm: () => new Promise<ConfirmOutcome>((r) => (approve = r)),
+    })
+    tm.register({
+      name: 'save',
+      description: 'Tool save for tests',
+      jsonSchema: { type: 'object', properties: {} },
+      anchors: { element: () => anchor },
+      // Not hinted: the confirmation comes from ctx.confirm inside run.
+      run: async (_input, ctx) => {
+        await ctx.confirm({ summary: 'Save?' })
+        await finished
+        return ok({ changes: [], skipped: [] })
+      },
+    })
+    const tour = await startTour(tm, {
+      mode: 'do',
+      reducedMotion: true,
+      steps: [{ tool: 'save', text: 'Save it' }],
+    })
+    const root = mount(tour)
+    const dialog = dialogOf(root)
+    await expect.poll(() => root.dataset.status).toBe('confirming')
+    expect(getComputedStyle(backdropOf(root)).display).toBe('none')
+    expect(dialog.getAttribute('aria-modal')).toBe('false')
+    expect(liveOf(root).textContent).toContain('Waiting for your confirmation')
+
+    // The app's confirm card sits where the dialog is (not in the top layer): it is on top.
+    const dr = dialog.getBoundingClientRect()
+    const card = el('button', {
+      position: 'fixed',
+      top: `${dr.top}px`,
+      left: `${dr.left}px`,
+      width: `${dr.width}px`,
+      height: `${dr.height}px`,
+      zIndex: '10',
+    })
+    card.textContent = 'Approve'
+    card.addEventListener('click', () => approve({ approved: true }))
+    const cx = dr.left + dr.width / 2
+    const cy = dr.top + dr.height / 2
+    expect(document.elementFromPoint(cx, cy)).toBe(card)
+    card.focus()
+    expect(document.activeElement).toBe(card)
+    await userEvent.click(card)
+
+    // Approved, call still running: the trap returns and Next/Back report busy.
+    await expect.poll(() => root.dataset.status).toBe('running')
+    expect(dialog.getAttribute('aria-modal')).toBe('true')
+    expect(getComputedStyle(backdropOf(root)).display).not.toBe('none')
+    expect(dialog.contains(document.activeElement)).toBe(true)
+    outside.focus()
+    expect(dialog.contains(document.activeElement)).toBe(true)
+    expect(buttonByText(root, 'Done').getAttribute('aria-disabled')).toBe('true')
+    expect(liveOf(root).textContent).toContain('Working')
+
+    finish()
+    await expect.poll(() => tour.state.status).toBe('done')
+    expect(document.querySelector('.toolmark-tour')).toBeNull()
+  })
+
+  it('busy_marks_navigation_disabled', async () => {
+    const tour = fakeTour({ mode: 'do', index: 1, busy: true, anchor: anchorAt(100, 100) })
+    const root = mount(tour)
+    const next = buttonByText(root, 'Done')
+    const back = buttonByText(root, 'Back')
+    expect(next.getAttribute('aria-disabled')).toBe('true')
+    expect(back.getAttribute('aria-disabled')).toBe('true')
+    expect(liveOf(root).textContent).toContain('Working')
+    // (Playwright refuses to click aria-disabled elements; dispatch the clicks directly.)
+    next.click()
+    back.click()
+    next.focus()
+    await userEvent.keyboard('{ArrowRight}')
+    await userEvent.keyboard('{ArrowLeft}')
+    expect(tour.next).not.toHaveBeenCalled()
+    expect(tour.back).not.toHaveBeenCalled()
+
+    tour.set({ busy: false })
+    expect(next.hasAttribute('aria-disabled')).toBe(false)
+    expect(back.hasAttribute('aria-disabled')).toBe(false)
+    expect(liveOf(root).textContent).not.toContain('Working')
+    await userEvent.click(next)
+    expect(tour.next).toHaveBeenCalledTimes(1)
+  })
+
+  it('confirming_does_not_cover_app_card', () => {
+    const tour = fakeTour({ mode: 'do', anchor: anchorAt(100, 100) })
+    const root = mount(tour)
+    const dialog = dialogOf(root)
+    tour.set({ status: 'confirming' })
+    const dr = dialog.getBoundingClientRect()
+    const card = el('div', {
+      position: 'fixed',
+      top: `${dr.top}px`,
+      left: `${dr.left}px`,
+      width: `${dr.width}px`,
+      height: `${dr.height}px`,
+    })
+    expect(document.elementFromPoint(dr.left + dr.width / 2, dr.top + dr.height / 2)).toBe(card)
+    tour.set({ status: 'running' })
+    expect(dialog.contains(document.elementFromPoint(dr.left + 10, dr.top + 10))).toBe(true)
+  })
+
   it('overlay_axe_clean', async () => {
     const dark: Record<string, string> = {
       '--toolmark-tour-bg': '#111827',
@@ -450,6 +562,7 @@ describe('overlay', () => {
               mode,
               status,
               anchor,
+              busy: mode === 'do' && status !== 'waiting',
               ...(status === 'waiting' ? { message: 'Enter a valid email' } : {}),
             })
             const root = mount(tour, { container: host })

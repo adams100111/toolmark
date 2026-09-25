@@ -12,8 +12,13 @@ export interface ViewModel {
   canGoBack: boolean
   rtl: boolean
   modal: boolean
-  /** Hide the backdrop (an inline confirmation is pending). */
+  /**
+   * An inline confirmation is pending: hide the backdrop, drop the root's stacking (`z-index:auto`)
+   * and let pointer input pass through the dialog, so the app's confirm UI is never covered.
+   */
   confirming: boolean
+  /** A `do` call is in flight: Next/Back are `aria-disabled`. */
+  busy: boolean
   /** Shades block pointer input outside the cut-out (`do` mode). */
   blocking: boolean
   mode: string
@@ -37,6 +42,14 @@ export interface View {
 export const CUTOUT_PAD = 4
 
 let seq = 0
+
+/** The root's stacking level (themeable through `--toolmark-tour-z`). */
+const Z_INDEX = 'var(--toolmark-tour-z, 2147483000)'
+
+function setDisabled(el: HTMLElement, disabled: boolean): void {
+  if (disabled) el.setAttribute('aria-disabled', 'true')
+  else el.removeAttribute('aria-disabled')
+}
 
 function node<K extends keyof HTMLElementTagNameMap>(
   doc: Document,
@@ -71,7 +84,7 @@ export function createView(doc: Document): View {
     doc,
     'div',
     'toolmark-tour',
-    'position:fixed;inset:0;z-index:var(--toolmark-tour-z, 2147483000);pointer-events:none;',
+    `position:fixed;inset:0;z-index:${Z_INDEX};pointer-events:none;`,
   )
 
   const backdrop = node(
@@ -134,6 +147,10 @@ export function createView(doc: Document): View {
       root.toggleAttribute('data-reduced-motion', m.reducedMotion)
       dialog.setAttribute('aria-modal', String(m.modal))
       backdrop.style.display = m.confirming ? 'none' : ''
+      root.style.zIndex = m.confirming ? 'auto' : Z_INDEX
+      dialog.style.pointerEvents = m.confirming ? 'none' : 'auto'
+      setDisabled(nextButton, m.busy)
+      setDisabled(backButton, m.busy)
       for (const s of shades) s.style.pointerEvents = m.blocking ? 'auto' : 'none'
       closeButton.setAttribute('aria-label', m.closeLabel)
       setText(title, m.title)
