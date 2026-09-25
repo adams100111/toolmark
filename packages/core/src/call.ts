@@ -360,17 +360,39 @@ export function createCallRuntime(state: RegistryState): CallRuntime {
     else callerSignal?.addEventListener('abort', onCallerAbort, { once: true })
     // SEC-4: a run without a caller signal (signal-less `tm.call`, `confirmPending`) gets a
     // deadline, so a hung tool is abandoned after the grace period and its scope queue released.
+    // SEC-12: the deadline is paused while an inline `ctx.confirm` is open (that wait is bounded by
+    // `confirmExpiryMs` instead) and resumes with the time that was left once it settles.
     const timeout = callerSignal === undefined ? callTimeoutMs() : undefined
-    const deadline =
-      timeout === undefined
-        ? undefined
-        : setTimeout(() => controller.abort(timeoutReason()), timeout)
+    let remaining = timeout ?? 0
+    let armedAt = 0
+    let deadline: ReturnType<typeof setTimeout> | undefined
+    let openConfirms = 0
+    let finished = false
+    const arm = (): void => {
+      if (timeout === undefined || finished || controller.signal.aborted) return
+      armedAt = Date.now()
+      deadline = setTimeout(() => controller.abort(timeoutReason()), remaining)
+    }
+    const pause = (): void => {
+      if (deadline === undefined) return
+      clearTimeout(deadline)
+      deadline = undefined
+      remaining = Math.max(0, remaining - (Date.now() - armedAt))
+    }
+    arm()
 
     const ctx: ToolContext = {
       signal: controller.signal,
       callId,
       caller,
-      confirm: (req) => ctxConfirm(entry, caller, value, req, controller.signal),
+      confirm: async (req) => {
+        if (openConfirms++ === 0) pause()
+        try {
+          return await ctxConfirm(entry, caller, value, req, controller.signal)
+        } finally {
+          if (--openConfirms === 0) arm()
+        }
+      },
       registerUndo: (restore) => undos.set(callId, entry, restore),
       files: {
         resolve: (ref) => resolveFileRef(ref, {}, state.files, controller.signal),
@@ -414,6 +436,7 @@ export function createCallRuntime(state: RegistryState): CallRuntime {
       else controller.signal.addEventListener('abort', startGrace, { once: true })
 
       void work.then(async (result) => {
+        finished = true
         clearTimeout(deadline)
         callerSignal?.removeEventListener('abort', onCallerAbort)
         controller.signal.removeEventListener('abort', startGrace)

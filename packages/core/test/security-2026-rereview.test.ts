@@ -1,8 +1,8 @@
 // Regression tests for the re-review follow-ups of the 2026 security review
 // (docs/security/review-2026.md, "Re-review follow-ups").
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
-import { ok } from '@toolmark/core'
+import { ok, type ToolResult } from '@toolmark/core'
 import { createTestRegistry } from './helpers/create-test-registry.js'
 
 describe('SEC-11: an edited approval keeps redacted secrets', () => {
@@ -76,5 +76,62 @@ describe('SEC-11: an edited approval keeps redacted secrets', () => {
     const edited = { ...(pending?.input as object), note: '[redacted]' }
     await tm.confirmPending(r.confirmId, { approved: true, input: edited })
     expect(runs).toEqual([{ ...input, note: '[redacted]' }])
+  })
+})
+
+describe('SEC-12: an inline ctx.confirm pauses the call deadline', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('sec_12_inline_ctx_confirm_is_not_cut_off_by_call_timeout', async () => {
+    vi.useFakeTimers()
+    const tm = createTestRegistry({
+      callTimeoutMs: 50,
+      abortGraceMs: 10,
+      confirm: () => new Promise((resolve) => setTimeout(() => resolve({ approved: true }), 100)),
+    })
+    let aborted: boolean | undefined
+    tm.register({
+      name: 'save',
+      description: 'd',
+      run: async (_i, ctx): Promise<ToolResult<string>> => {
+        const outcome = await ctx.confirm({ summary: 'Save?' })
+        aborted = ctx.signal.aborted
+        return outcome.approved ? ok('saved') : ok('declined')
+      },
+    })
+    const p = tm.call('save', {}, { caller: 'mcp' })
+    await vi.advanceTimersByTimeAsync(200)
+    expect(await p).toEqual(ok('saved'))
+    expect(aborted).toBe(false)
+  })
+
+  it('sec_12_deadline_resumes_after_the_confirmation', async () => {
+    vi.useFakeTimers()
+    const tm = createTestRegistry({
+      callTimeoutMs: 50,
+      abortGraceMs: 10,
+      confirm: () => new Promise((resolve) => setTimeout(() => resolve({ approved: true }), 30)),
+    })
+    let signal: AbortSignal | undefined
+    tm.register({
+      name: 'hang',
+      description: 'd',
+      run: async (_i, ctx): Promise<ToolResult<string>> => {
+        signal = ctx.signal
+        await new Promise((r) => setTimeout(r, 10))
+        await ctx.confirm({ summary: 'Go?' })
+        return new Promise<never>(() => undefined)
+      },
+    })
+    const p = tm.call('hang', {}, { caller: 'mcp' })
+    // 10 ms of run, 30 ms paused in the confirmation, then 40 ms of the budget remain.
+    await vi.advanceTimersByTimeAsync(79)
+    expect(signal?.aborted).toBe(false)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(signal?.aborted).toBe(true)
+    await vi.advanceTimersByTimeAsync(10)
+    expect(await p).toEqual({ status: 'cancelled', by: 'signal' })
   })
 })
