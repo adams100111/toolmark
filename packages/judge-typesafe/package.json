@@ -1,0 +1,44 @@
+{
+  "name": "@toolmark/judge-typesafe",
+  "version": "0.0.0",
+  "description": "Optional TypeSafe judge plugin for @toolmark/lint: Node-only probabilistic checks for description quality, tool overlap and consequential-hint coverage.",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/adams100111/toolmark.git",
+    "directory": "packages/judge-typesafe"
+  },
+  "engines": {
+    "node": ">=22.12"
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "exports": {
+    ".": {
+      "@toolmark/source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "node": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "typecheck": "tsc -p tsconfig.test.json",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "@typesafe-ai/sdk": "0.6.0"
+  },
+  "peerDependencies": {
+    "@toolmark/lint": "workspace:^"
+  },
+  "devDependencies": {
+    "@toolmark/core": "workspace:*",
+    "@toolmark/lint": "workspace:*",
+    "@types/node": "catalog:"
+  }
+}

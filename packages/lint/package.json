@@ -1,0 +1,54 @@
+{
+  "name": "@toolmark/lint",
+  "version": "0.0.0",
+  "description": "Static lint for Toolmark tool manifests: naming, descriptions, schemas and LLM-facing hygiene, with an optional TypeSafe judge.",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/adams100111/toolmark.git",
+    "directory": "packages/lint"
+  },
+  "engines": {
+    "node": ">=22.12"
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "bin": {
+    "toolmark": "./dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "@toolmark/source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./manifest.schema.json": "./dist/manifest.schema.json",
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "typecheck": "tsc -p tsconfig.test.json",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "@toolmark/core": "workspace:*",
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1"
+  },
+  "peerDependencies": {
+    "@playwright/test": "^1.63.0"
+  },
+  "peerDependenciesMeta": {
+    "@playwright/test": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@playwright/test": "catalog:",
+    "@types/node": "catalog:"
+  }
+}
