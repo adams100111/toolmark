@@ -1,6 +1,6 @@
 {
   "name": "@toolmark/core",
-  "version": "0.1.0-next.0",
+  "version": "0.1.0-next.1",
   "description": "Framework-agnostic tool registry, policy, confirmation, form tools and bridge protocol for agent-operable web apps.",
   "license": "MIT",
   "type": "module",

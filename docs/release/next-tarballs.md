@@ -41,6 +41,33 @@ Packed from commit `c1b6e02` (`chore(release): version 0.1.0-next.0`) on branch 
   `types: ['node']`, no `customConditions`: 4/4 pass.
 - Bins: none declared in M1.
 
+## M2 — `0.1.0-next.1` (2026-09-25)
+
+Packed from commit `1f75289` (`chore(release): version 0.1.0-next.1`) on branch `m2/task-12`.
+
+| Tarball                             | Bytes  | SHA-256                                                            |
+| ----------------------------------- | ------ | ------------------------------------------------------------------ |
+| `toolmark-core-0.1.0-next.1.tgz`    | 217852 | `99ef8d0bc899a049b7739feff705a0ebc03e22405ff38b33cf4e1c9a7e3b6f16` |
+| `toolmark-inertia-0.1.0-next.1.tgz` | 29469  | `e6c7f93cd77eacb6c8dcc246d31a0a5b013eb101944d796a2d6f60910254fd1c` |
+| `toolmark-react-0.1.0-next.1.tgz`   | 25736  | `628dcbcbca1d13a1338c8e5848028eaa52575bde7539886564b3f814c2bb9445` |
+| `toolmark-testing-0.1.0-next.1.tgz` | 8605   | `df142a7acacad73cee27f018ebfeb1cab5ab55d94a2d26a6f14954dab75e7a39` |
+
+**Smoke result: pass** — `tarball-smoke: 59 passed, 0 failed` (Node 22.23.2, pnpm 12.6.0, macOS):
+
+- `pnpm install` of the four tarballs (`file:` dependencies + `overrides`) in a temp project
+  outside the workspace, with the peers at the catalog versions (`react` 19.3.0,
+  `react-hook-form` 7.88.0, `@inertiajs/react` 3.7.1, `@playwright/test` 1.63.0).
+- `exports`: 20 entries, every target present — one more than M1: the new `@toolmark/core/dom`
+  entry (`scanDom`, `synthesizeFormSchema`, `domFormAdapter`); 14 JS entries dynamically imported
+  by `node` without a DOM, including `@toolmark/core/dom` itself (it has no top-level DOM access,
+  so `BROWSER_ONLY` in `scripts/tarball-smoke.mjs` stays empty, unchanged from M1); 6 JSON entries
+  parsed.
+- Types: `tsc --noEmit` over all 14 JS entries with TypeScript 6.0.3
+  (`node node_modules/typescript/bin/tsc`) and TypeScript 7.0.2
+  (`node node_modules/typescript-7/bin/tsc`), each with `nodenext` and `preserve`/`bundler`,
+  `strict`, `skipLibCheck: false`, `types: ['node']`, no `customConditions`: 4/4 pass.
+- Bins: none declared in M2.
+
 ## Consumer recipe (optional)
 
 1. Vendor the tarballs into the consuming repo, e.g. `vendor/toolmark/*.tgz`, and check the SHA-256
