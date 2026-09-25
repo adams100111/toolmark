@@ -9,7 +9,7 @@ import type { Meter, Span, Tracer } from '@opentelemetry/api'
 import { SpanKind, SpanStatusCode, metrics, trace } from '@opentelemetry/api'
 import { redactChanges, redactInput } from '../input-redaction.js'
 import { isPlainObject } from '../forms/paths.js'
-import { inputSensitivePaths, type Toolmark } from '../registry.js'
+import { inputSensitivePaths, valueSensitivePaths, type Toolmark } from '../registry.js'
 import type { FieldChange, ToolResult } from '../result.js'
 
 /** Options for {@link otel}. */
@@ -43,8 +43,11 @@ interface OpenSpan {
   span: Span
   /** The redacted input JSON (only with `recordPayloads`; `undefined` = not recorded). */
   inputJson: string | undefined
-  /** The tool's `sensitivePaths` when the call started (result fallback if it is gone by then). */
-  sensitive: string[]
+  /**
+   * The tool's `sensitivePaths` when the call started (result fallback if it is gone by then);
+   * `null` when they could not be read (every change is then redacted).
+   */
+  sensitive: string[] | null
 }
 
 function isFieldChangeArray(v: unknown): v is FieldChange[] {
@@ -74,8 +77,11 @@ function truncatedJson(value: unknown): string | undefined {
  * confirmation card can carry the same sensitive-path field values as a completed form save).
  * Other results pass through.
  */
-function redactResult(result: ToolResult<unknown>, paths: readonly string[]): ToolResult<unknown> {
-  if (paths.length === 0) return result
+function redactResult(
+  result: ToolResult<unknown>,
+  paths: readonly string[] | null,
+): ToolResult<unknown> {
+  if (paths !== null && paths.length === 0) return result
   if (result.status === 'needs_confirmation') {
     return result.changes === undefined
       ? result
@@ -109,7 +115,9 @@ function redactResult(result: ToolResult<unknown>, paths: readonly string[]): To
  * `tm.info(tool).sensitivePaths` as-is; `[]` matches every array index, dotted keys and `$append`
  * array ops are followed); every value at or under such a path becomes `'[redacted]'`. When a
  * tool's input redaction fails, `toolmark.input` is omitted. The result's field changes at
- * `tm.info(tool).sensitivePaths` are redacted the same way.
+ * `tm.info(tool).sensitivePaths` are redacted the same way (`[]` wildcards included; a sensitive
+ * value inside a changed ancestor is redacted in place); when `sensitivePaths()` fails, every
+ * change is redacted.
  *
  * @param o - {@link OtelOptions}.
  * @returns A `tm.use` consumer. Its disposer ends every still-open span with
@@ -155,7 +163,7 @@ export function otel(o?: OtelOptions): (tm: Toolmark) => () => void {
       open.set(e.callId, {
         span: startCallSpan(e.tool, e.caller, e.callId),
         inputJson: recordPayloads ? inputJsonOf(e.tool, e.input) : undefined,
-        sensitive: recordPayloads ? (tm.info(e.tool)?.sensitivePaths ?? []) : [],
+        sensitive: recordPayloads ? (valueSensitivePaths(tm, e.tool) ?? []) : [],
       })
     })
 
@@ -172,7 +180,9 @@ export function otel(o?: OtelOptions): (tm: Toolmark) => () => void {
       }
 
       if (recordPayloads) {
-        const sensitivePaths = tm.info(e.tool)?.sensitivePaths ?? opened?.sensitive ?? []
+        // Fail closed: a tool gone by now falls back to the paths read at call time.
+        const live = valueSensitivePaths(tm, e.tool)
+        const sensitivePaths = live !== undefined ? live : (opened?.sensitive ?? [])
         if (opened?.inputJson !== undefined) span.setAttribute('toolmark.input', opened.inputJson)
         const resultJson = truncatedJson(redactResult(e.result, sensitivePaths))
         if (resultJson !== undefined) span.setAttribute('toolmark.result', resultJson)

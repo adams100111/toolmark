@@ -56,6 +56,14 @@ const tm = createToolmark({ confirm: queue.handler })
   sensitive path that still holds the literal `'[redacted]'` gets its real value back before the
   edit is validated, so a secret is never replaced by the placeholder; a sensitive path the
   approver changed keeps the new value. `'[redacted]'` outside the sensitive paths is ordinary text.
+  `[]` in a sensitive path matches any array index, also in `ctx.confirm` changes: a change at
+  `cards.0.cvc` is redacted, and a change of `cards` or `cards.0` keeps its value with each `cvc`
+  inside it redacted. A secret is only restored onto the same array row: when the edited array
+  has a different length, or the row's non-sensitive values changed (a row deleted, inserted,
+  reordered or edited), a `'[redacted]'` left in that row has no real value to take. Such a
+  placeholder, or one under a key the approver restructured, is refused as `invalid` with the
+  issue "Re-enter sensitive field" at its path (inside `ctx.confirm`, the outcome is
+  `{ approved: false, reason: 'invalid' }`); the approver re-enters the value and approves again.
 - A deferred form or wizard submit approved after the form's values changed is refused `stale`
   ("Form changed since confirmation was requested").
 - **Registration check.** Registering a consequential or destructive tool fails
