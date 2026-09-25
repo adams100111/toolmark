@@ -101,19 +101,27 @@ Packed from commit `dcaf0e5` (`chore(release): version 0.1.0-next.3`) on branch 
 `@toolmark/judge-typesafe` join the fixed group (`@toolmark/*`), going from `0.0.0` straight to
 `0.1.0-next.3`; the five existing packages move with the group (API-reference comments only).
 
+Repacked (version unchanged) from commit `6d67362` on branch `m4/fix-final` after the M4 final fix
+wave: `@toolmark/lint` (symlink-safe `dist/bin.js` bin, `--url` schema validation, output
+sanitising, fresh Ajv per schema, README), `@toolmark/judge-typesafe` (origin + path only, per-page
+time bound) and `@toolmark/tour` (`confirming` for any pending confirmation, README) changed; the
+other five tarballs are byte-identical to the first pack. `@toolmark/mcp` here predates the
+concurrent signal-handler fix; its row changes when that fix is integrated and repacked.
+
 | Tarball                                    | Bytes  | SHA-256                                                            |
 | ------------------------------------------ | ------ | ------------------------------------------------------------------ |
 | `toolmark-core-0.1.0-next.3.tgz`           | 264125 | `a6c7bccab4169d5f827db64e368403ba2986f62c6e61e247dbbed82e03f8a4aa` |
 | `toolmark-inertia-0.1.0-next.3.tgz`        | 29641  | `71cd3e15014c5b74fd7aad6505cb53d3553fcd015de9401653ff5b1eac2ba73f` |
-| `toolmark-judge-typesafe-0.1.0-next.3.tgz` | 7991   | `d64b592f0d860b8de34b642905d89324f88e8a308a7d74796c0323e150707ab1` |
-| `toolmark-lint-0.1.0-next.3.tgz`           | 19090  | `4bc11fd980de710f497508fda395e038699a16c5be7f000c1b1328534719ec25` |
+| `toolmark-judge-typesafe-0.1.0-next.3.tgz` | 9502   | `b30e0cafcdcab314d119877ebb96bfca0954a3cfc9d80b6238234360e018d88c` |
+| `toolmark-lint-0.1.0-next.3.tgz`           | 22258  | `bc92af6ffe8605f2cdddfb48b6a844a431eadc65b3eeb615dd8ce06eb52cc792` |
 | `toolmark-mcp-0.1.0-next.3.tgz`            | 53549  | `f87f3cd02388ea1608c60ac3bc1117379e1ff95cdd244a43f1c7493ccbd172a9` |
 | `toolmark-react-0.1.0-next.3.tgz`          | 32227  | `76ec4ef64b2b74432ee23d06c78ae45b5599b6fc0cc17c27602cbed169167cb7` |
 | `toolmark-testing-0.1.0-next.3.tgz`        | 8641   | `e6f4a0130ba05bc4917e939a01ea5613b8f12e1d058c707e703832da3afc940f` |
-| `toolmark-tour-0.1.0-next.3.tgz`           | 31306  | `b47c187a3d38755881f5ff9df42d09c0e2b5cf5580df21714f0e7579190330d1` |
+| `toolmark-tour-0.1.0-next.3.tgz`           | 32623  | `dadbdac85eaa599b305b0932ef7771619a12cfc77aefc873f41091b224c59b03` |
 
-**Smoke result: pass** — `tarball-smoke: 101 passed, 0 failed` (Node 22.23.2, pnpm 12.6.0, macOS),
-with the script extended in `273c767`:
+**Smoke result: pass** — `tarball-smoke: 108 passed, 0 failed` (Node 22.23.2, pnpm 12.6.0, macOS;
+first pack: 101), with the script extended in `273c767` and again in the final fix wave (bins run
+through a symlink too):
 
 - `pnpm install` of the eight tarballs in a temp project outside the workspace (peers at the catalog
   versions, including `@playwright/test` for `@toolmark/lint`).
@@ -125,7 +133,9 @@ with the script extended in `273c767`:
 - Types: `tsc --noEmit` over all 23 JS entries with TypeScript 6.0.3 and 7.0.2, each with
   `nodenext` and `preserve`/`bundler`: 4/4 pass.
 - Bins: `toolmark --help`, `toolmark lint --help` (the documented subcommand) and
-  `toolmark-mcp --help` pass.
+  `toolmark-mcp --help` exit 0 with usage text, and an unknown flag exits non-zero (2) — each run
+  both directly and through a symlink to the bin, as npm/npx `.bin` entries invoke it (the first
+  pack's `toolmark` bin was a silent no-op through a symlink).
 
 ## Consumer recipe (optional)
 
