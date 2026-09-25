@@ -5,3 +5,7 @@ packages/core/src/standard-schema.ts
 docs/superpowers/
 docs/ROADMAP.md
 .changeset/
+examples/inertia-laravel/vendor/
+examples/inertia-laravel/public/build/
+examples/inertia-laravel/storage/
+examples/inertia-laravel/bootstrap/cache/
