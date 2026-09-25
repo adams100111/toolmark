@@ -27,26 +27,6 @@ function emptyFor(current: unknown): '' | null {
   return typeof current === 'string' ? '' : null
 }
 
-/** Recursively collects the dot paths whose leaf value is `true` in a react-hook-form marker tree
- * (`dirtyFields`, `touchedFields`): unlike {@link flatten}, a leaf here is any `true`/`false`, not
- * just non-plain-object values (array entries are visited too). */
-function trueLeafPaths(node: unknown, prefix: string, out: string[]): void {
-  if (node === true) {
-    if (prefix !== '') out.push(prefix)
-    return
-  }
-  if (node === false || node === null || typeof node !== 'object') return
-  if (Array.isArray(node)) {
-    node.forEach((child, i) =>
-      trueLeafPaths(child, prefix === '' ? String(i) : `${prefix}.${i}`, out),
-    )
-    return
-  }
-  for (const [key, child] of Object.entries(node as Record<string, unknown>)) {
-    trueLeafPaths(child, prefix === '' ? key : `${prefix}.${key}`, out)
-  }
-}
-
 function isFieldErrorLike(v: unknown): v is { type?: unknown; message?: unknown } {
   return typeof v === 'object' && v !== null && ('type' in v || 'message' in v)
 }
@@ -112,6 +92,14 @@ export function rhfAdapter<V extends FieldValues>(
     setValues(values) {
       const current = form.getValues()
       for (const [path, value] of Object.entries(values)) {
+        // An array path is replaced wholesale (spec §8.3): `shouldTouch` has no field-level
+        // meaning for a whole array and, unlike a scalar leaf, is left to react-hook-form's
+        // default so a mounted `useFieldArray`'s `fields` stays in sync (M2 T7; verified against
+        // react-hook-form 7.88 — see the rhf-arrays test and its ledgered finding below).
+        if (Array.isArray(value)) {
+          setValue(path, value, { shouldDirty: true, shouldValidate: true })
+          continue
+        }
         const next = value === null ? emptyFor(getPath(current, path)) : value
         setValue(path, next, { shouldDirty: true, shouldValidate: true, shouldTouch: false })
       }
@@ -124,11 +112,15 @@ export function rhfAdapter<V extends FieldValues>(
      * calls `dirtyPaths()` at tool-registration/call time, which in practice is after a render has
      * already happened, but a caller reading it synchronously inside the same tick as an input event
      * (outside of React's render cycle) may see paths lag by one render.
+     *
+     * Uses core's {@link flatten} (`arraysAsLeaves: false`) so array entries are visited by index
+     * (`a.0.b`) exactly like every other dot path in this package, then keeps only the `true`
+     * leaves (react-hook-form's `dirtyFields` tree marks a changed leaf `true` and leaves
+     * unresolved branches as nested objects/arrays; `false` never appears for a leaf it tracked).
      */
     dirtyPaths(): string[] {
-      const out: string[] = []
-      trueLeafPaths(form.formState.dirtyFields, '', out)
-      return out
+      const flat = flatten(form.formState.dirtyFields, { arraysAsLeaves: false })
+      return Object.keys(flat).filter((path) => flat[path] === true)
     },
 
     /**
