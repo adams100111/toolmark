@@ -81,7 +81,7 @@ function formValues(form: HTMLFormElement): unknown {
  * button submits or resets its form, else the button's own `data-tool-confirm`, else `fallback`.
  * The tool carries a confirm snapshot of the button's form owner and that form's non-excluded
  * values, so an approval given before the form (or the owner) changed is refused `stale` and the
- * button is not clicked.
+ * button is not clicked. Its anchor (`tm.anchor(name)`) is the button element.
  * @param button - The button.
  * @param name - Local tool name.
  * @param description - LLM-facing description (from app-authored markup).
@@ -118,6 +118,8 @@ export function buttonToolDefinition(
     description,
     hints: buttonHints(button),
     origin: 'dom',
+    // Tour hooks (spec §13): the button itself.
+    anchors: { element: () => button },
     summary,
     run() {
       if (!clickable(button)) return refuse('not_allowed', 'Button is disabled or hidden')

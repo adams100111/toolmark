@@ -37,6 +37,19 @@ export interface FormAdapter<V extends Record<string, unknown> = Record<string, 
   submit(): Promise<ToolResult<unknown>>
   /** Known fields. */
   fields(): FieldInfo[]
+  /**
+   * Subscribes to user-originated interactions with the form (tour hooks, spec §13). Adapters call
+   * `cb` only for trusted user events (`isTrusted`, or the form library's own user-change signal),
+   * never for their own `setValues`/`submit`, and pass the field's dot path only, never its value.
+   * `kind: 'submit'` uses `path: ''`. Form tools subscribe once while registered and turn each call
+   * into an `interaction` event.
+   * @param cb - Receives `{ path, kind }` per interaction: `path` is the field's dot path (`''` for
+   * a whole-form `submit`); `kind` is `input` (the user changed a value), `focus` or `submit`.
+   * @returns An unsubscribe function.
+   */
+  onUserInteraction?(
+    cb: (e: { path: string; kind: 'input' | 'focus' | 'submit' }) => void,
+  ): () => void
 }
 
 /**
@@ -64,7 +77,11 @@ export interface FormToolOptions<V> {
   jsonSchema?: JsonSchema
   /** User-facing submit confirmation summary. */
   submitSummary?: (values: V) => string
-  /** Dot paths whose values are always redacted (spec §14). */
+  /**
+   * Dot paths whose values are always redacted (spec §14): in fill `changes`, confirmation
+   * payloads and `state()`. Together with `FieldInfo.sensitive` and password / `cc-*` elements it
+   * forms the tools' `sensitivePaths` (`tm.info(name).sensitivePaths`).
+   */
   sensitive?: string[]
   /**
    * Async option lookups by field (spec §8.3). Keys are dot paths; `[]` stands for any array

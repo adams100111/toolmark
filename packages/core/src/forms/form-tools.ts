@@ -18,7 +18,7 @@ import { invalid, ok, refuse, type FieldChange, type ToolResult } from '../resul
 import { resolveJsonSchema, stripRequired, validateInput } from '../schema.js'
 import type { Scope } from '../scope.js'
 import type { StandardSchemaV1 } from '../standard-schema.js'
-import type { JsonSchema, ToolDefinition } from '../tool.js'
+import type { AnchorSpec, JsonSchema, ToolDefinition, ToolState } from '../tool.js'
 import { CONFIRM_SNAPSHOT, type ConfirmSnapshotHook } from '../confirm-snapshot.js'
 import {
   applyArrayOp,
@@ -36,9 +36,18 @@ import {
   type NodeBudget,
 } from './paths.js'
 import { annotateOptionField, optionsToolDefinition } from './options.js'
-import type { FieldInfo, FormAdapter, FormToolOptions } from './types.js'
-
-const REDACTED = '[redacted]'
+import {
+  REDACTED,
+  createIssueReader,
+  emitInteraction,
+  fieldElement,
+  firstFormOwner,
+  redactValues,
+  safeFields,
+  sensitivePathsOf,
+  subscribeInteractions,
+} from './hooks.js'
+import type { FormAdapter, FormToolOptions } from './types.js'
 
 interface FillInput {
   values: Record<string, unknown>
@@ -278,46 +287,6 @@ function fillJsonSchema(
     for (const key of options.keys) annotateOptionField(values, schema, key, suffix)
   }
   return schema
-}
-
-/** Secret `autocomplete` tokens (besides `cc-*`); mirrors the DOM adapter's exclusion list. */
-const SECRET_AUTOCOMPLETE = new Set(['current-password', 'new-password', 'one-time-code'])
-
-function isSensitiveElement(el: Element | null | undefined): boolean {
-  if (!el || typeof el !== 'object') return false
-  const loose = el as unknown as {
-    tagName?: unknown
-    type?: unknown
-    autocomplete?: unknown
-    getAttribute?: (name: string) => string | null
-  }
-  const attr = (name: string): unknown =>
-    typeof loose.getAttribute === 'function' ? loose.getAttribute(name) : null
-  const type = attr('type') ?? loose.type
-  if (
-    typeof loose.tagName === 'string' &&
-    loose.tagName.toUpperCase() === 'INPUT' &&
-    typeof type === 'string' &&
-    type.toLowerCase() === 'password'
-  ) {
-    return true
-  }
-  const ac = attr('autocomplete') ?? loose.autocomplete
-  return (
-    typeof ac === 'string' &&
-    ac
-      .trim()
-      .toLowerCase()
-      .split(/\s+/)
-      .some((token) => token.startsWith('cc-') || SECRET_AUTOCOMPLETE.has(token))
-  )
-}
-
-function sensitivePaths(opts: { sensitive?: string[] }, fields: FieldInfo[]): string[] {
-  const out = [...(opts.sensitive ?? [])]
-  for (const f of fields)
-    if (f.sensitive === true || isSensitiveElement(f.element)) out.push(f.path)
-  return out
 }
 
 function isUnder(path: string, base: string): boolean {
@@ -852,6 +821,17 @@ const byPath = (a: { path: string }, b: { path: string }): number =>
  * Registers `<name>.fill` (partial, skips user-edited fields, undoable) and `<name>.submit`
  * (`consequential`) for a form (spec §8.1, D19), plus `<name>.options` (`readOnly`) when
  * `opts.options` declares async option lookups (spec §8.3).
+ *
+ * Tour hooks (spec §13): `.fill` anchors `resolve(path)` to that field's `element` from
+ * `adapter.fields()`; `.fill` and `.submit` anchor to the form owner of the first field element
+ * (`null` without one). Both expose `state()` → `{ values, issues }`: `values` from
+ * `adapter.getValues()` with every sensitive path replaced by `'[redacted]'`, `issues` from a full
+ * validation of the current values (an async schema yields the last settled result, initially
+ * `[]`); `state()` never awaits and never writes the form. Sensitive paths (`sensitivePaths()`,
+ * `tm.info`) are `opts.sensitive`, fields with `FieldInfo.sensitive`, and fields whose element is a
+ * password / `cc-*` / secret-`autocomplete` control. When the adapter has `onUserInteraction`, each
+ * user interaction is emitted as an `interaction` event (`<name>.fill` with `param: <path>` for
+ * `input`/`focus`, `<name>.submit` for `submit`; paths only, never values).
  * @param tm - The registry.
  * @param adapter - The form adapter.
  * @param opts - Form tool options plus an optional target `scope`.
@@ -1134,19 +1114,38 @@ export function createFormTools<V extends Record<string, unknown>>(
           undoChanges.push({ path, before: getPath(now, path), after: getPath(restored, path) })
         }
         return ok({
-          changes: redact(undoChanges.map(safeChange), sensitivePaths(opts, adapter.fields())).sort(
-            byPath,
-          ),
+          changes: redact(
+            undoChanges.map(safeChange),
+            sensitivePathsOf(opts.sensitive, adapter.fields()),
+          ).sort(byPath),
           skipped: undoSkipped.sort(),
         })
       })
     }
 
     return ok({
-      changes: redact(changes.map(safeChange), sensitivePaths(opts, adapter.fields())).sort(byPath),
+      changes: redact(
+        changes.map(safeChange),
+        sensitivePathsOf(opts.sensitive, adapter.fields()),
+      ).sort(byPath),
       skipped: skipped.sort(),
     })
   }
+
+  // Tour hooks (spec §13, §14; M3 T2). Redaction is owned here: `state()` redacts every path of
+  // the sensitive rule, and `sensitivePaths()` publishes the same list through `tm.info`.
+  const currentSensitive = (): string[] => sensitivePathsOf(opts.sensitive, safeFields(adapter))
+  const readIssues = createIssueReader(() => opts.input)
+  const readState = (): ToolState<V> => {
+    const values = adapter.getValues()
+    return { values: redactValues(values, currentSensitive()), issues: readIssues(values) }
+  }
+  const formAnchor = (): Element | null => firstFormOwner(safeFields(adapter))
+  const fillAnchors: AnchorSpec = {
+    element: formAnchor,
+    resolve: (path) => fieldElement(safeFields(adapter), path),
+  }
+  const hooks = { state: readState, sensitivePaths: currentSensitive }
 
   const optionKeys = opts.options ? Object.keys(opts.options) : []
   const title = opts.title !== undefined ? { title: opts.title } : {}
@@ -1167,6 +1166,8 @@ export function createFormTools<V extends Record<string, unknown>>(
         optionKeys.length > 0 ? { form: opts.name, keys: optionKeys } : undefined,
         fileKeys.map((path, i) => ({ path, schema: fileFieldSchema(fileFields[i]!.spec) })),
       ),
+      anchors: fillAnchors,
+      ...hooks,
       run: (input, ctx) => fill(input, (restore) => ctx.registerUndo(restore), ctx.signal),
     },
     opts.scope ? { scope: opts.scope } : undefined,
@@ -1186,6 +1187,8 @@ export function createFormTools<V extends Record<string, unknown>>(
       ...(opts.nativeName?.submit !== undefined ? { nativeName: opts.nativeName.submit } : {}),
       summary: () =>
         opts.submitSummary?.(adapter.getValues()) ?? `Submit ${opts.title ?? opts.name}`,
+      anchors: { element: formAnchor },
+      ...hooks,
       run: () => adapter.submit(),
       [CONFIRM_SNAPSHOT]: snapshotHook,
     }
@@ -1226,8 +1229,19 @@ export function createFormTools<V extends Record<string, unknown>>(
       return { dispose() {} }
     }
   }
+  // Interaction events (spec §13): user-originated only, reported by the adapter; the agent's own
+  // `setValues`/`submit` never produce them. Paths only, never values (sensitive paths included).
+  // A late report from an adapter that ignores its unsubscribe is dropped after dispose.
+  let live = true
+  const offInteraction = state?.browser
+    ? subscribeInteractions(tm, adapter, fillReg.name, (e) => {
+        if (live) emitInteraction(tm, e, { fillTool: fillReg.name, submitTool: submitReg.name })
+      })
+    : () => undefined
   return {
     dispose() {
+      live = false
+      offInteraction()
       fillReg.dispose()
       submitReg.dispose()
       optionsReg?.dispose()
