@@ -23,6 +23,6 @@ function run(args: string[]): Promise<number> {
 test('lint_clean', async () => {
   // The running `next dev` page (spec §20 "toolmark lint exits 0 on every example's manifests"):
   // the CLI loads the URL through Playwright and reads `__toolmark_test__`.
-  const exitCode = await run(['--url', DEV_URL])
+  const exitCode = await run(['lint', '--url', DEV_URL])
   expect(exitCode).toBe(0)
 })
