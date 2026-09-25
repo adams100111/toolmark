@@ -1,6 +1,7 @@
-import type { JSX } from 'react'
+import { useEffect, useState, type JSX } from 'react'
 import { usePendingConfirmations } from '@toolmark/react'
 import { ChallengesPage } from './challenge-form.js'
+import { WizardPage } from './wizard.js'
 
 /** Renders every pending deferred confirmation as a card with Approve / Reject. */
 function ConfirmCards(): JSX.Element | null {
@@ -37,11 +38,26 @@ function ConfirmCards(): JSX.Element | null {
   )
 }
 
-/** The example app: the challenges page plus the confirm cards of pending agent actions. */
+/**
+ * A `location.hash` switch between the example's pages (no router dependency): `#/wizard` shows
+ * the multi-step wizard, anything else shows the challenges form.
+ */
+function useHashRoute(): string {
+  const [hash, setHash] = useState(() => window.location.hash)
+  useEffect(() => {
+    const onHashChange = (): void => setHash(window.location.hash)
+    window.addEventListener('hashchange', onHashChange)
+    return () => window.removeEventListener('hashchange', onHashChange)
+  }, [])
+  return hash
+}
+
+/** The example app: the current page (by hash) plus the confirm cards of pending agent actions. */
 export function App(): JSX.Element {
+  const hash = useHashRoute()
   return (
     <main>
-      <ChallengesPage />
+      {hash === '#/wizard' ? <WizardPage /> : <ChallengesPage />}
       <ConfirmCards />
     </main>
   )
