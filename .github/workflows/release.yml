@@ -56,7 +56,7 @@ jobs:
   # Opens or updates the "Version Packages" PR for future releases (commits through the GitHub API).
   version:
     needs: select-mode
-    if: needs.select-mode.outputs.mode == 'version' && github.ref == 'refs/heads/main'
+    if: needs.select-mode.outputs.mode == 'version' && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:

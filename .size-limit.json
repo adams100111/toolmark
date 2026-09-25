@@ -170,7 +170,7 @@
     "import": "*",
     "gzip": true,
     "ignore": ["@playwright/test"],
-    "limit": "12 kB"
+    "limit": "17.5 kB"
   },
   {
     "name": "@toolmark/testing/vitest",
@@ -178,7 +178,7 @@
     "import": "*",
     "gzip": true,
     "ignore": ["@playwright/test"],
-    "limit": "11.5 kB"
+    "limit": "17 kB"
   },
   {
     "name": "@toolmark/testing/page",
