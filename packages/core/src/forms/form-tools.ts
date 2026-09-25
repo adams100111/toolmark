@@ -1,4 +1,4 @@
-import type { Toolmark } from '../registry.js'
+import type { Registration, Toolmark } from '../registry.js'
 import { registryState } from '../registry.js'
 import { invalid, ok, type FieldChange, type ToolResult } from '../result.js'
 import { resolveJsonSchema, stripRequired, validateInput } from '../schema.js'
@@ -235,16 +235,107 @@ function resolveNode(
   return out
 }
 
-/** The raw JSON Schema node declaring `path` (through `$ref`, `allOf`, `anyOf`, `oneOf`). */
-function schemaAt(root: JsonSchema, path: string): unknown {
+/** Why {@link nodeAt} could not resolve a path. */
+type Unresolved = 'undeclared' | 'excluded'
+
+/**
+ * The JSON Schema node declaring `path` for the form value `merged`: follows `properties` (through
+ * `$ref`, `allOf`, `anyOf`, `oneOf`), then `additionalProperties` (records); `true` once an open
+ * `additionalProperties` accepts everything below. At a union whose value is an object, only the
+ * branch matching that value is followed ({@link pickBranch}), so a key declared solely by another
+ * branch is `'excluded'`; any other miss is `'undeclared'`.
+ */
+function nodeAt(root: JsonSchema, path: string, merged: unknown): { node: unknown } | Unresolved {
   let node: unknown = root
+  let value: unknown = merged
   for (const seg of path.split('.')) {
+    const picked = pickBranch(node, value, root)
+    if (picked === undefined) return 'excluded'
+    const excludedByBranch = picked !== node
+    node = picked
     const r = resolveNode(node, root, {})
     const props = r?.properties
-    if (!props || !Object.prototype.hasOwnProperty.call(props, seg)) return undefined
-    node = props[seg]
+    value = isPlainObject(value) && Object.hasOwn(value, seg) ? value[seg] : undefined
+    if (props && Object.prototype.hasOwnProperty.call(props, seg)) {
+      node = props[seg]
+      continue
+    }
+    const shape = collect(node, 'object', root)
+    if (shape !== undefined && shape !== 'open') {
+      if (shape.addl === true || (isRecord(shape.addl) && Object.keys(shape.addl).length === 0)) {
+        return { node: true }
+      }
+      if (isRecord(shape.addl)) {
+        node = shape.addl
+        continue
+      }
+    }
+    return excludedByBranch ? 'excluded' : 'undeclared'
   }
-  return node
+  return { node }
+}
+
+/** The union branches of a node that is only a union (`anyOf` or `oneOf`, plus maybe `type`). */
+function unionBranches(node: Record<string, unknown>): unknown[] | undefined {
+  const any = Array.isArray(node.anyOf) ? (node.anyOf as unknown[]) : undefined
+  const one = Array.isArray(node.oneOf) ? (node.oneOf as unknown[]) : undefined
+  if ((any === undefined) === (one === undefined)) return undefined
+  const others = STRUCTURAL.filter(
+    (k) => k in node && k !== 'anyOf' && k !== 'oneOf' && k !== 'type',
+  )
+  return others.length > 0 ? undefined : (any ?? one)
+}
+
+/** Whether every `const` / `enum` property of `branch` present in `value` agrees with it. */
+function discriminatorsMatch(
+  branch: Record<string, unknown>,
+  value: Record<string, unknown>,
+  root: JsonSchema,
+): boolean {
+  if (!isRecord(branch.properties)) return true
+  for (const [key, raw] of Object.entries(branch.properties)) {
+    if (!Object.hasOwn(value, key)) continue
+    const prop = deref(raw, root)
+    if (!prop) continue
+    if ('const' in prop && !deepEqual(prop.const, value[key])) return false
+    if (Array.isArray(prop.enum) && !prop.enum.some((e) => deepEqual(e, value[key]))) return false
+  }
+  return true
+}
+
+/**
+ * For a union node and an object value, the single branch matching the value (m3): branches of the
+ * wrong kind or whose `const`/`enum` discriminators disagree are discarded, then the branch
+ * declaring most of the value's keys wins (first on ties). Nested unions are resolved in turn.
+ * Returns `node` unchanged when it is not a union (or the value is not an object) and `undefined`
+ * when no branch matches.
+ */
+function pickBranch(node: unknown, value: unknown, root: JsonSchema): unknown {
+  let current = node
+  for (let depth = 0; depth < 32; depth++) {
+    const n = deref(current, root)
+    const branches = n ? unionBranches(n) : undefined
+    if (!branches || !isPlainObject(value)) return current
+    let best: unknown
+    let bestScore = -1
+    for (const b of branches) {
+      const target = deref(b, root)
+      const shape = collect(b, 'object', root)
+      if (!target || shape === undefined || !discriminatorsMatch(target, value, root)) continue
+      const keys = Object.keys(value)
+      const score =
+        shape === 'open' || shape.addl === true || isRecord(shape.addl)
+          ? keys.length
+          : keys.filter((k) => shape.props !== undefined && Object.hasOwn(shape.props, k)).length
+      if (score > bestScore) {
+        best = b
+        bestScore = score
+      }
+    }
+    if (best === undefined) return undefined
+    current = best
+  }
+  return current
 }
 
 const STRUCTURAL = [
@@ -360,7 +451,8 @@ function sanitize(
 ): unknown {
   if (!isStructured(value)) return value
   const kind = Array.isArray(value) ? 'array' : 'object'
-  const shape = depth > 64 || node === undefined ? undefined : collect(node, kind, root)
+  const branch = node === undefined ? undefined : pickBranch(node, value, root)
+  const shape = depth > 64 || branch === undefined ? undefined : collect(branch, kind, root)
   if (shape === undefined) {
     undeclared.push(path)
     return undefined
@@ -494,11 +586,19 @@ export function createFormTools<V extends Record<string, unknown>>(
       if (relevant.length > 0) return invalid(relevant)
     }
 
-    // Declared paths only (spec §14).
+    // Declared paths only (spec §14), including record entries (`additionalProperties`, m2). A
+    // key that only another union branch declares is unknown for this value (m3).
     const parsedPaths = checked.ok
       ? new Set(Object.keys(flatten(checked.value)))
       : new Set<string>()
-    const unknown = touched.filter((p) => !declared.has(p) && !parsedPaths.has(p))
+    const nodes = new Map<string, unknown>()
+    const unknown: string[] = []
+    for (const p of touched) {
+      const at = nodeAt(inputSchema, p, merged)
+      if (typeof at === 'object') nodes.set(p, at.node)
+      if (parsedPaths.has(p)) continue
+      if (at === 'excluded' || (at === 'undeclared' && !declared.has(p))) unknown.push(p)
+    }
     if (unknown.length > 0) {
       return invalid(unknown.sort().map((path) => ({ path, message: 'Unknown field' })))
     }
@@ -512,7 +612,7 @@ export function createFormTools<V extends Record<string, unknown>>(
       let v: unknown = raw === null ? null : undefined
       if (raw !== null && checked.ok) v = getPath(checked.value, path)
       if (raw !== null && v === undefined) {
-        v = sanitize(raw, schemaAt(inputSchema, path), inputSchema, path, undeclared)
+        v = sanitize(raw, nodes.get(path), inputSchema, path, undeclared)
       }
       safe.set(path, v)
     }
@@ -605,12 +705,22 @@ export function createFormTools<V extends Record<string, unknown>>(
       run: () => adapter.submit(),
       [CONFIRM_SNAPSHOT]: snapshotHook,
     }
-  let submitReg: { dispose(): void }
+  /** Whether `reg` is live (production reports a failed registration and returns an inert one). */
+  const isLive = (reg: Registration): boolean =>
+    !state?.browser || state.entries.get(reg.name)?.registration === reg
+  const scopeOpt = opts.scope ? { scope: opts.scope } : undefined
+  // m8: never leave half a pair behind — without `fill` there is no `submit`, and vice versa.
+  if (!isLive(fillReg)) return { dispose() {} }
+  let submitReg: Registration
   try {
-    submitReg = tm.register(submitTool, opts.scope ? { scope: opts.scope } : undefined)
+    submitReg = tm.register(submitTool, scopeOpt)
   } catch (e) {
     fillReg.dispose()
     throw e
+  }
+  if (!isLive(submitReg)) {
+    fillReg.dispose()
+    return { dispose() {} }
   }
   return {
     dispose() {
