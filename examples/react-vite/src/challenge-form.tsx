@@ -46,8 +46,14 @@ function CreateChallengeForm(props: {
     resolver,
   })
 
+  // `root` adds the user's `focus`/`submit` interaction events (guide-mode tours wait for them).
+  const formRef = useRef<HTMLFormElement>(null)
   useFormTool(
-    rhfAdapter(form, { onSubmit: (values) => ({ id: props.onCreated(values) }), elementFor }),
+    rhfAdapter(form, {
+      onSubmit: (values) => ({ id: props.onCreated(values) }),
+      elementFor,
+      root: () => formRef.current,
+    }),
     {
       name: 'create',
       title: 'Create challenge',
@@ -63,7 +69,7 @@ function CreateChallengeForm(props: {
   })
 
   return (
-    <form onSubmit={(e) => void submit(e)} aria-label="Create challenge">
+    <form ref={formRef} onSubmit={(e) => void submit(e)} aria-label="Create challenge">
       <label>
         Title (English)
         <input {...form.register('title.en')} />
