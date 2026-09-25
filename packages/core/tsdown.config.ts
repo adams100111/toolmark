@@ -10,6 +10,8 @@ export default defineConfig({
     'bridge/post-message': 'src/bridge/post-message.ts',
     'bridge/in-page': 'src/bridge/in-page.ts',
     dom: 'src/dom/index.ts',
+    webmcp: 'src/webmcp/index.ts',
+    otel: 'src/otel/index.ts',
   },
   format: ['esm'],
   dts: true,

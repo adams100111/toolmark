@@ -8,6 +8,7 @@ export default defineConfig({
       'packages/react/vitest.config.ts',
       'packages/inertia/vitest.config.ts',
       'packages/testing/vitest.config.ts',
+      'packages/mcp/vitest.config.ts',
     ],
   },
 })
