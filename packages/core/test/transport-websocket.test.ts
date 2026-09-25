@@ -39,7 +39,34 @@ class FakeWebSocket extends EventTarget {
   }
 }
 
+/**
+ * Fake WebSocket that only ever fires `error` before opening, never `close` — reproducing Node
+ * 22's global `WebSocket` behavior on a pre-open failure (e.g. `ECONNREFUSED`), unlike browsers
+ * which fire both.
+ */
+class ErrorOnlyFakeWebSocket extends EventTarget {
+  static instances: ErrorOnlyFakeWebSocket[] = []
+  readyState = 0
+  constructor(
+    readonly url: string,
+    readonly protocols?: string | string[],
+  ) {
+    super()
+    ErrorOnlyFakeWebSocket.instances.push(this)
+  }
+  send(): void {
+    throw new Error('not open')
+  }
+  close(): void {
+    // Real close() calls from the transport (e.g. stop()) never surface a close event here either.
+  }
+  failWithoutClose(): void {
+    this.dispatchEvent(new Event('error'))
+  }
+}
+
 const sock = (i: number): FakeWebSocket => FakeWebSocket.instances[i]!
+const errSock = (i: number): ErrorOnlyFakeWebSocket => ErrorOnlyFakeWebSocket.instances[i]!
 const m = (rev: number): PageToAgentMessage => ({
   protocol: 1,
   type: 'changed',
@@ -65,6 +92,7 @@ function track(p: Promise<void>) {
 
 beforeEach(() => {
   FakeWebSocket.instances = []
+  ErrorOnlyFakeWebSocket.instances = []
   vi.stubGlobal('WebSocket', FakeWebSocket)
   vi.useFakeTimers()
 })
@@ -320,4 +348,74 @@ describe('websocketTransport', () => {
     await flush()
     expect(sends[100]!.error?.message).toBe('transport stopped')
   })
+
+  it('websocket_error_without_close_before_open_reports_unreachable_and_reconnects', async () => {
+    vi.stubGlobal('WebSocket', ErrorOnlyFakeWebSocket)
+    const statuses: unknown[] = []
+    const t = websocketTransport({ url: 'wss://a', onStatus: (s) => statuses.push(s) })
+    t.onMessage(() => {})
+    errSock(0).failWithoutClose()
+    expect(statuses).toEqual([
+      { state: 'connecting' },
+      { state: 'closed', closeCode: 1006, firstConnectFailed: true },
+    ])
+    expect(vi.getTimerCount()).toBe(1)
+    await vi.advanceTimersByTimeAsync(499)
+    expect(ErrorOnlyFakeWebSocket.instances).toHaveLength(1)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(ErrorOnlyFakeWebSocket.instances).toHaveLength(2)
+    t.close?.()
+  })
+
+  it('websocket_error_then_close_on_same_socket_is_handled_once', async () => {
+    const statuses: unknown[] = []
+    const t = websocketTransport({ url: 'wss://a', onStatus: (s) => statuses.push(s) })
+    t.onMessage(() => {})
+    sock(0).fail() // dispatches 'error' then 'close' (1006), as browsers do
+    expect(statuses).toEqual([
+      { state: 'connecting' },
+      { state: 'closed', closeCode: 1006, firstConnectFailed: true },
+    ])
+    expect(vi.getTimerCount()).toBe(1)
+    await vi.advanceTimersByTimeAsync(500)
+    expect(FakeWebSocket.instances).toHaveLength(2)
+    t.close?.()
+  })
+
+  it('websocket_real_socket_reports_unreachable_on_refused_connection', async () => {
+    vi.unstubAllGlobals()
+    vi.useRealTimers()
+    const { createServer } = await import('node:net')
+    const server = createServer()
+    const port = await new Promise<number>((resolve, reject) => {
+      server.once('error', reject)
+      server.listen(0, '127.0.0.1', () => {
+        const addr = server.address()
+        resolve(typeof addr === 'object' && addr ? addr.port : 0)
+      })
+    })
+    await new Promise<void>((resolve, reject) => server.close((e) => (e ? reject(e) : resolve())))
+
+    const statuses: unknown[] = []
+    const t = websocketTransport({
+      url: `ws://127.0.0.1:${port}`,
+      onStatus: (s) => statuses.push(s),
+    })
+    const closed = new Promise<void>((resolve) => {
+      const unsub = t.onMessage(() => {})
+      const check = (): void => {
+        if (statuses.some((s) => (s as { state: string }).state === 'closed')) {
+          unsub()
+          resolve()
+        } else {
+          setTimeout(check, 20)
+        }
+      }
+      check()
+    })
+    await closed
+    t.close?.()
+    expect(statuses[0]).toEqual({ state: 'connecting' })
+    expect(statuses[1]).toEqual({ state: 'closed', closeCode: 1006, firstConnectFailed: true })
+  }, 30000)
 })

@@ -224,12 +224,11 @@ export function websocketTransport(o: WebSocketTransportOptions): BridgeTranspor
     for (const h of [...handlers]) safeCall(() => h(message), 'websocket message handler')
   }
 
-  const onClosed = (c: Connection, event: Event): void => {
+  const handleClosed = (c: Connection, code: number): void => {
     if (conn !== c) return
     conn = null
     c.phase = 'closed'
     rejectWaiters(c, 'socket closed')
-    const code = (event as CloseEvent).code
     status({
       state: 'closed',
       closeCode: code,
@@ -242,6 +241,22 @@ export function websocketTransport(o: WebSocketTransportOptions): BridgeTranspor
     }
     timer = setTimeout(connect, delay)
     delay = Math.min(delay * 2, maxDelay)
+  }
+
+  const onClosed = (c: Connection, event: Event): void => {
+    handleClosed(c, (event as CloseEvent).code)
+  }
+
+  /**
+   * Node's global `WebSocket` fires `error` (never `close`) when a connection fails before
+   * opening (e.g. `ECONNREFUSED`); browsers fire both. Treat a pre-open `error` as an abnormal
+   * close (1006) so both environments report status and reconnect the same way. `handleClosed`'s
+   * `conn !== c` guard (it clears `conn` before returning) makes this idempotent: a browser's
+   * subsequent real `close` for the same socket is a no-op here.
+   */
+  const onError = (c: Connection, _event: Event): void => {
+    if (conn !== c || c.opened) return
+    handleClosed(c, 1006)
   }
 
   function connect(): void {
@@ -263,6 +278,7 @@ export function websocketTransport(o: WebSocketTransportOptions): BridgeTranspor
     ws.addEventListener('open', () => void onOpened(c))
     ws.addEventListener('message', (e) => onFrame(c, e))
     ws.addEventListener('close', (e) => onClosed(c, e))
+    ws.addEventListener('error', (e) => onError(c, e))
   }
 
   const start = (): void => {
