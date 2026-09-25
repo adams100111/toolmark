@@ -2,22 +2,38 @@
   "name": "@toolmark/tour",
   "version": "0.1.0-next.3",
   "description": "Framework-free guided tour engine over the registry's tools, anchors and interaction events, with a vanilla-DOM overlay and a React binding.",
-  "license": "MIT",
-  "type": "module",
-  "sideEffects": [
-    "**/*.css"
+  "keywords": [
+    "toolmark",
+    "ai",
+    "agents",
+    "llm",
+    "tools",
+    "tour",
+    "onboarding",
+    "guided-tour"
   ],
+  "homepage": "https://github.com/adams100111/toolmark/tree/main/packages/tour#readme",
+  "bugs": {
+    "url": "https://github.com/adams100111/toolmark/issues"
+  },
+  "license": "MIT",
+  "author": "adams100111",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/adams100111/toolmark.git",
     "directory": "packages/tour"
   },
+  "type": "module",
+  "sideEffects": [
+    "**/*.css"
+  ],
   "engines": {
     "node": ">=22.12"
   },
   "files": [
     "dist",
-    "src"
+    "src",
+    "CHANGELOG.md"
   ],
   "exports": {
     ".": {
@@ -65,5 +81,9 @@
     "playwright": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
   }
 }
