@@ -1,5 +1,11 @@
 # @toolmark/testing
 
+## 0.1.0-next.3
+
+### Patch Changes
+
+- @toolmark/core@0.1.0-next.3
+
 ## 0.1.0-next.2
 
 ### Patch Changes
