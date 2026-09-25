@@ -336,8 +336,8 @@ final class BrowserBridge
     private function summaryEntry(mixed $t): ?array
     {
         if (! is_array($t)
-            || ! is_string($t['name'] ?? null) || preg_match('/^[A-Za-z0-9_.-]{1,128}$/', $t['name']) !== 1
-            || ! is_string($t['llmName'] ?? null) || preg_match('/^[a-zA-Z0-9_-]{1,64}$/', $t['llmName']) !== 1
+            || ! is_string($t['name'] ?? null) || preg_match('/^[A-Za-z0-9_.-]{1,128}\z/', $t['name']) !== 1
+            || ! is_string($t['llmName'] ?? null) || preg_match('/^[a-zA-Z0-9_-]{1,64}\z/', $t['llmName']) !== 1
             || ! is_string($t['description'] ?? null) || mb_strlen($t['description']) > self::MAX_DESCRIPTION_CHARS
             || ! is_array($t['hints'] ?? null) || ($t['hints'] !== [] && array_is_list($t['hints']))
             || (isset($t['title']) && (! is_string($t['title']) || mb_strlen($t['title']) > self::MAX_DESCRIPTION_CHARS))
@@ -861,9 +861,14 @@ current user is authorized to run (a `Gate`/policy check before rendering), and 
 tool visits **MUST** re-authorize and re-validate the request: the list on the page is a hint for
 the agent, not a permission.
 
-The builder repeats the client's checks, so a bad entry fails on the server (an exception outside
-production; a log line and a skipped entry in production) instead of being skipped silently on the
-page.
+The builder repeats the client's structural checks (name, description and title lengths, method,
+hints, route, closed non-GET root schema, reserved keys, schema size), so such a bad entry fails on
+the server (an exception outside production; a log line and a skipped entry in production) instead
+of being skipped silently on the page. It does **not** convert the schema: a `$ref` that is not a
+local `#/$defs/...` reference, a `pattern` the client rejects as unsafe (a quantified group that
+contains another quantifier, such as `(a+)+`) or another keyword outside the `fromJsonSchema`
+subset still passes here, and the page skips that tool with an `invalid_props_tool` event. Keep
+input schemas to that subset and test them on the page.
 
 ```php
 <?php
@@ -921,7 +926,7 @@ final class ToolmarkProps
     private const MAX_TITLE = 128; // UTF-16 code units, as the client counts
     private const MAX_DESCRIPTION = 2048; // UTF-16 code units
     private const MAX_SCHEMA_BYTES = 32768; // UTF-8 bytes of the JSON: never less than the client's count
-    private const NAME = '/^[A-Za-z0-9_.-]{1,128}$/';
+    private const NAME = '/^[A-Za-z0-9_.-]{1,128}\z/'; // \z: `$` would accept a trailing newline
     private const METHODS = ['get', 'post', 'put', 'patch', 'delete'];
     private const RESERVED_KEYS = ['_method', '_token'];
     private const HINTS = ['readOnly', 'consequential', 'destructive', 'untrustedContent'];

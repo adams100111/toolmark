@@ -57,8 +57,8 @@ Toolmark attributes:
 | `data-tool-group="<name>"`  | any ancestor             | Puts the tools in a scope of that name (tool names become `<group>.<name>`).                 |
 | `data-tool-readonly`        | button                   | `readOnly` hint (ignored on a button that submits or resets a form).                         |
 | `data-tool-consequential`   | button                   | `consequential` hint.                                                                        |
-| `data-tool-destructive`     | form, button             | `destructive` hint (on a form: its submit).                                                  |
-| `data-tool-confirm`         | form, button             | Confirmation summary (≤ 500 characters).                                                     |
+| `data-tool-destructive`     | form, button             | `destructive` hint (on a `data-tool` form: its submit; ignored on a `toolname` form).        |
+| `data-tool-confirm`         | form, button             | Confirmation summary, ≤ 500 characters (on a form: `data-tool` forms only).                  |
 | `data-tool-param-<name>`    | form                     | Description of the field whose control `name` is `<name>`.                                   |
 | `data-tool-options-url`     | control                  | Same-origin JSON endpoint for the field's options lookup.                                    |
 | `data-tool-column="<name>"` | `th`                     | A queryable column (`^[A-Za-z0-9_-]{1,64}$`).                                                |
@@ -115,8 +115,9 @@ an `invalid_name` event (never thrown, also in development).
 A form with `toolname` + `tooldescription`, or `data-tool` + `data-tool-description`, registers
 `<name>.fill` and `<name>.submit` through `domFormAdapter` and a synthesized schema, plus
 `<name>.options` when a field has an accepted `data-tool-options-url`. The submit is
-`consequential` (a form's `data-tool-destructive` makes it `destructive`; `toolautosubmit` on a
-native form removes the hint). `fill` and `submit` results are `untrustedContent`.
+`consequential` (on a `data-tool` form, `data-tool-destructive` makes it `destructive` and
+`data-tool-confirm` sets its confirmation summary; both are ignored on a `toolname` form, whose only
+submit option is `toolautosubmit`, which removes the hint). `fill` and `submit` results are `untrustedContent`.
 
 ### Which controls are fields
 
