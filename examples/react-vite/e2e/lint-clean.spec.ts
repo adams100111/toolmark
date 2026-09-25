@@ -3,14 +3,14 @@ import { fileURLToPath } from 'node:url'
 import { expect, test } from '@playwright/test'
 import { exampleOrigin } from './support/mcp-client.js'
 
-// M4 exit 6: the real `toolmark lint` CLI (built by `e2e/global-setup.ts`) against the running
+// M4 exit 6: the real `toolmark lint` CLI (spawned as `node dist/cli.js lint …`, the bin's target) (built by `e2e/global-setup.ts`) against the running
 // example — the main page and both hash routes — exits 0.
 
 const LINT_CLI = fileURLToPath(new URL('../../../packages/lint/dist/cli.js', import.meta.url))
 
 function runLint(args: string[]): Promise<{ code: number | null; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [LINT_CLI, ...args], { stdio: 'pipe' })
+    const child = spawn(process.execPath, [LINT_CLI, 'lint', ...args], { stdio: 'pipe' })
     let stdout = ''
     let stderr = ''
     child.stdout.on('data', (d: Buffer) => (stdout += d.toString()))
