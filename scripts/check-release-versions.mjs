@@ -11,12 +11,19 @@
 //   node scripts/check-release-versions.mjs --tarballs <dir>
 //       every packed `package.json` in <dir> (searched recursively for `.tgz`) names its
 //       `@toolmark/*` dependencies with a concrete version or a `^`/`~` range of the package's own
-//       version — never `workspace:` or any other version.
+//       version — never `workspace:` or any other version;
+//   node scripts/check-release-versions.mjs --plan <dir>
+//       <dir> is a `changesets/action/pack` output (`publish-plan.json` + `packages/*.tgz`). Every
+//       plan entry is a `publish` of an `@toolmark/*` name whose `tarball.path` matches
+//       `packages/<name>-<version>.tgz` (no traversal), whose tarball's sha256 equals the plan's
+//       `integrity`, and whose packed `package.json` has the plan's exact `name` and `version`
+//       and no install lifecycle script (npm publishes what the tarball says, not the plan).
 //
 // `--root` (default: the repository root) is the workspace whose `packages/*/package.json` are read.
 // Prints PASS/FAIL lines and exits 0 (pass), 1 (fail) or 2 (usage).
+import { createHash } from 'node:crypto'
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
-import { dirname, join, relative, resolve } from 'node:path'
+import { dirname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { gunzipSync } from 'node:zlib'
 
@@ -50,6 +57,7 @@ function parseArgs(argv) {
     else if (arg === '--pre') modes.push({ mode: 'pre', value: value() })
     else if (arg === '--exact') modes.push({ mode: 'exact', value: value() })
     else if (arg === '--tarballs') modes.push({ mode: 'tarballs', value: value() })
+    else if (arg === '--plan') modes.push({ mode: 'plan', value: value() })
     else if (arg === '--root') opts.root = resolve(value())
     else usage(`unknown argument: ${arg}`)
   }
@@ -213,5 +221,98 @@ function checkTarballs(dir) {
   return failed === 0 ? 0 : 1
 }
 
+const PLAN_NAME = /^@toolmark\/[a-z0-9-]+$/
+const PLAN_PATH = /^packages\/[a-z0-9-]+-[0-9A-Za-z.-]+\.tgz$/
+const INSTALL_SCRIPTS = ['preinstall', 'install', 'postinstall']
+
+/** Problems with one publish-plan entry and its tarball under `dir`. */
+function checkPlanEntry(dir, entry) {
+  if (!entry || typeof entry !== 'object') return ['plan entry is not an object']
+  const { kind, name, version } = entry
+  if (kind !== 'publish') return [`${name}: unexpected plan entry kind "${kind}"`]
+  if (typeof name !== 'string' || !PLAN_NAME.test(name)) {
+    return [`unexpected package name "${name}" (expected @toolmark/<name>)`]
+  }
+  if (typeof version !== 'string' || !SEMVER.test(version)) {
+    return [`${name}: plan version "${version}" is not a valid semver version`]
+  }
+  const path = entry.tarball?.path
+  if (
+    typeof path !== 'string' ||
+    !PLAN_PATH.test(path) ||
+    path.includes('..') ||
+    !resolve(dir, path).startsWith(resolve(dir) + sep)
+  ) {
+    return [`${name}: tarball path "${path}" is not packages/<name>-<version>.tgz`]
+  }
+  const file = resolve(dir, path)
+  if (!existsSync(file) || !statSync(file).isFile()) return [`${name}: tarball ${path} is missing`]
+  const problems = []
+  const bytes = readFileSync(file)
+  const integrity = `sha256-${createHash('sha256').update(bytes).digest('base64')}`
+  if (integrity !== entry.tarball.integrity) {
+    problems.push(`${name}: tarball integrity ${integrity} != plan ${entry.tarball.integrity}`)
+  }
+  let pkg = null
+  try {
+    const text = packedManifest(file)
+    pkg = text === null ? null : JSON.parse(text)
+  } catch {
+    /* reported below */
+  }
+  if (!pkg || typeof pkg !== 'object')
+    return [...problems, `${name}: no readable package/package.json`]
+  if (pkg.name !== name) problems.push(`${name}: packed name "${pkg.name}" != plan name ${name}`)
+  if (pkg.version !== version) {
+    problems.push(`${name}: packed version "${pkg.version}" != plan version ${version}`)
+  }
+  for (const script of INSTALL_SCRIPTS) {
+    if (pkg.scripts && Object.hasOwn(pkg.scripts, script)) {
+      problems.push(`${name}: packed manifest has install lifecycle script "${script}"`)
+    }
+  }
+  return problems
+}
+
+function checkPlan(dir) {
+  const planFile = join(dir, 'publish-plan.json')
+  let doc = null
+  try {
+    doc = JSON.parse(readFileSync(planFile, 'utf8'))
+  } catch {
+    /* reported below */
+  }
+  if (
+    !doc ||
+    doc.version !== 1 ||
+    !Array.isArray(doc.plan) ||
+    !doc.plan.every((group) => Array.isArray(group))
+  ) {
+    console.log(
+      `FAIL --plan: ${planFile} is not a version-1 publish-plan ({ version: 1, plan: [[...]] })`,
+    )
+    return 1
+  }
+  const entries = doc.plan.flat()
+  if (entries.length === 0) {
+    console.log(`FAIL --plan: ${planFile} has no entries`)
+    return 1
+  }
+  let failed = 0
+  for (const entry of entries) {
+    const problems = checkPlanEntry(dir, entry)
+    if (problems.length === 0)
+      console.log(`PASS --plan: ${entry.name}@${entry.version} (${entry.tarball.path})`)
+    else failed++
+    for (const p of problems) console.log(`FAIL --plan: ${p}`)
+  }
+  console.log(`check-release-versions --plan: ${entries.length - failed} passed, ${failed} failed`)
+  return failed === 0 ? 0 : 1
+}
+
 const opts = parseArgs(process.argv.slice(2))
-process.exit(opts.mode === 'tarballs' ? checkTarballs(resolve(opts.value)) : checkWorkspace(opts))
+const run = {
+  tarballs: () => checkTarballs(resolve(opts.value)),
+  plan: () => checkPlan(resolve(opts.value)),
+}
+process.exit((run[opts.mode] ?? (() => checkWorkspace(opts)))())

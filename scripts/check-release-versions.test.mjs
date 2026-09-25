@@ -2,7 +2,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { rm } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { readFile, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { scratch, writeTgz } from './fixtures/tgz.mjs'
@@ -150,4 +151,107 @@ test('check_release_versions_usage_error', () => {
   const r = runScript([])
   assert.equal(r.status, 2, r.output)
   assert.match(r.output, /usage/i)
+})
+
+/** The tarball file name changesets `pack` gives a release (`@toolmark/core` → `toolmark-core-1.0.0.tgz`). */
+function tgzName(name, version) {
+  return `${name.replace('@', '').replace('/', '-')}-${version}.tgz`
+}
+
+/**
+ * A packed release dir like `changesets/action/pack` uploads: `packages/*.tgz` plus
+ * `publish-plan.json`. `entries` are `{ manifest, plan?: {...overrides}, integrity? }`; each
+ * tarball holds `manifest`, and each plan entry defaults to the manifest's name/version.
+ */
+async function runPlan(entries, { planDoc } = {}) {
+  const dir = await scratch('toolmark-release-plan-', {})
+  try {
+    const plan = []
+    for (const e of entries) {
+      const path = `packages/${tgzName(e.manifest.name, e.manifest.version)}`
+      await writeTgz(join(dir, path), {
+        'package/package.json': JSON.stringify(e.manifest),
+        'package/README.md': '# x\n',
+      })
+      const integrity = `sha256-${createHash('sha256')
+        .update(await readFile(join(dir, path)))
+        .digest('base64')}`
+      plan.push({
+        kind: 'publish',
+        name: e.manifest.name,
+        version: e.manifest.version,
+        tag: 'latest',
+        ...e.plan,
+        tarball: { path, integrity, ...e.plan?.tarball },
+      })
+    }
+    const doc = planDoc ?? { version: 1, plan: [plan] }
+    await writeFile(join(dir, 'publish-plan.json'), JSON.stringify(doc))
+    return runScript(['--plan', dir])
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+}
+
+const core = { name: '@toolmark/core', version: '1.0.0' }
+const react = {
+  name: '@toolmark/react',
+  version: '1.0.0',
+  dependencies: { '@toolmark/core': '1.0.0' },
+}
+
+test('check_release_versions_plan_accepts_matching_tarballs', async () => {
+  const r = await runPlan([{ manifest: core }, { manifest: react }])
+  assert.equal(r.status, 0, r.output)
+  assert.match(r.output, /PASS .*@toolmark\/core@1\.0\.0/)
+  assert.match(r.output, /PASS .*@toolmark\/react@1\.0\.0/)
+})
+
+test('check_release_versions_plan_rejects_manifest_version_mismatch', async () => {
+  // The tarball says 1.0.1, the plan (and so every version check upstream) says 1.0.0.
+  const r = await runPlan([{ manifest: { ...core, version: '1.0.1' }, plan: { version: '1.0.0' } }])
+  assert.equal(r.status, 1, r.output)
+  assert.match(r.output, /FAIL .*@toolmark\/core.*version "1\.0\.1".*plan.*1\.0\.0/)
+})
+
+test('check_release_versions_plan_rejects_manifest_name_mismatch', async () => {
+  const r = await runPlan([
+    { manifest: { name: '@toolmark/evil', version: '1.0.0' }, plan: { name: '@toolmark/core' } },
+  ])
+  assert.equal(r.status, 1, r.output)
+  assert.match(r.output, /FAIL .*name "@toolmark\/evil".*plan.*@toolmark\/core/)
+})
+
+test('check_release_versions_plan_rejects_install_scripts', async () => {
+  const r = await runPlan([{ manifest: { ...core, scripts: { postinstall: 'node x.js' } } }])
+  assert.equal(r.status, 1, r.output)
+  assert.match(r.output, /FAIL .*install lifecycle script.*postinstall/)
+})
+
+test('check_release_versions_plan_rejects_unsafe_paths', async () => {
+  for (const path of ['../evil.tgz', '/etc/passwd', 'packages/../../x.tgz', 'other/core.tgz']) {
+    const r = await runPlan([{ manifest: core, plan: { tarball: { path } } }])
+    assert.equal(r.status, 1, `${path}: ${r.output}`)
+    assert.match(r.output, /FAIL .*tarball path/, path)
+  }
+})
+
+test('check_release_versions_plan_rejects_integrity_mismatch', async () => {
+  const r = await runPlan([{ manifest: core, plan: { tarball: { integrity: 'sha256-AAAA' } } }])
+  assert.equal(r.status, 1, r.output)
+  assert.match(r.output, /FAIL .*integrity/)
+})
+
+test('check_release_versions_plan_rejects_bad_entries', async () => {
+  const kind = await runPlan([{ manifest: core, plan: { kind: 'skip' } }])
+  assert.equal(kind.status, 1, kind.output)
+  assert.match(kind.output, /FAIL .*kind/)
+  const name = await runPlan([{ manifest: { name: 'left-pad', version: '1.0.0' } }])
+  assert.equal(name.status, 1, name.output)
+  assert.match(name.output, /FAIL .*package name/)
+  const shape = await runPlan([], { planDoc: { version: 2, plan: {} } })
+  assert.equal(shape.status, 1, shape.output)
+  assert.match(shape.output, /FAIL .*publish-plan/)
+  const empty = await runPlan([])
+  assert.equal(empty.status, 1, empty.output)
 })
