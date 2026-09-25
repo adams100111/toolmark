@@ -115,8 +115,8 @@ test('render_round_budget_writes_one_row_per_entry', async () => {
     const run = spawnSync(process.execPath, [RENDER, json, '--out', md], { encoding: 'utf8' })
     assert.equal(run.status, 0, run.stdout + run.stderr)
     const text = await readFile(md, 'utf8')
-    assert.match(text, /\| simple_form \| 3 \| ≤ 3 \| 3 \| 659 \| 1089 \| 57 \|/)
-    assert.match(text, /\| wizard \| 4 \| ≤ 5 \| 6 \| 900 \| 2000 \| 120 \|/)
+    assert.match(text, /\| simple_form +\| 3 +\| ≤ 3 +\| 3 +\| 659 +\| 1089 +\| 57 +\|/)
+    assert.match(text, /\| wizard +\| 4 +\| ≤ 5 +\| 6 +\| 900 +\| 2000 +\| 120 +\|/)
     assert.match(text, /Commit: `[0-9a-f]{40}`/)
     assert.match(text, /a \*\*round\*\* is one agent turn/i)
   } finally {
@@ -162,7 +162,7 @@ test('render_round_budget_accepts_input_as_first_or_last_argument', async () => 
     ]) {
       const run = spawnSync(process.execPath, [RENDER, ...argv], { encoding: 'utf8' })
       assert.equal(run.status, 0, `${argv.join(' ')}: ${run.stdout}${run.stderr}`)
-      assert.match(await readFile(md, 'utf8'), /\| simple_form \| 3 \|/)
+      assert.match(await readFile(md, 'utf8'), /\| simple_form +\| 3 +\|/)
     }
   } finally {
     await rm(root, { recursive: true, force: true })
@@ -193,7 +193,7 @@ test('render_round_budget_defaults_to_docs_release', async () => {
     const run = spawnSync(process.execPath, [script, json], { encoding: 'utf8', cwd: root })
     assert.equal(run.status, 0, run.stdout + run.stderr)
     const text = await readFile(join(root, 'docs', 'release', 'round-budget.md'), 'utf8')
-    assert.match(text, /\| simple_form \| 2 \| ≤ 3 \|/)
+    assert.match(text, /\| simple_form +\| 2 +\| ≤ 3 +\|/)
   } finally {
     await rm(root, { recursive: true, force: true })
   }

@@ -71,9 +71,18 @@ async function main() {
     return 1
   }
 
-  const rows = report.map((r) => {
+  const header = [
+    'task',
+    'rounds',
+    'budget',
+    'messages',
+    'manifestBytes',
+    'describeBytes',
+    'wallMs',
+  ]
+  const body = report.map((r) => {
     const budget = budgetOf(r.task)
-    const cells = [
+    return [
       r.task,
       r.rounds,
       budget === undefined ? '—' : `≤ ${budget}`,
@@ -81,9 +90,12 @@ async function main() {
       r.manifestBytes,
       r.describeBytes,
       r.wallMs,
-    ]
-    return `| ${cells.join(' | ')} |`
+    ].map(String)
   })
+  // Column-aligned like Prettier's Markdown output, so `prettier --check` stays clean.
+  const widths = header.map((h, c) => Math.max(3, h.length, ...body.map((row) => row[c].length)))
+  const line = (cells) => `| ${cells.map((cell, c) => cell.padEnd(widths[c])).join(' | ')} |`
+  const rows = [line(header), line(widths.map((w) => '-'.repeat(w))), ...body.map(line)]
   const date = new Date().toISOString().slice(0, 10)
   const text = [
     '# Round budget',
@@ -93,8 +105,6 @@ async function main() {
     '',
     `Commit: \`${commitSha()}\` · Date: ${date} · Browser: Chromium`,
     '',
-    '| task | rounds | budget | messages | manifestBytes | describeBytes | wallMs |',
-    '| --- | --- | --- | --- | --- | --- | --- |',
     ...rows,
     '',
     '## Definitions',
@@ -111,7 +121,7 @@ async function main() {
   ].join('\n')
   await mkdir(dirname(out), { recursive: true })
   await writeFile(out, text)
-  console.log(`round budget written to ${out} (${rows.length} row(s))`)
+  console.log(`round budget written to ${out} (${body.length} row(s))`)
   return 0
 }
 
