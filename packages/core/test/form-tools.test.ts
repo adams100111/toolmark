@@ -320,6 +320,17 @@ describe('form tools', () => {
     expect(r3).toMatchObject({
       data: { changes: [{ path: 'address.city', before: '[redacted]' }] },
     })
+    for (const token of ['current-password', 'section-a NEW-PASSWORD', 'one-time-code']) {
+      const pwEl = {
+        tagName: 'INPUT',
+        getAttribute: (n: string) => (n === 'autocomplete' ? token : null),
+      }
+      adapter.fieldInfo = [{ path: 'title', element: pwEl as unknown as Element }]
+      const r4 = await fill({ title: `T-${token}` })
+      expect(r4).toMatchObject({
+        data: { changes: [{ path: 'title', before: '[redacted]', after: '[redacted]' }] },
+      })
+    }
   })
 
   it('undo_restores_before_values', async () => {

@@ -280,6 +280,9 @@ function fillJsonSchema(
   return schema
 }
 
+/** Secret `autocomplete` tokens (besides `cc-*`); mirrors the DOM adapter's exclusion list. */
+const SECRET_AUTOCOMPLETE = new Set(['current-password', 'new-password', 'one-time-code'])
+
 function isSensitiveElement(el: Element | null | undefined): boolean {
   if (!el || typeof el !== 'object') return false
   const loose = el as unknown as {
@@ -306,7 +309,7 @@ function isSensitiveElement(el: Element | null | undefined): boolean {
       .trim()
       .toLowerCase()
       .split(/\s+/)
-      .some((token) => token.startsWith('cc-'))
+      .some((token) => token.startsWith('cc-') || SECRET_AUTOCOMPLETE.has(token))
   )
 }
 
