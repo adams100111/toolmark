@@ -776,12 +776,15 @@ The M5 final whole-branch review found two Important defects and two Minor gaps 
 redaction code behind SEC-5 and SEC-11. All four are resolved on the M5 release branch, in commit
 `b9c81fa`. Their regression tests are in `packages/core/test/security-2026-final.test.ts`.
 
-| id     | severity  | item   | summary                                                                                                                                             | resolution | commit    | regression test                                    |
-| ------ | --------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- | --------- | -------------------------------------------------- |
-| SEC-24 | Important | 10     | `redactChanges` matched sensitive paths as raw strings, so `[]` wildcard paths leaked `ctx.confirm` and OTel field changes (`cards.0.cvc`, `cards`) | fixed      | `b9c81fa` | `sec_24_ctx_confirm_changes_redact_wildcard_paths` |
-| SEC-25 | Minor     | 10     | `ctx.confirm` changes and OTel result changes were sent unredacted when `sensitivePaths()` threw or returned a non-array                            | fixed      | `b9c81fa` | `sec_25_ctx_confirm_changes_fail_closed`           |
-| SEC-26 | Important | 10, 11 | SEC-11 restored array placeholders by index, so an approver who deleted, inserted or reordered rows put one row's secret on another row             | fixed      | `b9c81fa` | `sec_26_deferred_delete_row_refuses`               |
-| SEC-27 | Minor     | 10, 11 | A `'[redacted]'` placeholder at a sensitive path with no stored value (a copied row, a restructured key) reached validation as literal text         | fixed      | `b9c81fa` | `sec_27_restructured_placeholder_refuses`          |
+| id     | severity  | item   | summary                                                                                                                                                                         | resolution | commit    | regression test                                                    |
+| ------ | --------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- | --------- | ------------------------------------------------------------------ |
+| SEC-24 | Important | 10     | `redactChanges` matched sensitive paths as raw strings, so `[]` wildcard paths leaked `ctx.confirm` and OTel field changes (`cards.0.cvc`, `cards`)                             | fixed      | `b9c81fa` | `sec_24_ctx_confirm_changes_redact_wildcard_paths`                 |
+| SEC-25 | Minor     | 10     | `ctx.confirm` changes and OTel result changes were sent unredacted when `sensitivePaths()` threw or returned a non-array                                                        | fixed      | `b9c81fa` | `sec_25_ctx_confirm_changes_fail_closed`                           |
+| SEC-26 | Important | 10, 11 | SEC-11 restored array placeholders by index, so an approver who deleted, inserted or reordered rows put one row's secret on another row                                         | fixed      | `b9c81fa` | `sec_26_deferred_delete_row_refuses`                               |
+| SEC-27 | Minor     | 10, 11 | A `'[redacted]'` placeholder at a sensitive path with no stored value (a copied row, a restructured key) reached validation as literal text                                     | fixed      | `b9c81fa` | `sec_27_restructured_placeholder_refuses`                          |
+| SEC-28 | Minor     | 10, 11 | When `sensitivePaths()` threw at approval time (after the public input was built), an edited approval ran the tool with a literal `'[redacted]'`                                | fixed      | `691f1cd` | `sec_28_inline_edit_refuses_when_sensitive_paths_throw_at_restore` |
+| SEC-29 | Minor     | 10     | The OTel exporter turned the fail-closed `null` paths read at call start into `[]`, so result changes of a tool unregistered before its result were exported unredacted         | fixed      | `691f1cd` | `sec_29_otel_result_changes_fail_closed_after_unregister`          |
+| SEC-30 | Minor     | 10, 11 | The SEC-11 restore took an object node's sources from a raw array by key, so an index-keyed rewrite of reordered rows bound secrets to the wrong rows (permissive schemas only) | fixed      | `691f1cd` | `sec_30_index_keyed_object_over_an_array_refuses`                  |
 
 - SEC-24: `redactChanges` (now shared by `ctx.confirm`, the OTel exporter and form results) uses
   the wildcard-aware matchers: a change at or under a sensitive path is redacted whole; a change
@@ -807,6 +810,25 @@ redaction code behind SEC-5 and SEC-11. All four are resolved on the M5 release 
   past the walk's node budget the restore fails closed (`sec_27_placeholder_without_raw_value_refuses`).
   Documented in `docs/concepts/confirmation.md`, the `ConfirmRequest.input` and `ctx.confirm`
   TSDoc, and the `@toolmark/core` 1.0.0 changelog entry.
+
+SEC-28..SEC-30 come from the re-review of that fix wave (n-1..n-3). They are resolved in commit
+`691f1cd`; their regression tests are in `packages/core/test/security-2026-final-n.test.ts`.
+
+- SEC-28: after the restore, any `'[redacted]'` left in the edited input that the stored input
+  does not hold at the same position is refused as `invalid` "Re-enter sensitive field" at its
+  path. This covers a `sensitivePaths()` that throws at approval (nothing is restored, so every
+  placeholder is refused; a root placeholder still restores the whole input) and a placeholder the
+  approver adds outside the sensitive paths, which SEC-11 used to keep as literal text
+  (`sec_11_placeholder_outside_a_sensitive_path_is_refused` now asserts the refusal). A
+  placeholder the caller itself sent is kept. Also covered by
+  `sec_28_deferred_edit_refuses_when_sensitive_paths_throw_at_restore`,
+  `sec_28_placeholder_outside_a_sensitive_path_refuses` and
+  `sec_28_placeholder_the_caller_sent_is_kept`.
+- SEC-29: the call-start paths keep `null`, and a result with neither live nor call-start paths
+  (the tool is gone and no `call` was seen) redacts every change.
+- SEC-30: an object node whose stored counterpart is an array (and the reverse, already the case)
+  has no restore source, so its placeholders are refused
+  (`sec_30_array_over_an_index_keyed_object_refuses`).
 
 ## Release pipeline review
 
