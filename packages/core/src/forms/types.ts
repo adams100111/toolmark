@@ -38,6 +38,17 @@ export interface FormAdapter<V extends Record<string, unknown> = Record<string, 
   fields(): FieldInfo[]
 }
 
+/**
+ * Looks up candidate values for a form field (spec §8.3). Receives the agent's search `query`
+ * (`''` when none) and a `signal` that aborts on call cancellation or after 10 seconds. Items that
+ * are not `{ value: string | number | boolean, title: string }` are dropped; at most 50 are
+ * returned to the agent.
+ */
+export type OptionsProvider = (args: {
+  query: string
+  signal: AbortSignal
+}) => Promise<Array<{ value: string | number | boolean; title: string }>>
+
 /** Options for {@link createFormTools}. */
 export interface FormToolOptions<V> {
   /** Tool name prefix: registers `<name>.fill` and `<name>.submit`. */
@@ -54,4 +65,10 @@ export interface FormToolOptions<V> {
   submitSummary?: (values: V) => string
   /** Dot paths whose values are always redacted (spec §14). */
   sensitive?: string[]
+  /**
+   * Async option lookups by field (spec §8.3). Keys are dot paths; `[]` stands for any array
+   * index (`sponsors[].memberId`). When non-empty, `<name>.options({ field, query? })` is
+   * registered (`readOnly`, `untrustedContent`) and the `fill` schema tells the agent to use it.
+   */
+  options?: Record<string, OptionsProvider>
 }

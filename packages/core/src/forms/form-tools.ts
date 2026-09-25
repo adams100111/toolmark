@@ -18,6 +18,7 @@ import {
   setPath,
   snapshotValue,
 } from './paths.js'
+import { annotateOptionField, optionsToolDefinition } from './options.js'
 import type { FieldInfo, FormAdapter, FormToolOptions } from './types.js'
 
 const REDACTED = '[redacted]'
@@ -167,9 +168,13 @@ function wrapArrayOps(
 
 /**
  * The `fill` manifest schema (M1 rulings): input schema without `required`, then every array
- * property wrapped in the array-op `anyOf` (M2), `$defs` hoisted.
+ * property wrapped in the array-op `anyOf` (M2), `$defs` hoisted, then every option field's
+ * `description` suffixed with the `<name>.options` hint (M2 T2).
  */
-function fillJsonSchema(inputSchema: JsonSchema): JsonSchema {
+function fillJsonSchema(
+  inputSchema: JsonSchema,
+  options?: { form: string; keys: string[] },
+): JsonSchema {
   const stripped = stripRequired(inputSchema)
   const values = wrapArrayOps(stripped, inputSchema, {
     stripped,
@@ -186,6 +191,10 @@ function fillJsonSchema(inputSchema: JsonSchema): JsonSchema {
     delete values[key]
   }
   delete values.$schema
+  if (options) {
+    const suffix = ` (use ${options.form}.options to find valid values)`
+    for (const key of options.keys) annotateOptionField(values, schema, key, suffix)
+  }
   return schema
 }
 
@@ -582,11 +591,12 @@ const byPath = (a: { path: string }, b: { path: string }): number =>
 
 /**
  * Registers `<name>.fill` (partial, skips user-edited fields, undoable) and `<name>.submit`
- * (`consequential`) for a form (spec §8.1, D19).
+ * (`consequential`) for a form (spec §8.1, D19), plus `<name>.options` (`readOnly`) when
+ * `opts.options` declares async option lookups (spec §8.3).
  * @param tm - The registry.
  * @param adapter - The form adapter.
  * @param opts - Form tool options plus an optional target `scope`.
- * @returns A handle whose `dispose()` removes both tools.
+ * @returns A handle whose `dispose()` removes the form's tools.
  */
 export function createFormTools<V extends Record<string, unknown>>(
   tm: Toolmark,
@@ -806,6 +816,7 @@ export function createFormTools<V extends Record<string, unknown>>(
     })
   }
 
+  const optionKeys = opts.options ? Object.keys(opts.options) : []
   const title = opts.title !== undefined ? { title: opts.title } : {}
   const fillReg = tm.register(
     {
@@ -815,7 +826,10 @@ export function createFormTools<V extends Record<string, unknown>>(
         `${opts.description} Fill form fields: pass a partial object in "values" (null clears a ` +
         `field). Fields the user edited are skipped unless "overwrite" is true.`,
       input: fillInputSchema,
-      jsonSchema: fillJsonSchema(inputSchema),
+      jsonSchema: fillJsonSchema(
+        inputSchema,
+        optionKeys.length > 0 ? { form: opts.name, keys: optionKeys } : undefined,
+      ),
       run: (input, ctx) => fill(input, (restore) => ctx.registerUndo(restore)),
     },
     opts.scope ? { scope: opts.scope } : undefined,
@@ -853,10 +867,30 @@ export function createFormTools<V extends Record<string, unknown>>(
     fillReg.dispose()
     return { dispose() {} }
   }
+  // M2 T2: `<name>.options` when any field declares async options; all or nothing, like the pair.
+  let optionsReg: Registration | undefined
+  if (opts.options && optionKeys.length > 0) {
+    try {
+      optionsReg = tm.register(
+        optionsToolDefinition(tm, opts.name, opts.description, opts.options),
+        scopeOpt,
+      )
+    } catch (e) {
+      fillReg.dispose()
+      submitReg.dispose()
+      throw e
+    }
+    if (!isLive(optionsReg)) {
+      fillReg.dispose()
+      submitReg.dispose()
+      return { dispose() {} }
+    }
+  }
   return {
     dispose() {
       fillReg.dispose()
       submitReg.dispose()
+      optionsReg?.dispose()
     },
   }
 }
