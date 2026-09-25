@@ -14,10 +14,13 @@ export interface BridgeOptions {
    */
   onChange?: 'manifest' | 'changed'
   /**
-   * The caller identity used for policy, manifests and calls (default `'inapp'`). Validated at
-   * runtime: only `'inapp'` is accepted in this version.
+   * The caller identity used for every registry access — the `manifest` on attach and on each
+   * revision, `describe` and `call` — so policy, exposure and confirmation follow that caller
+   * (default `'inapp'`). `'mcp'` is for the desktop MCP pairing (`@toolmark/mcp/client`): it never
+   * lists, describes or runs a tool the `mcp` caller may not use, and it confirms inline. Validated
+   * at runtime: anything else (notably `'human'`) throws.
    */
-  caller?: 'inapp'
+  caller?: 'inapp' | 'mcp'
   /**
    * Largest accepted inbound message, in UTF-8 bytes of its JSON serialization (default
    * `1048576`). Larger messages are dropped with the `error` event `invalid_message`.
@@ -26,6 +29,8 @@ export interface BridgeOptions {
 }
 
 const DEFAULT_MAX_MESSAGE_BYTES = 1048576
+/** Callers a bridge may act as. Never `human` (approval-level trust) or a consumer-owned caller. */
+const BRIDGE_CALLERS: readonly string[] = ['inapp', 'mcp']
 const MAX_DEPTH = 64
 const REMEMBERED_IDS = 1000
 /** Terminal confirmation outcomes kept for confirmIds the bridge has not yet seen. */
@@ -176,15 +181,16 @@ function serializableCopy(result: ToolResult<unknown>): ToolResult<unknown> | nu
  * Every inbound message is treated as hostile: it is bounded (size and depth), copied, validated
  * against protocol v1 and ignored unless addressed to this registry's `clientId`. Each `call` and
  * `describe` id is answered exactly once; duplicates of an in-flight or recently answered id (last
- * 1000) are ignored. Deferred confirmations created by bridge calls are forwarded as `confirmed`
- * messages.
+ * 1000) are ignored. Every registry access uses `options.caller`. Deferred confirmations created by
+ * bridge calls are forwarded as `confirmed` messages (only a deferred-mode caller creates them; an
+ * inline caller such as `mcp` gets the final result directly).
  * @param options - Transport and behaviour; see {@link BridgeOptions}.
  * @returns A consumer for `tm.use`; its disposer unsubscribes everything, aborts in-flight calls
  * and closes the transport. A closed transport is not reopened, so attach the bridge outside React
  * effects (StrictMode runs an effect's cleanup and then the effect again), or create a new
  * transport for every attach.
  * @throws TypeError when `maxMessageBytes` is not a positive integer, or `caller` is anything
- * other than `'inapp'`.
+ * other than `'inapp'` or `'mcp'`.
  */
 export function bridge(options: BridgeOptions): (tm: Toolmark) => () => void {
   const maxBytes = options.maxMessageBytes ?? DEFAULT_MAX_MESSAGE_BYTES
@@ -193,10 +199,11 @@ export function bridge(options: BridgeOptions): (tm: Toolmark) => () => void {
   }
   const { transport } = options
   // Runtime check: an untyped caller (e.g. 'human') would inherit approval-level trust.
-  const caller: unknown = options.caller ?? 'inapp'
-  if (caller !== 'inapp') {
-    throw new TypeError("bridge caller must be 'inapp'")
+  const requested: unknown = options.caller ?? 'inapp'
+  if (typeof requested !== 'string' || !BRIDGE_CALLERS.includes(requested)) {
+    throw new TypeError("bridge caller must be 'inapp' or 'mcp'")
   }
+  const caller = requested as 'inapp' | 'mcp'
   const onChange = options.onChange === 'changed' ? 'changed' : 'manifest'
 
   return (tm) => {

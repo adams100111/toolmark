@@ -31,15 +31,25 @@ export interface ToolHints {
   untrustedContent?: boolean
 }
 
-/** Where a tool can be pointed at on the page (tour hooks, spec §13). Behaviour lands in M3. */
+/**
+ * Where a tool can be pointed at on the page (tour hooks, spec §13), read through `tm.anchor`.
+ * With a param, `tm.anchor` tries a `tm.setAnchor` override, then `params[param]`, then
+ * `resolve(param)`, then gives `null`; without one, an override, then `element()`, then `null`.
+ * Any `Element` works, including SVG and custom elements.
+ */
 export interface AnchorSpec {
   /** The tool's element. */
   element?: () => Element | null
-  /** Per-parameter elements. */
+  /** Per-parameter elements, keyed by input path (own keys only). */
   params?: Record<string, () => Element | null>
+  /**
+   * Fallback for params not in `params` (or whose `params` entry returned `null`), e.g. dynamic
+   * array paths such as `items.2.qty`.
+   */
+  resolve?: (param: string) => Element | null
 }
 
-/** Side-effect-free snapshot of a tool's current state (spec §13). Behaviour lands in M3. */
+/** Side-effect-free snapshot of a tool's current state (spec §13), read through `tm.state`. */
 export interface ToolState<I> {
   /** Current values. */
   values: Partial<I>
@@ -98,10 +108,16 @@ export interface ToolDefinition<I = unknown, O = unknown> {
   hints?: ToolHints
   /** User-facing one-liner for confirmation cards. */
   summary?: (input: I) => string
-  /** Tour anchors (behaviour in M3). */
+  /** Tour anchors, read through `tm.anchor`. */
   anchors?: AnchorSpec
-  /** State snapshot (behaviour in M3). */
+  /** Synchronous, side-effect-free state snapshot, read through `tm.state`. */
   state?: () => ToolState<I>
+  /**
+   * Input paths whose values are sensitive (passwords, `cc-*` fields, app-declared ones), evaluated
+   * on every read. Surfaced as `tm.info(name).sensitivePaths` so `state()` and telemetry share one
+   * redaction rule (spec §14). Never part of a manifest.
+   */
+  sensitivePaths?: () => string[]
   /** `'stepwise'` marks a stepwise wizard's tools; reported in manifest entries (spec §8.2). */
   mode?: 'stepwise'
   /** Where the tool came from (default `'code'`); read via `tm.info`, never in a manifest. */

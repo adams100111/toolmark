@@ -73,19 +73,27 @@ describe('tool mode, origin and tm.info', () => {
       scope: s,
     })
     tm.register(tool('srv', undefined, { origin: 'server' }))
-    expect(tm.info('code')).toEqual({ origin: 'code' })
-    expect(tm.info('page.book')).toEqual({ origin: 'native-form', nativeName: 'book_table' })
-    expect(tm.info('srv')).toEqual({ origin: 'server' })
+    expect(tm.info('code')).toEqual({ origin: 'code', sensitivePaths: [] })
+    expect(tm.info('page.book')).toEqual({
+      origin: 'native-form',
+      nativeName: 'book_table',
+      sensitivePaths: [],
+    })
+    expect(tm.info('srv')).toEqual({ origin: 'server', sensitivePaths: [] })
     expect(tm.info('book')).toBeUndefined()
     expect(tm.info('missing')).toBeUndefined()
     // Hidden (`when: false`) tools are still registered; disposed ones are gone.
     s.setWhen(false)
-    expect(tm.info('page.book')).toEqual({ origin: 'native-form', nativeName: 'book_table' })
+    expect(tm.info('page.book')).toEqual({
+      origin: 'native-form',
+      nativeName: 'book_table',
+      sensitivePaths: [],
+    })
     s.dispose()
     expect(tm.info('page.book')).toBeUndefined()
     // The returned object is a copy.
     const info = tm.info('code')!
     info.origin = 'dom'
-    expect(tm.info('code')).toEqual({ origin: 'code' })
+    expect(tm.info('code')).toEqual({ origin: 'code', sensitivePaths: [] })
   })
 })

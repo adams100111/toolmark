@@ -117,7 +117,7 @@ describe('navigationTool', () => {
       }),
     )
     tm.register(navigationTool({ routes, visit: (url, opts) => router.visit(url, opts) }))
-    expect(tm.info('orders.approve')).toEqual({ origin: 'server' })
+    expect(tm.info('orders.approve')).toEqual({ origin: 'server', sensitivePaths: [] })
 
     const r = await tm.call('navigate', { route: 'orders.index' }, { caller: 'inapp' })
     order.push(`result ${r.status}`)
