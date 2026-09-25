@@ -1,4 +1,10 @@
-import { isUnderSensitive, REDACTED } from './forms/hooks.js'
+import {
+  isSensitivePattern,
+  isUnderSensitive,
+  redactValues,
+  REDACTED,
+  sensitiveBelow,
+} from './forms/hooks.js'
 import { isPlainObject } from './forms/paths.js'
 import type { FieldChange } from './result.js'
 
@@ -71,14 +77,54 @@ export function redactInput(input: unknown, paths: readonly string[]): unknown {
   return overflow ? REDACTED : out
 }
 
-/** @internal Redacts `before`/`after` of every change at, under, or over one of `paths`. */
-export function redactChanges(changes: FieldChange[], paths: readonly string[]): FieldChange[] {
-  return changes.map((c) =>
-    paths.some((p) => c.path === p || c.path.startsWith(`${p}.`) || p.startsWith(`${c.path}.`))
-      ? { path: c.path, before: REDACTED, after: REDACTED }
-      : c,
-  )
+/**
+ * @internal SEC-5/SEC-24: `changes` with their sensitive values redacted, for confirmation payloads,
+ * telemetry and form results. `paths` are value-shaped sensitive paths (`[]` = any array index).
+ * A change at or under a sensitive path (`cards.0.cvc` under `cards[].cvc`) has `before`/`after`
+ * replaced by `'[redacted]'`; a change over one (`cards`, `cards.0`, or the root `''`) keeps its
+ * values with every sensitive descendant inside them redacted. A malformed pattern falls back to
+ * plain string matching and redacts the whole change. `paths === null` (the tool's sensitive paths
+ * could not be read) redacts every change: fail closed.
+ */
+export function redactChanges(
+  changes: readonly FieldChange[],
+  paths: readonly string[] | null,
+): FieldChange[] {
+  const whole = (c: FieldChange): FieldChange => ({
+    path: c.path,
+    before: REDACTED,
+    after: REDACTED,
+  })
+  if (paths === null) return changes.map(whole)
+  return changes.map((c) => {
+    const hit = paths.some((p) =>
+      isSensitivePattern(p)
+        ? isUnderSensitive(c.path, p)
+        : c.path === p || c.path.startsWith(`${p}.`) || p.startsWith(`${c.path}.`),
+    )
+    if (hit) return whole(c)
+    const below = paths.flatMap((p) => {
+      if (!isSensitivePattern(p)) return []
+      if (c.path === '') return [p]
+      const rest = sensitiveBelow(c.path, p)
+      return rest === undefined ? [] : [rest]
+    })
+    if (below.length === 0) return c
+    // Rooted under a `v` key so a walk that runs out of budget redacts the whole value (the
+    // expansion then fails closed to the path before the first `[]`, here `v`).
+    const inside = (v: unknown): unknown =>
+      typeof v === 'object' && v !== null
+        ? redactValues(
+            { v },
+            below.map((b) => `v.${b}`),
+          ).v
+        : v
+    return { path: c.path, before: inside(c.before), after: inside(c.after) }
+  })
 }
+
+/** @internal Outcome of {@link restoreRedacted}: the restored input, or the path to re-enter. */
+export type RestoreOutcome = { ok: true; value: unknown } | { ok: false; path: string }
 
 /**
  * @internal SEC-11: the approver-edited `edited` input with every `'[redacted]'` placeholder that
@@ -86,14 +132,25 @@ export function redactChanges(changes: FieldChange[], paths: readonly string[]):
  * the same position in `raw`, the stored real input. A sensitive path the approver changed keeps
  * its new value, and a placeholder outside the sensitive paths is kept as ordinary text. A root
  * `'[redacted]'` (the whole input was hidden) restores `raw` whole. Positions are matched key by
- * key, as {@link redactInput} walks them (dotted keys and `$append` included), so the result is
- * the edit applied to the real input. The walk is bounded like {@link redactInput}; past the
- * bounds the edit is returned unchanged (it is re-validated by the caller either way).
+ * key, as {@link redactInput} walks them (dotted keys and `$append` included).
+ *
+ * SEC-26: an array item is only matched to the raw item at the same index when the item's identity
+ * is unambiguous: the edited array has the raw array's length and the item's non-sensitive content
+ * is unchanged. Otherwise (a row deleted, inserted, reordered or edited) its placeholders have no
+ * source. SEC-27: a placeholder at a sensitive path with no source (that, or a key the approver
+ * restructured) is refused: `{ ok: false, path }`, the caller answers `invalid` "Re-enter
+ * sensitive field" there. The walk is bounded like {@link redactInput} and fails closed (path
+ * `''`) past its node budget.
  */
-export function restoreRedacted(edited: unknown, raw: unknown, paths: readonly string[]): unknown {
-  if (edited === REDACTED) return raw
-  if (paths.length === 0) return edited
+export function restoreRedacted(
+  edited: unknown,
+  raw: unknown,
+  paths: readonly string[],
+): RestoreOutcome {
+  if (edited === REDACTED) return { ok: true, value: raw }
+  if (paths.length === 0) return { ok: true, value: edited }
   let nodes = 0
+  let failed: string | undefined
   const sensitive = (segs: readonly string[]): boolean => {
     if (segs.length === 0) return false
     const path = segs.join('.')
@@ -105,25 +162,66 @@ export function restoreRedacted(edited: unknown, raw: unknown, paths: readonly s
       ? { value: (node as Record<string, unknown>)[key] }
       : undefined
   }
+  const keySegs = (segs: string[], key: string): string[] =>
+    key === '$append' ? segs : [...segs, ...key.split('.')]
+  /** Whether `a` and `b` agree everywhere outside the sensitive paths (bounded; else `false`). */
+  const sameVisible = (a: unknown, b: unknown, segs: string[], depth: number): boolean => {
+    if (++nodes > MAX_REDACT_NODES) {
+      failed ??= ''
+      return false
+    }
+    if (sensitive(segs)) return true
+    if (depth >= MAX_REDACT_DEPTH) return false
+    if (Array.isArray(a) || Array.isArray(b)) {
+      if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false
+      for (let i = 0; i < a.length; i++) {
+        if (i in a !== i in b) return false
+        if (!sameVisible(a[i], b[i], [...segs, String(i)], depth + 1)) return false
+      }
+      return true
+    }
+    if (isPlainObject(a) && isPlainObject(b)) {
+      const ka = Object.keys(a)
+      if (ka.length !== Object.keys(b).length) return false
+      return ka.every(
+        (k) =>
+          Object.prototype.hasOwnProperty.call(b, k) &&
+          sameVisible(a[k], b[k], keySegs(segs, k), depth + 1),
+      )
+    }
+    return Object.is(a, b)
+  }
   const walk = (
     node: unknown,
     source: { value: unknown } | undefined,
     segs: string[],
     depth: number,
   ): unknown => {
-    if (++nodes > MAX_REDACT_NODES) return node
-    if (
-      node === REDACTED &&
-      source !== undefined &&
-      (sensitive(segs) || depth >= MAX_REDACT_DEPTH)
-    ) {
-      return source.value
+    if (failed !== undefined) return node
+    if (++nodes > MAX_REDACT_NODES) {
+      failed = ''
+      return node
+    }
+    if (node === REDACTED) {
+      const atSensitive = sensitive(segs)
+      if (source !== undefined && (atSensitive || depth >= MAX_REDACT_DEPTH)) return source.value
+      if (atSensitive) failed = segs.join('.')
+      return node
     }
     if (depth >= MAX_REDACT_DEPTH) return node
     if (Array.isArray(node)) {
+      const rawItems =
+        source !== undefined && Array.isArray(source.value) && source.value.length === node.length
+          ? (source.value as unknown[])
+          : undefined
       let changed = false
       const out = node.map((item, i) => {
-        const next = walk(item, own(source?.value, String(i)), [...segs, String(i)], depth + 1)
+        const at = [...segs, String(i)]
+        const itemSource =
+          rawItems !== undefined && i in rawItems && sameVisible(item, rawItems[i], at, depth + 1)
+            ? { value: rawItems[i] }
+            : undefined
+        const next = walk(item, itemSource, at, depth + 1)
         if (next !== item) changed = true
         return next
       })
@@ -134,8 +232,7 @@ export function restoreRedacted(edited: unknown, raw: unknown, paths: readonly s
     let changed = false
     const out: Record<string, unknown> = {}
     for (const [key, value] of Object.entries(node)) {
-      const at = key === '$append' ? segs : [...segs, ...key.split('.')]
-      const next = walk(value, own(source?.value, key), at, depth + 1)
+      const next = walk(value, own(source?.value, key), keySegs(segs, key), depth + 1)
       if (next !== value) changed = true
       Object.defineProperty(out, key, {
         value: next,
@@ -146,5 +243,6 @@ export function restoreRedacted(edited: unknown, raw: unknown, paths: readonly s
     }
     return changed ? out : node
   }
-  return walk(edited, { value: raw }, [], 0)
+  const value = walk(edited, { value: raw }, [], 0)
+  return failed === undefined ? { ok: true, value } : { ok: false, path: failed }
 }

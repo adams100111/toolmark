@@ -150,12 +150,10 @@ export function createCallRuntime(state: RegistryState): CallRuntime {
     }
 
   /**
-   * SEC-5: the tool's sensitive paths in the shape of its input (the `INPUT_SENSITIVE_PATHS` hook,
-   * else `sensitivePaths()` as-is); `null` when they cannot be read (fail closed).
+   * Reads a tool's sensitive-path list through `read`; `null` when it throws (reported as
+   * `tool_threw`) or does not return an array, so callers fail closed.
    */
-  const inputPathsOf = (entry: Entry): string[] | null => {
-    const hook = inputSensitiveHookOf(entry.tool)
-    const read = hook ?? entry.tool.sensitivePaths?.bind(entry.tool)
+  const readPaths = (entry: Entry, read: (() => unknown) | undefined): string[] | null => {
     if (!read) return []
     let paths: unknown
     try {
@@ -173,6 +171,15 @@ export function createCallRuntime(state: RegistryState): CallRuntime {
       ? (paths as unknown[]).filter((p): p is string => typeof p === 'string')
       : null
   }
+  /**
+   * SEC-5: the tool's sensitive paths in the shape of its input (the `INPUT_SENSITIVE_PATHS` hook,
+   * else `sensitivePaths()` as-is); `null` when they cannot be read (fail closed).
+   */
+  const inputPathsOf = (entry: Entry): string[] | null =>
+    readPaths(
+      entry,
+      inputSensitiveHookOf(entry.tool) ?? entry.tool.sensitivePaths?.bind(entry.tool),
+    )
   /** SEC-5: the copy of `input` a confirmation payload may carry. */
   const publicInput = (entry: Entry, input: unknown): unknown => {
     const paths = inputPathsOf(entry)
@@ -181,17 +188,26 @@ export function createCallRuntime(state: RegistryState): CallRuntime {
   /**
    * SEC-11: an approver's edited input with the `'[redacted]'` placeholders of the public input it
    * was built from put back to the real values of `raw` (a sensitive path the approver changed
-   * keeps the new value), so an edit never replaces a secret by the placeholder.
+   * keeps the new value), so an edit never replaces a secret by the placeholder. SEC-26/SEC-27: a
+   * placeholder whose source is ambiguous (array rows deleted, inserted, reordered or edited) or
+   * missing is refused as `invalid` "Re-enter sensitive field" at its path.
    */
-  const restoreEdit = (entry: Entry, raw: unknown, edited: unknown): unknown =>
-    restoreRedacted(edited, raw, inputPathsOf(entry) ?? [])
-  /** SEC-5: `ctx.confirm` changes with the tool's sensitive (value-shaped) paths redacted. */
-  const publicChanges = (entry: Entry, changes: FieldChange[]): FieldChange[] => {
-    const paths = state.tm.info(entry.fullName)?.sensitivePaths
-    if (paths === undefined)
-      return changes.map((c) => ({ path: c.path, before: REDACTED, after: REDACTED }))
-    return redactChanges(changes, paths)
+  const restoreEdit = (
+    entry: Entry,
+    raw: unknown,
+    edited: unknown,
+  ): { ok: true; value: unknown } | { ok: false; result: ToolResult<never> } => {
+    const r = restoreRedacted(edited, raw, inputPathsOf(entry) ?? [])
+    return r.ok
+      ? r
+      : { ok: false, result: invalid([{ path: r.path, message: 'Re-enter sensitive field' }]) }
   }
+  /**
+   * SEC-5/SEC-24: `ctx.confirm` changes with the tool's sensitive (value-shaped) paths redacted,
+   * `[]` wildcards included; every change is redacted when the paths cannot be read (fail closed).
+   */
+  const publicChanges = (entry: Entry, changes: FieldChange[]): FieldChange[] =>
+    redactChanges(changes, readPaths(entry, entry.tool.sensitivePaths?.bind(entry.tool)))
 
   const expiredResult = (): ToolResult<never> =>
     refuse('confirmation_expired', 'The confirmation expired or was already used')
@@ -320,10 +336,13 @@ export function createCallRuntime(state: RegistryState): CallRuntime {
     if (state.modeOf(caller) === 'inline' && state.options.confirm) {
       const outcome = await askInline(entry, req, caller, input, signal)
       switch (outcome.kind) {
-        case 'approved':
-          return outcome.input !== undefined
-            ? { approved: true, input: restoreEdit(entry, input, outcome.input) }
-            : { approved: true }
+        case 'approved': {
+          if (outcome.input === undefined) return { approved: true }
+          const restored = restoreEdit(entry, input, outcome.input)
+          return restored.ok
+            ? { approved: true, input: restored.value }
+            : { approved: false, reason: 'invalid' }
+        }
         case 'rejected':
           return outcome.reason !== undefined
             ? { approved: false, reason: outcome.reason }
@@ -611,7 +630,9 @@ export function createCallRuntime(state: RegistryState): CallRuntime {
       if (outcome.kind === 'signal') return finish(cancelled('signal'))
       if (outcome.kind !== 'approved') return finish(cancelled('operator'))
       if (outcome.input !== undefined) {
-        const edited = await check(entry, restoreEdit(entry, value, outcome.input))
+        const restored = restoreEdit(entry, value, outcome.input)
+        if (!restored.ok) return finish(restored.result)
+        const edited = await check(entry, restored.value)
         if (!edited.ok) return finish(edited.result)
         value = edited.value
       }
@@ -640,7 +661,8 @@ export function createCallRuntime(state: RegistryState): CallRuntime {
     }
     let value = stored.input
     if (outcome.input !== undefined) {
-      const edited = await check(entry, restoreEdit(entry, stored.input, outcome.input))
+      const restored = restoreEdit(entry, stored.input, outcome.input)
+      const edited = restored.ok ? await check(entry, restored.value) : restored
       if (!edited.ok) {
         emitConfirm(confirmId, entry, 'approved', edited.result)
         return edited.result

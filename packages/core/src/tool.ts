@@ -83,7 +83,9 @@ export interface ToolContext {
    * inline handler; otherwise `{ approved: false, reason: 'confirmation_unavailable' }`. Never throws.
    * While it is open the run's `callTimeoutMs` deadline is paused (the wait is bounded by
    * `confirmExpiryMs` instead); an approval with edited input restores the `'[redacted]'`
-   * placeholders of sensitive paths to their real values.
+   * placeholders of sensitive paths to their real values. A placeholder whose real value cannot
+   * be matched unambiguously (array rows deleted, inserted, reordered or edited, or a key
+   * restructured) is not restored: the outcome is then `{ approved: false, reason: 'invalid' }`.
    */
   confirm(req: { summary: string; changes?: FieldChange[] }): Promise<ConfirmOutcome>
   /** Store a restorer for `tm.undo(callId)`. */

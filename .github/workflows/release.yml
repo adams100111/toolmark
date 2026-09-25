@@ -134,12 +134,6 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
       - name: Refuse non-stable versions
         run: node scripts/check-release-versions.mjs --stable
-      - name: npm supports trusted publishing (>= 11.5.1)
-        run: |
-          v=$(npm --version)
-          node -e 'const [a,b,c]=process.argv[1].split(".").map(Number); process.exit(a>11||(a===11&&(b>5||(b===5&&c>=1)))?0:1)' "$v" \
-            || { echo "npm $v is older than 11.5.1"; exit 1; }
-          echo "npm $v"
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           artifact-ids: ${{ needs.pack.outputs.pack-dir-artifact-id }}
@@ -154,39 +148,14 @@ jobs:
       # per tarball, offline (--force, loopback registry) and with no token or OIDC variables.
       - name: npm reads the plan's name and version from each tarball
         run: node scripts/check-release-versions.mjs --npm-dry-run dist-pack
+      # The publish loop is scripts/publish-tarballs.mjs (tested, and run with --dry-run by
+      # release-dry-run on every PR): npm >= 11.5.1 (trusted publishing), then the whole plan is
+      # re-checked (kind, @toolmark/ name, tag latest, packages/<file>.tgz path, workspace version,
+      # sha256 integrity) before anything is published; versions already on npm are skipped.
       - name: Publish (npm, provenance)
         env:
           NPM_BOOTSTRAP_TOKEN: ${{ secrets.NPM_BOOTSTRAP_TOKEN }}
-        run: |
-          set -euo pipefail
-          if [ -n "${NPM_BOOTSTRAP_TOKEN:-}" ]; then
-            export NODE_AUTH_TOKEN="$NPM_BOOTSTRAP_TOKEN"
-            echo "auth: bootstrap token (first publish)"
-          else
-            echo "auth: OIDC trusted publishing"
-          fi
-          plan=dist-pack/publish-plan.json
-          jq -e '.version == 1 and (.plan | type == "array")' "$plan" > /dev/null
-          jq -r '.plan[][] | [.kind, .name, .version, .tag, (.tarball.path // ""), (.tarball.integrity // "")] | @tsv' "$plan" > plan.tsv
-          : > released.tsv
-          while IFS=$'\t' read -r kind name version tag path integrity; do
-            [ "$kind" = publish ] || { echo "::error::$name: unexpected plan entry kind '$kind'"; exit 1; }
-            [[ "$name" =~ ^@toolmark/[a-z0-9-]+$ ]] || { echo "::error::unexpected package name '$name'"; exit 1; }
-            [ "$tag" = latest ] || { echo "::error::$name@$version: dist-tag '$tag' is not latest"; exit 1; }
-            [[ "$path" =~ ^packages/[a-z0-9-]+-[0-9A-Za-z.-]+\.tgz$ ]] || { echo "::error::$name: unexpected tarball path '$path'"; exit 1; }
-            dir="packages/${name#@toolmark/}"
-            ws=$(node -p 'require("./'"$dir"'/package.json").version')
-            [ "$ws" = "$version" ] || { echo "::error::$name: plan $version != workspace $ws"; exit 1; }
-            tgz="dist-pack/$path"
-            got=$(node -e 'const c=require("node:crypto"),f=require("node:fs");process.stdout.write("sha256-"+c.createHash("sha256").update(f.readFileSync(process.argv[1])).digest("base64"))' "$tgz")
-            [ "$got" = "$integrity" ] || { echo "::error::$name: tarball integrity mismatch"; exit 1; }
-            if [ "$(npm view "$name@$version" version 2>/dev/null || true)" = "$version" ]; then
-              echo "$name@$version is already on the registry; skipping"
-            else
-              npm publish "$tgz" --access public --tag latest --provenance --ignore-scripts
-            fi
-            printf '%s\t%s\t%s\n' "$name" "$version" "$dir" >> released.tsv
-          done < plan.tsv
+        run: node scripts/publish-tarballs.mjs dist-pack --released released.tsv
       - name: Git tags and GitHub releases
         env:
           GH_TOKEN: ${{ github.token }}
@@ -208,8 +177,9 @@ jobs:
             bash scripts/require-tag-at-sha.sh --must-exist "$remote" "$tag" "$GITHUB_SHA" < /dev/null
           done < released.tsv
 
-  # PR and manual check of the whole publish path without publishing (spec §21): plan → pack →
-  # `npm publish --dry-run` per tarball → range, smoke, publint and attw checks → RC e2e on dist.
+  # PR and manual check of the whole publish path without publishing (spec §21): plan (synthetic
+  # when empty) → pack → the publish job's guards and checks and its publish loop in --dry-run →
+  # smoke, publint and attw checks → RC e2e on dist.
   release-dry-run:
     if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
@@ -229,20 +199,30 @@ jobs:
       - run: pnpm build
       - name: Publish plan
         run: pnpm changeset publish-plan --output "$RUNNER_TEMP/publish-plan.json"
+      # After a release the plan is empty on every ordinary PR (the versions are on npm): the
+      # script then prints a notice and writes a synthetic plan of every workspace package, so
+      # the pack and publish-path checks below still run (a non-empty plan is checked as is).
+      - name: Plan to check (synthetic when the publish plan is empty)
+        run: node scripts/release-dry-run-plan.mjs "$RUNNER_TEMP/publish-plan.json" "$RUNNER_TEMP/check-plan.json"
       - name: Pack (changesets)
-        run: pnpm changeset pack --from-publish-plan "$RUNNER_TEMP/publish-plan.json" --out-dir dist-pack
-      - name: npm publish --dry-run (each planned tarball)
+        run: pnpm changeset pack --from-publish-plan "$RUNNER_TEMP/check-plan.json" --out-dir dist-pack
+      # The publish job's own checks, in its order, up to (not including) `npm publish`. Pre mode
+      # and prerelease versions only warn here (a prerelease cycle must not block every PR); the
+      # publish job refuses them.
+      - name: Pre mode and stable versions (publish guards)
         run: |
-          set -euo pipefail
-          jq -r '.plan[][] | select(.kind == "publish") | [.name, .version, .tag, .tarball.path] | @tsv' dist-pack/publish-plan.json > plan.tsv
-          cat plan.tsv
-          while IFS=$'\t' read -r name version tag path; do
-            echo "== $name@$version (tag $tag)"
-            npm publish "dist-pack/$path" --dry-run --access public --tag "$tag" --ignore-scripts
-          done < plan.tsv
-          echo "planned: $(wc -l < plan.tsv) packages"
+          test ! -f .changeset/pre.json || echo "::warning::pre mode: the publish job would refuse to publish"
+          rc=0; node scripts/check-release-versions.mjs --stable || rc=$?
+          [ "$rc" -eq 0 ] || [ "$rc" -eq 1 ] || exit "$rc"
+          [ "$rc" -eq 0 ] || echo "::warning::non-stable versions: the publish job would refuse to publish"
       - name: Internal ranges in the packed manifests
         run: node scripts/check-release-versions.mjs --tarballs dist-pack
+      - name: Plan entries match their tarballs
+        run: node scripts/check-release-versions.mjs --plan dist-pack
+      - name: npm reads the plan's name and version from each tarball
+        run: node scripts/check-release-versions.mjs --npm-dry-run dist-pack
+      - name: Publish loop (dry run, no npm publish)
+        run: node scripts/publish-tarballs.mjs --dry-run dist-pack --released released.tsv
       - name: Tarball smoke (pnpm pack + changesets pack)
         run: |
           pnpm -r --filter "./packages/*" pack --pack-destination "$PWD/dist-tarballs"
@@ -260,4 +240,4 @@ jobs:
         env:
           TOOLMARK_DIST: '1'
           ROUND_BUDGET_REPORT: round-budget.json
-        run: pnpm -F @toolmark-examples/react-vite exec playwright test e2e/round-budget.spec.ts e2e/same-tools.spec.ts e2e/tour.spec.ts --project=chromium
+        run: pnpm -F @toolmark-examples/react-vite exec playwright test e2e/dist-resolution.spec.ts e2e/round-budget.spec.ts e2e/same-tools.spec.ts e2e/tour.spec.ts --project=chromium

@@ -37,7 +37,10 @@
   the `callTimeoutMs` option (default 120000) bounds runs without a caller signal — signal-less calls,
   `confirmPending` runs and undo restorers; confirmation payloads redact sensitive input; form and
   wizard fills are marked `untrustedContent` in the manifest; the TypeSafe judge does not send DOM
-  option lists.
+  option lists. `ctx.confirm` and OpenTelemetry field changes honour `[]` wildcard sensitive paths.
+  An approval that edits the input gets the real values back for `'[redacted]'` placeholders, but
+  only on the same array row; a placeholder in a deleted, inserted, reordered or edited row is
+  refused as `invalid` "Re-enter sensitive field". An open `ctx.confirm` pauses `callTimeoutMs`.
 
 ## 1.0.0-next.4
 

@@ -88,8 +88,14 @@ $ gh run watch 36114346855 --exit-status   → rc=0
 ```
 
 Firefox and WebKit last ran on CI in the `main` run for `b755b50` (M4, run `36109316593`, job
-`e2e`, 64 passed, including all six `[firefox] tour.spec.ts` tests). **Open for Task 7c:** the full
-matrix on the M5 PR to `main`.
+`e2e`, 64 passed, including all six `[firefox] tour.spec.ts` tests).
+
+| Evidence (M5 PR to `main`, full matrix)                                                    | Status              | Run                    |
+| ------------------------------------------------------------------------------------------ | ------------------- | ---------------------- |
+| `ci.yml` full matrix (Node 22/24, React 18.3/19 × Inertia 2/3, zod3)                       | pending CI evidence | _fill with PR run URL_ |
+| `ci.yml` `browser (firefox)`: Vitest DOM projects on Firefox and react-vite e2e on Firefox | pending CI evidence | _fill with PR run URL_ |
+| `ci.yml` `browser (webkit)`                                                                | pending CI evidence | _fill with PR run URL_ |
+| `release.yml` `release-dry-run`                                                            | pending CI evidence | _fill with PR run URL_ |
 
 ## Gate 2 — bundle budgets; core has zero runtime dependencies
 
@@ -144,8 +150,11 @@ rc=0
 
 ## Gate 6 — changesets release with provenance; changelog and deprecation policy
 
-The `release-dry-run` job runs only on `pull_request`/`workflow_dispatch` (open for Task 7c). Its
-steps were run locally on the RC (2026-09-25T08:59Z, HEAD `3aa8d2f`); nothing was published:
+The `release-dry-run` job runs only on `pull_request`/`workflow_dispatch`: **pending CI evidence**
+from the M5 PR run (gate 1 table; fill with the PR run URL). Since the M5 final review it also runs
+the publish job's checks and its publish loop in `--dry-run`, on a synthetic plan when the publish
+plan is empty (`docs/release/release-workflow.md`, "The dry run on every PR"). Its steps were run
+locally on the RC (2026-09-25T08:59Z, HEAD `3aa8d2f`); nothing was published:
 
 ```
 $ pnpm changeset publish-plan --output "$T/publish-plan.json"                        rc=0
@@ -226,8 +235,11 @@ $ … same command with --project=chromium --project=webkit
 
 `same-tools.spec.ts` runs on Chromium only (the Playwright config's `EVERY_BROWSER` list; its
 WebMCP leg needs Chromium). Firefox: the tours ran green on CI in run `36109316593` (`main`, M4
-source build); **open for Task 7c:** the M5 PR's `browser (firefox)` job. No CI job runs the tours
-on Firefox against built `dist` (`release-dry-run` is Chromium-only).
+source build). On built `dist`, the `ci.yml` `browser` job's step "Playwright on built dist
+(react-vite, firefox)" runs `dist-resolution`, `same-tools` and `tour` with `TOOLMARK_DIST=1` on
+Firefox (and WebKit); `dist-resolution.spec.ts` fails unless `@toolmark/core` was served from
+`dist/`. **Pending CI evidence:** the M5 PR's `browser (firefox)` job (gate 1 table; fill with the
+PR run URL). `release-dry-run` runs the same dist e2e on Chromium.
 
 ## Gates 8–9, SC4, D28 (supporting)
 
@@ -244,8 +256,11 @@ on Firefox against built `dist` (`release-dry-run` is Chromium-only).
 
 Fresh pack → `tarball-smoke`: 108 passed, 0 failed; `check-release-versions --tarballs`: 8 passed, 0 failed.
 
+Refreshed after the M5 final fixes (2026-09-25, `m5/final-fixes`): only `@toolmark/core` changed
+(SEC-24..SEC-27); same smoke and range results.
+
 ```
-9e2ae6c9c830d988ac4dd8882dc5a497f3f2bc01bc63184f820c3e891057d83b  toolmark-core-1.0.0.tgz
+f2fb0993debf932e9b8a42822f48ff27f25ba14349886d0ad012fd55498b1712  toolmark-core-1.0.0.tgz
 451eb0f6042928d5eac64d42c85c31920b2189c9ffd8a246b81817ac075556ed  toolmark-inertia-1.0.0.tgz
 a37a86726b3a0818d1cde78af7d6c146170a715b8f07d3ff87a977bcb9ec9466  toolmark-judge-typesafe-1.0.0.tgz
 8680ac95245c5ddeae61df106e89ab9502a03035421b4dd335279c91a67cda81  toolmark-lint-1.0.0.tgz

@@ -23,7 +23,7 @@ import type { Scope } from '../scope.js'
 import type { StandardSchemaV1 } from '../standard-schema.js'
 import type { AnchorSpec, JsonSchema, ToolDefinition, ToolHints, ToolState } from '../tool.js'
 import { CONFIRM_SNAPSHOT, type ConfirmSnapshotHook } from '../confirm-snapshot.js'
-import { INPUT_SENSITIVE_PATHS } from '../input-redaction.js'
+import { INPUT_SENSITIVE_PATHS, redactChanges } from '../input-redaction.js'
 import {
   applyArrayOp,
   deepEqual,
@@ -41,16 +41,13 @@ import {
 } from './paths.js'
 import { annotateOptionField, optionsToolDefinition } from './options.js'
 import {
-  REDACTED,
   createIssueReader,
   emitInteraction,
   fieldElement,
   firstFormOwner,
-  isUnderSensitive,
   publishSensitive,
   redactValues,
   safeFields,
-  sensitiveBelow,
   sensitiveMemoryOf,
   stickySensitive,
   subscribeInteractions,
@@ -299,31 +296,6 @@ function fillJsonSchema(
 
 function isUnder(path: string, base: string): boolean {
   return path === base || path.startsWith(`${base}.`)
-}
-
-/**
- * Replaces every sensitive sub-path inside `value` (rooted at `path`) with `'[redacted]'`; `[]` in
- * a sensitive path matches any array index.
- */
-function redactInside(value: unknown, path: string, sensitive: string[]): unknown {
-  if (typeof value !== 'object' || value === null) return value
-  const below = sensitive
-    .map((s) => sensitiveBelow(path, s))
-    .filter((s): s is string => s !== undefined)
-  return below.length > 0 ? redactValues(value, below) : value
-}
-
-/** Redacts sensitive paths and sensitive values nested under changed ancestors (I1). */
-function redact(changes: FieldChange[], sensitive: string[]): FieldChange[] {
-  return changes.map((c) =>
-    sensitive.some((s) => isUnderSensitive(c.path, s))
-      ? { path: c.path, before: REDACTED, after: REDACTED }
-      : {
-          path: c.path,
-          before: redactInside(c.before, c.path, sensitive),
-          after: redactInside(c.after, c.path, sensitive),
-        },
-  )
 }
 
 interface ResolvedNode {
@@ -1191,14 +1163,16 @@ export function createFormTools<V extends Record<string, unknown>>(
           undoChanges.push({ path, before: getPath(now, path), after: getPath(restored, path) })
         }
         return ok({
-          changes: redact(undoChanges.map(safeChange), sensitiveOf(adapter.fields())).sort(byPath),
+          changes: redactChanges(undoChanges.map(safeChange), sensitiveOf(adapter.fields())).sort(
+            byPath,
+          ),
           skipped: undoSkipped.sort(),
         })
       })
     }
 
     return ok({
-      changes: redact(changes.map(safeChange), sensitiveOf(adapter.fields())).sort(byPath),
+      changes: redactChanges(changes.map(safeChange), sensitiveOf(adapter.fields())).sort(byPath),
       skipped: skipped.sort(),
     })
   }

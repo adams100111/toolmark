@@ -62,6 +62,8 @@ export interface ConfirmRequest {
    * (the whole input when its redaction fails). The tool runs with the unredacted input. An
    * approval that edits `input` may send this copy back with its changes: a sensitive path still
    * holding `'[redacted]'` gets its real value back, one the approver changed keeps the new value.
+   * A placeholder inside an array row that was deleted, inserted, reordered or edited (or under a
+   * restructured key) is refused as `invalid` "Re-enter sensitive field" at its path.
    */
   input: unknown
   /** The tool's hints. */
@@ -373,6 +375,37 @@ export function inputSensitivePaths(tm: Toolmark, name: string): string[] | null
     state.report({
       code: 'tool_threw',
       message: `input redaction of "${entry.fullName}" threw`,
+      tool: entry.fullName,
+      cause,
+    })
+    return null
+  }
+  if (!Array.isArray(paths)) return null
+  return (paths as unknown[]).filter((p): p is string => typeof p === 'string')
+}
+
+/**
+ * @internal The value-shaped sensitive paths of a live tool (`sensitivePaths()`, as
+ * `tm.info(name).sensitivePaths` reads them) for consumers that redact field changes (the OTel
+ * exporter), but fail-closed: `null` when `sensitivePaths()` throws or returns a non-array
+ * (reported as `tool_threw`), where `tm.info` would answer `[]`. `undefined` for a tool that is
+ * not registered (any more).
+ * @param tm - The registry.
+ * @param name - Full tool name.
+ */
+export function valueSensitivePaths(tm: Toolmark, name: string): string[] | null | undefined {
+  const state = stateOf.get(tm)
+  const entry = state?.entries.get(name)
+  if (!state || entry?.alive !== true) return undefined
+  const read = entry.tool.sensitivePaths
+  if (typeof read !== 'function') return []
+  let paths: unknown
+  try {
+    paths = read.call(entry.tool)
+  } catch (cause) {
+    state.report({
+      code: 'tool_threw',
+      message: `sensitivePaths() of "${entry.fullName}" threw`,
       tool: entry.fullName,
       cause,
     })

@@ -15,6 +15,10 @@ behaves, the publish-path ruling with its sources, and the local dry run (M5 Tas
 | `publish`         | the five gates below; environment `npm-release`                | `contents: write`, `id-token: write`      |
 | `release-dry-run` | `pull_request` to `main`, `workflow_dispatch`: never publishes | `contents: read`                          |
 
+Only `release-dry-run` runs on pull requests, so it is the only `release.yml` job that branch
+protection may require (`select-mode`, `version`, `pack` and `publish` never run on a PR, and a
+required check that never runs blocks every PR).
+
 The top level sets `permissions: {}` and `concurrency: release-${{ github.ref }}` without
 cancellation. Every checkout uses `persist-credentials: false`, and every action is pinned to a
 commit SHA. Annotated tags are dereferenced to their commits: for example, `changesets/action` tag
@@ -66,12 +70,14 @@ After approval, the job still refuses to publish if:
   check is the only pre-mode guard on the artifact path.
 - `node scripts/check-release-versions.mjs --stable` fails: all eight `@toolmark/*` versions must be
   equal, with no prerelease tag.
-- npm is older than 11.5.1.
+- npm is older than 11.5.1 (checked by `scripts/publish-tarballs.mjs` before anything else).
 - a packed manifest has a `workspace:` range, or an internal range that does not match the package
   version (`check-release-versions --tarballs`).
 - a plan entry is not a `publish` of an `@toolmark/*` package, its dist-tag is not `latest`, its
-  version differs from the checked-out `package.json`, or the tarball fails its `sha256` integrity
-  check from the plan.
+  tarball path is not `packages/<file>.tgz`, its version differs from the checked-out
+  `package.json`, or the tarball fails its `sha256` integrity check from the plan. The publish loop
+  (`scripts/publish-tarballs.mjs`, tested in `scripts/publish-tarballs.test.mjs`) checks every entry
+  before it publishes the first one.
 - a tarball's own `package/package.json` names a different `name` or `version` than its plan entry,
   or declares a `preinstall`/`install`/`postinstall` script, or the plan's `tarball.path` is not a
   plain `packages/<name>-<version>.tgz` (`check-release-versions --plan`, SEC-16). npm publishes
@@ -95,6 +101,42 @@ cache (`package-manager-cache: false`, SEC-14): a cache entry written by any oth
 job could plant a trojaned pnpm store that `pnpm build` would ship with valid provenance.
 `scripts/check-workflows.mjs` enforces this for every privileged job and every job it needs.
 
+## The dry run on every PR
+
+`release-dry-run` runs the publish job's checks and its publish loop on every PR, so a broken
+check fails a PR and not the owner-approved publish (M5 final review I-3, I-4):
+
+1. `pnpm changeset publish-plan` lists the versions that are not on npm yet. After a release that
+   list is empty on every ordinary PR. `scripts/release-dry-run-plan.mjs` then prints a notice
+   ("The publish plan is empty …") and writes a synthetic plan of all eight workspace packages at
+   their versions, tag `latest`. A non-empty plan is used as is, so a broken real plan still fails.
+2. `changeset pack --from-publish-plan` builds the same pack layout the `pack` job uploads
+   (`publish-plan.json`, `packages/*.tgz`).
+3. The pre-mode and `--stable` guards run and only warn here (a prerelease cycle must not block
+   every PR; `publish` refuses). Then `--tarballs`, `--plan` and `--npm-dry-run`.
+4. `node scripts/publish-tarballs.mjs --dry-run dist-pack` runs the publish loop up to, but not
+   including, `npm publish`: the npm version check, every plan-entry check and the `npm view`
+   lookup. The `publish` job runs the same script without `--dry-run`.
+5. Tarball smoke, publint and attw, and the RC e2e on dist. `e2e/dist-resolution.spec.ts` fails if
+   the page did not load `@toolmark/core` from `dist/` under `TOOLMARK_DIST=1` (and from `src/`
+   otherwise), so a silently ignored switch cannot pass on source.
+
+## Operating notes
+
+- **Recovering from a partial publish:** use **"Re-run failed jobs"** on the same run. Its plan
+  still lists every package, so versions already on npm are skipped and the tags step creates the
+  tags and releases for all of them. A new dispatch plans only the versions still missing from npm,
+  so the packages published by the failed run would get no git tag or GitHub release. If a new
+  dispatch did run, create the missing `<name>@<version>` tags and releases by hand at the release
+  commit.
+- **The Version Packages PR does not trigger CI:** `changesets/action/version` opens it with
+  `GITHUB_TOKEN`, and events from that token start no `pull_request` workflows. Close and reopen
+  the PR (or push an empty commit to its branch) to run `ci.yml` and `release-dry-run` before
+  merging, or give the `version` job a GitHub App token.
+- **Before approving a publish:** `publish` on `workflow_dispatch` does not wait for CI. Before
+  approving the `npm-release` deployment, confirm that `ci.yml` and `release-dry-run` are green
+  for the run's SHA (`gh run list --commit <sha>`).
+
 The `publish` job runs no `pnpm install`. It holds `id-token: write` and possibly the bootstrap
 token, so it runs no dependency code: only the Node built-ins, npm and `gh`.
 
@@ -104,7 +146,7 @@ The plan's primary path was `changesets/action/publish@v2` from the `pack` artif
 (`changeset publish --from-pack-dir`). It was checked against source and docs, and it was **not
 adopted**. The job uses the plan's fallback instead: it runs
 `npm publish <tgz> --access public --tag latest --provenance` for each packed tarball, in the order
-of the publish plan. Then `gh release create` makes each `<name>@<version>` tag and GitHub release
+of the publish plan (`scripts/publish-tarballs.mjs`). Then `gh release create` makes each `<name>@<version>` tag and GitHub release
 at `$GITHUB_SHA`. This replaces `create-github-releases: true`, and it needs no git push, so
 checkout keeps `persist-credentials: false`. A package whose version is already on npm is skipped,
 so a failed run can be re-run.

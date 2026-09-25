@@ -134,4 +134,36 @@ describe('SEC-12: an inline ctx.confirm pauses the call deadline', () => {
     await vi.advanceTimersByTimeAsync(10)
     expect(await p).toEqual({ status: 'cancelled', by: 'signal' })
   })
+
+  // M5 final review m-8: the pause holds while any of several concurrent confirmations is open.
+  it('sec_12_concurrent_confirms_keep_the_deadline_paused_until_the_last_settles', async () => {
+    vi.useFakeTimers()
+    const delays = [30, 100]
+    const tm = createTestRegistry({
+      callTimeoutMs: 50,
+      abortGraceMs: 10,
+      confirm: () => {
+        const ms = delays.shift() ?? 0
+        return new Promise((resolve) => setTimeout(() => resolve({ approved: true }), ms))
+      },
+    })
+    let signal: AbortSignal | undefined
+    tm.register({
+      name: 'both',
+      description: 'd',
+      run: async (_i, ctx): Promise<ToolResult<string>> => {
+        signal = ctx.signal
+        await Promise.all([ctx.confirm({ summary: 'A?' }), ctx.confirm({ summary: 'B?' })])
+        return new Promise<never>(() => undefined)
+      },
+    })
+    const p = tm.call('both', {}, { caller: 'mcp' })
+    // Paused 0–100 ms (the first confirmation settling at 30 ms does not resume it), then 50 ms.
+    await vi.advanceTimersByTimeAsync(149)
+    expect(signal?.aborted).toBe(false)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(signal?.aborted).toBe(true)
+    await vi.advanceTimersByTimeAsync(10)
+    expect(await p).toEqual({ status: 'cancelled', by: 'signal' })
+  })
 })
