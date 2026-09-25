@@ -25,3 +25,4 @@ export {
 } from './props-tools.js'
 export type { NavigationInput, NavigationToolOptions, RouteFn } from './navigation.js'
 export { navigationTool } from './navigation.js'
+export { inertiaFormComponentAdapter } from './form-component.js'
