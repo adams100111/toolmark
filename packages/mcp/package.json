@@ -1,6 +1,6 @@
 {
   "name": "@toolmark/mcp",
-  "version": "0.0.0",
+  "version": "0.1.0-next.1",
   "description": "Desktop MCP server (stdio) that exposes a paired Toolmark page's tools",
   "license": "MIT",
   "type": "module",
