@@ -3,6 +3,7 @@ import { confirmRequestSignals } from './confirm-queue.js'
 import { snapshotHookOf } from './confirm-snapshot.js'
 import { ToolmarkError } from './errors.js'
 import { safeCall } from './events.js'
+import { resolveFileRef } from './files.js'
 import { isPlainObject } from './forms/paths.js'
 import { newId } from './ids.js'
 import { isAllowed, needsConfirmation } from './policy.js'
@@ -298,10 +299,7 @@ export function createCallRuntime(state: RegistryState): CallRuntime {
       confirm: (req) => ctxConfirm(entry, caller, value, req, controller.signal),
       registerUndo: (restore) => undos.set(callId, entry, restore),
       files: {
-        resolve: () =>
-          Promise.reject(
-            new ToolmarkError('files_not_configured', 'File resolution is not configured'),
-          ),
+        resolve: (ref) => resolveFileRef(ref, {}, state.files, controller.signal),
       },
     }
     const work = (async (): Promise<ToolResult<unknown>> => {
@@ -314,6 +312,10 @@ export function createCallRuntime(state: RegistryState): CallRuntime {
           tool: entry.fullName,
         })
       } catch (cause) {
+        // Files (spec §8.4): a file rejection is the agent's input being refused, not a tool bug.
+        if (cause instanceof ToolmarkError && cause.code === 'file_rejected') {
+          return refuse('file_rejected', cause.message)
+        }
         state.report({
           code: 'tool_threw',
           message: `Tool "${entry.fullName}" threw`,

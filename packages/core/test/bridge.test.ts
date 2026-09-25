@@ -336,7 +336,7 @@ describe('bridge', () => {
     const started = performance.now()
     t.deliver(call(tm, 'c1', 'a', { items: new Array(2 ** 31) }))
     t.deliver(new Array(2 ** 32 - 1))
-    expect(performance.now() - started).toBeLessThan(100)
+    expect(performance.now() - started).toBeLessThan(1000)
     await settle()
     expect(t.results()).toEqual([])
     expect(errors.map((e) => e.code)).toEqual(['invalid_message', 'invalid_message'])

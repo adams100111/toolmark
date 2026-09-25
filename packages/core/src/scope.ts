@@ -1,13 +1,28 @@
-/** A named group of tools; its path prefixes every tool name registered into it. */
+/** Options for creating a scope ({@link Scope.scope}, `tm.scope`). */
+export interface ScopeOptions {
+  /** `false` hides the scope's tools (and its descendants') until `setWhen(true)`. */
+  when?: boolean
+  /**
+   * `true` groups tools for `when` and disposal without adding a name segment: the scope's path is
+   * its parent's, so tools keep the names they were given (e.g. server-declared tools).
+   */
+  transparent?: boolean
+}
+
+/**
+ * A group of tools; its path prefixes every tool name registered into it (a transparent scope adds
+ * no segment of its own).
+ */
 export interface Scope {
-  /** Dot path (the root scope is `""`). */
+  /** Dot path (the root scope, and a transparent scope directly under it, is `""`). */
   readonly path: string
   /**
    * Creates a child scope.
-   * @param name - Child name; the child's path is `<path>.<name>`.
-   * @param opts - `when: false` hides the child's tools until `setWhen(true)`.
+   * @param name - Child name; the child's path is `<path>.<name>` (or `<path>` when transparent).
+   * @param opts - `when: false` hides the child's tools until `setWhen(true)`; `transparent: true`
+   * adds no name segment.
    */
-  scope(name: string, opts?: { when?: boolean }): Scope
+  scope(name: string, opts?: ScopeOptions): Scope
   /** Shows (`true`) or hides (`false`) this scope's tools, including descendants'. */
   setWhen(v: boolean): void
   /** Disposes the scope, its descendants and every tool registered in them. */
@@ -44,8 +59,9 @@ export class ScopeNode implements Scope {
     return this.#disposed
   }
 
-  scope(name: string, opts?: { when?: boolean }): Scope {
-    const path = this.path === '' ? name : `${this.path}.${name}`
+  scope(name: string, opts?: ScopeOptions): Scope {
+    const path =
+      opts?.transparent === true ? this.path : this.path === '' ? name : `${this.path}.${name}`
     const child = new ScopeNode(path, this, opts?.when ?? true, this.#hooks)
     if (this.#disposed) child.#disposed = true
     // Under SSR the registry is inert: a detached child keeps no reference from its parent, so a

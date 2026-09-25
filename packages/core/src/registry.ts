@@ -29,9 +29,17 @@ import {
 } from './policy.js'
 import type { FieldChange, ToolResult } from './result.js'
 import { resolveJsonSchema, type JsonSchemaConverter } from './schema.js'
-import { ScopeNode, type Scope } from './scope.js'
-import type { Caller, ConfirmOutcome, JsonSchema, ToolDefinition, ToolHints } from './tool.js'
+import { ScopeNode, type Scope, type ScopeOptions } from './scope.js'
+import type {
+  Caller,
+  ConfirmOutcome,
+  JsonSchema,
+  ToolDefinition,
+  ToolHints,
+  ToolOrigin,
+} from './tool.js'
 import { createCallRuntime } from './call.js'
+import { filesConfig, type FilesConfig, type FilesOptions } from './files.js'
 import type { PendingConfirmation } from './confirm.js'
 
 /** A confirmation request handed to the inline `confirm` handler. */
@@ -83,6 +91,11 @@ export interface ToolmarkOptions {
   abortGraceMs?: number
   /** Visible-tool budget; exceeding it emits `tool_budget_exceeded` in `dev` (default 40). */
   budget?: number
+  /**
+   * File references (spec §8.4, D27): the `{ ref }` resolver, URL origins (URL fetching is off
+   * unless `allowOrigins` is non-empty) and limits. Misconfiguration → `files_misconfigured`.
+   */
+  files?: FilesOptions
   /** Receives every `error` event (after `events.on('error')` listeners). */
   onError?: (e: ToolmarkErrorEvent) => void
   /** @internal Undocumented test hook; overrides the browser detection (SSR is inert). */
@@ -95,6 +108,14 @@ export interface Registration {
   readonly name: string
   /** Removes the tool (idempotent). */
   dispose(): void
+}
+
+/** Registry-only facts about a tool, returned by {@link Toolmark.info} (never in a manifest). */
+export interface ToolInfo {
+  /** Where the tool came from (`'code'` unless its definition says otherwise). */
+  origin: ToolOrigin
+  /** The native `toolname` of a `'native-form'` tool. */
+  nativeName?: string
 }
 
 /** The tool registry (spec §5). */
@@ -112,8 +133,12 @@ export interface Toolmark {
     tool: ToolDefinition<I, O>,
     opts?: { scope?: Scope; signal?: AbortSignal },
   ): Registration
-  /** Creates a root-level scope (nest with `scope.scope()`). */
-  scope(name: string, opts?: { when?: boolean }): Scope
+  /**
+   * Creates a root-level scope (nest with `scope.scope()`).
+   * @param name - Scope name (the path segment its tools are prefixed with).
+   * @param opts - `when: false` hides its tools; `transparent: true` adds no name segment.
+   */
+  scope(name: string, opts?: ScopeOptions): Scope
   /** Summary manifest, sorted by name; filtered by policy when `caller` is given. */
   manifest(opts?: { caller?: Caller; detail?: 'summary' }): {
     rev: number
@@ -123,6 +148,13 @@ export interface Toolmark {
   manifest(opts: { caller?: Caller; detail: 'full' }): { rev: number; tools: ToolManifest[] }
   /** Full manifest entry of one tool, or `undefined` when unknown/hidden for `caller`. */
   describe(name: string, opts?: { caller?: Caller }): ToolManifest | undefined
+  /**
+   * Registry-only facts about a registered tool (including one hidden by `when`), or `undefined`
+   * when no tool has that full name. Not policy-filtered and never part of `manifest()`,
+   * `describe()` or protocol messages.
+   * @param name - Full tool name.
+   */
+  info(name: string): ToolInfo | undefined
   /** Calls a tool. Never throws; every outcome is a {@link ToolResult}. */
   call(
     name: string,
@@ -156,6 +188,8 @@ export interface Entry {
   readonly scope: ScopeNode
   readonly cls: HintClass
   readonly source: ManifestSource
+  /** Registry-only facts (`tm.info`). */
+  readonly info: ToolInfo
   alive: boolean
   readonly registration: Registration
   /** Detaches the registration's abort listener (I5). */
@@ -186,12 +220,14 @@ export interface RegistryState {
   modeOf(caller: Caller): ConfirmMode | undefined
   /** Listeners notified when `confirmPending` consumes a pending confirmation (m5). */
   readonly pendingConsumed: Set<() => void>
+  /** Validated file settings (`options.files`). */
+  readonly files: FilesConfig
 }
 
 const stateOf = new WeakMap<Toolmark, RegistryState>()
 
 /**
- * @internal Emits an event on a registry from core-internal consumers (e.g. the bridge), with the
+ * @internal Emits an event on a registry from Toolmark packages (core bridge/dom, inertia), with the
  * same listener isolation as the registry (`error` also reaches `onError`).
  */
 export function emitEvent<K extends keyof ToolmarkEventMap>(
@@ -227,11 +263,25 @@ export function onPendingConsumed(tm: Toolmark, fn: () => void): () => void {
   }
 }
 
+/**
+ * @internal For `@toolmark/react` hooks' own misconfiguration checks; not part of the stable API.
+ * Whether `tm` was created with `dev: true` (its "throw in development, `error` event in production"
+ * contract). `false` for an SSR (inert) registry and for any object not created by
+ * {@link createToolmark}.
+ * @param tm - The registry.
+ * @returns `true` only for a live browser registry created with `dev: true`.
+ */
+export function isDevRegistry(tm: Toolmark): boolean {
+  const state = stateOf.get(tm)
+  return state !== undefined && state.browser && state.dev
+}
+
 /** @internal */
 export function registryState(tm: Toolmark): RegistryState | undefined {
   return stateOf.get(tm)
 }
 
+const ORIGINS: readonly ToolOrigin[] = ['code', 'native-form', 'dom', 'server']
 const INLINE_ONLY: readonly PolicyCaller[] = ['webmcp', 'mcp', 'tour']
 const DEFAULT_BUDGET = 40
 
@@ -311,6 +361,18 @@ export function createToolmark(options: ToolmarkOptions = {}): Toolmark {
     }
   }
   const policy = resolvePolicy(options.policy, (message) => fail('invalid_policy', message))
+  const files = filesConfig(
+    options.files,
+    (message) => fail('files_misconfigured', message),
+    () => {
+      if (dev) {
+        report({
+          code: 'files_not_configured',
+          message: 'A file reference { ref } was given but no files.resolve is configured',
+        })
+      }
+    },
+  )
 
   const modeOf = (caller: Caller): ConfirmMode | undefined =>
     caller !== 'human' && isKnownCaller(caller) ? modes[caller] : undefined
@@ -468,9 +530,14 @@ export function createToolmark(options: ToolmarkOptions = {}): Toolmark {
       name: fullName,
       dispose: () => removeEntry(entry),
     }
+    const info: ToolInfo = {
+      origin: ORIGINS.includes(def.origin as ToolOrigin) ? (def.origin as ToolOrigin) : 'code',
+    }
+    if (typeof def.nativeName === 'string') info.nativeName = def.nativeName
     const entry: Entry = {
       fullName,
       tool: def,
+      info,
       scope,
       cls,
       alive: true,
@@ -481,6 +548,7 @@ export function createToolmark(options: ToolmarkOptions = {}): Toolmark {
         title: def.title,
         description: def.description,
         hints: def.hints,
+        ...(def.mode === 'stepwise' ? { mode: 'stepwise' as const } : {}),
         inputSchema,
         outputSchema: outputJsonSchema(def),
       },
@@ -541,6 +609,11 @@ export function createToolmark(options: ToolmarkOptions = {}): Toolmark {
       if (!entry || !visible(entry, opts?.caller)) return undefined
       return buildManifestEntry(entry.source)
     },
+    info(name) {
+      if (!browser) return undefined
+      const entry = entries.get(name)
+      return entry?.alive === true ? { ...entry.info } : undefined
+    },
     call: (name, input, opts) => runtime.call(name, input, opts),
     pendingConfirmations: () => (browser ? runtime.pendingConfirmations() : []),
     confirmPending: (confirmId, outcome) => runtime.confirmPending(confirmId, outcome),
@@ -581,6 +654,7 @@ export function createToolmark(options: ToolmarkOptions = {}): Toolmark {
     inlineWithoutHandler,
     modeOf,
     pendingConsumed: new Set(),
+    files,
   }
   const runtime = createCallRuntime(state)
   stateOf.set(tm, state)

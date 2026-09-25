@@ -49,12 +49,14 @@ function isRecord(v: unknown): v is Record<string, unknown> {
 
 /**
  * Resolves a tool's input JSON Schema (spec §6): `tool.jsonSchema` → the schema's Standard JSON
- * Schema (`draft-2020-12`) → the global `converter` → failure (with a reason).
+ * Schema (`draft-2020-12`, with `opts.libraryOptions` passed through, e.g. zod's
+ * `{ unrepresentable: 'any' }`) → the global `converter` → failure (with a reason).
  * @internal
  */
 export function resolveJsonSchema(
   tool: ToolDefinition,
   converter: JsonSchemaConverter | undefined,
+  opts?: { libraryOptions?: Record<string, unknown> },
 ): { ok: true; schema: JsonSchema } | { ok: false; reason: string } {
   if (tool.jsonSchema) return { ok: true, schema: tool.jsonSchema }
   const input = tool.input
@@ -69,8 +71,11 @@ export function resolveJsonSchema(
   const std = (input['~standard'] as { jsonSchema?: { input?: unknown } }).jsonSchema
   if (std && typeof std.input === 'function') {
     try {
-      const out: unknown = (std.input as (o: { target: string }) => unknown)({
+      const out: unknown = (
+        std.input as (o: { target: string; libraryOptions?: Record<string, unknown> }) => unknown
+      )({
         target: 'draft-2020-12',
+        ...(opts?.libraryOptions !== undefined ? { libraryOptions: opts.libraryOptions } : {}),
       })
       if (isRecord(out)) return { ok: true, schema: out }
       reasons.push('Standard JSON Schema returned no object')

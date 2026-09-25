@@ -1,21 +1,44 @@
+import { ToolmarkError } from '../errors.js'
+import {
+  effectiveSpec,
+  fileFieldSchema,
+  fileLimitIssues,
+  fileRefCount,
+  filesConfig,
+  fileSpecProblems,
+  jsonSafeFiles,
+  MAX_FILE_REFS_PER_FILL,
+  resolveFileRef,
+  TOO_MANY_FILES_PER_FILL,
+  type FileFieldSpec,
+  type FilesConfig,
+  type FileRef,
+} from '../files.js'
+import { fromJsonSchema } from '../json-schema/from-json-schema.js'
 import type { Registration, Toolmark } from '../registry.js'
 import { registryState } from '../registry.js'
-import { invalid, ok, type FieldChange, type ToolResult } from '../result.js'
+import { invalid, ok, refuse, type FieldChange, type ToolResult } from '../result.js'
 import { resolveJsonSchema, stripRequired, validateInput } from '../schema.js'
 import type { Scope } from '../scope.js'
 import type { StandardSchemaV1 } from '../standard-schema.js'
-import type { JsonSchema, ToolDefinition } from '../tool.js'
+import type { JsonSchema, ToolDefinition, ToolHints } from '../tool.js'
 import { CONFIRM_SNAPSHOT, type ConfirmSnapshotHook } from '../confirm-snapshot.js'
 import {
+  applyArrayOp,
   deepEqual,
+  extractArrayOps,
   flatten,
   flattenWithRejected,
   getPath,
   isPlainObject,
   isSafePath,
+  nodeBudget,
   setPath,
   snapshotValue,
+  spend,
+  type NodeBudget,
 } from './paths.js'
+import { annotateOptionField, optionsToolDefinition } from './options.js'
 import type { FieldInfo, FormAdapter, FormToolOptions } from './types.js'
 
 const REDACTED = '[redacted]'
@@ -84,9 +107,163 @@ function declaredPaths(root: JsonSchema): Set<string> {
   return out
 }
 
-/** The `fill` manifest schema (M1 rulings): input schema without `required`, `$defs` hoisted. */
-function fillJsonSchema(inputSchema: JsonSchema): JsonSchema {
-  const values = stripRequired(inputSchema)
+/** Shape of an array-only node (arrays allowed, objects not), else `undefined`. */
+function arrayOnlyShape(node: unknown, root: JsonSchema): Shape | undefined {
+  const arr = collect(node, 'array', root)
+  if (arr === undefined || arr === 'open' || collect(node, 'object', root) !== undefined) {
+    return undefined
+  }
+  return arr
+}
+
+/**
+ * The array-op `anyOf` (M2 pass-2 ruling): the stripped property `P`, `{ $append }` whose items
+ * come from the unstripped schema (so their `required` survives), and `{ $remove }`.
+ */
+function arrayOpSchema(stripped: unknown, items: unknown): JsonSchema {
+  const append: JsonSchema = { type: 'array' }
+  if (items !== undefined) append.items = structuredClone(items)
+  return {
+    anyOf: [
+      stripped,
+      {
+        type: 'object',
+        properties: { $append: append },
+        required: ['$append'],
+        additionalProperties: false,
+      },
+      {
+        type: 'object',
+        properties: {
+          $remove: { type: 'array', items: { type: 'integer', minimum: 0 }, uniqueItems: true },
+        },
+        required: ['$remove'],
+        additionalProperties: false,
+      },
+    ],
+  }
+}
+
+/**
+ * Wraps every array-only property reachable through `properties` and `allOf`/`anyOf`/`oneOf` of
+ * the stripped schema in {@link arrayOpSchema}, walking the unstripped schema in parallel. Array
+ * items and `$defs` are not descended into. At runtime `fill` resolves paths only through
+ * `properties`, `additionalProperties` and local `$ref`s, never through array `items`, so an op on
+ * an array nested inside an array is rejected (`invalid`, fail closed); an array reached only
+ * through a `$ref`'d object is accepted but not advertised.
+ */
+function wrapArrayOps(
+  stripped: unknown,
+  original: unknown,
+  roots: { stripped: JsonSchema; original: JsonSchema },
+  depth = 0,
+): unknown {
+  if (!isRecord(stripped) || !isRecord(original) || depth > 32) return stripped
+  const out: Record<string, unknown> = { ...stripped }
+  if (isRecord(stripped.properties) && isRecord(original.properties)) {
+    const props: Record<string, unknown> = {}
+    for (const [key, child] of Object.entries(stripped.properties)) {
+      const orig = Object.hasOwn(original.properties, key) ? original.properties[key] : undefined
+      const shape = arrayOnlyShape(child, roots.stripped)
+      const origShape = orig === undefined ? undefined : arrayOnlyShape(orig, roots.original)
+      Object.defineProperty(props, key, {
+        value:
+          shape !== undefined
+            ? arrayOpSchema(child, (origShape ?? shape).items)
+            : wrapArrayOps(child, orig, roots, depth + 1),
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      })
+    }
+    out.properties = props
+  }
+  for (const key of ['allOf', 'anyOf', 'oneOf'] as const) {
+    const a = stripped[key]
+    const b = original[key]
+    if (Array.isArray(a) && Array.isArray(b) && a.length === b.length) {
+      out[key] = a.map((branch, i) => wrapArrayOps(branch, b[i], roots, depth + 1))
+    }
+  }
+  return out
+}
+
+/** Splits a file/option key into segments, `[]` as its own segment (`a[].b` → `a`,`[]`,`b`). */
+function keySegments(path: string): string[] {
+  return path
+    .split('.')
+    .flatMap((seg) => (seg.endsWith('[]') && seg !== '[]' ? [seg.slice(0, -2), '[]'] : [seg]))
+}
+
+/** Follows a local `$ref` of the fill schema (after `$defs` hoisting). */
+function derefFill(node: Record<string, unknown>, root: JsonSchema): unknown {
+  if (typeof node.$ref !== 'string') return undefined
+  const m = /^#\/(\$defs|definitions)\/([^/]+)$/.exec(node.$ref)
+  const defs = m ? root[m[1]!] : undefined
+  return m && isRecord(defs) && Object.hasOwn(defs, m[2]!) ? defs[m[2]!] : undefined
+}
+
+/**
+ * Replaces the node(s) a file key reaches in the fill schema `values` node with `schema` (in
+ * place, M2 T3): through `properties`, `items` for `[]` (and the `$append` items of an array-op
+ * branch), unions, `allOf` and local `$ref`s. The whole property is replaced, so a file field never
+ * carries array-op branches.
+ */
+function replaceFileField(
+  values: JsonSchema,
+  root: JsonSchema,
+  path: string,
+  schema: JsonSchema,
+): void {
+  const visit = (node: unknown, rest: string[], depth: number): void => {
+    if (!isRecord(node) || depth > 64 || rest.length === 0) return
+    const target = derefFill(node, root)
+    if (target !== undefined) visit(target, rest, depth + 1)
+    for (const key of ['anyOf', 'oneOf', 'allOf'] as const) {
+      const list = node[key]
+      if (Array.isArray(list)) for (const b of list) visit(b, rest, depth + 1)
+    }
+    const [head, ...tail] = rest as [string, ...string[]]
+    const props = isRecord(node.properties) ? node.properties : undefined
+    if (head === '[]') {
+      const append = props && Object.hasOwn(props, '$append') ? props.$append : undefined
+      for (const holder of [node, isRecord(append) ? append : undefined]) {
+        if (!holder || holder.items === undefined) continue
+        if (tail.length === 0) holder.items = structuredClone(schema)
+        else visit(holder.items, tail, depth + 1)
+      }
+    } else if (props && Object.hasOwn(props, head)) {
+      if (tail.length === 0) {
+        Object.defineProperty(props, head, {
+          value: structuredClone(schema),
+          enumerable: true,
+          writable: true,
+          configurable: true,
+        })
+      } else {
+        visit(props[head], tail, depth + 1)
+      }
+    }
+  }
+  visit(values, keySegments(path), 0)
+}
+
+/**
+ * The `fill` manifest schema (M1 rulings): input schema without `required`, then every array
+ * property wrapped in the array-op `anyOf` (M2), `$defs` hoisted, then every file path replaced by
+ * its `fileFieldSchema` (M2 T3) and every option field's `description` suffixed with the
+ * `<name>.options` hint (M2 T2).
+ */
+function fillJsonSchema(
+  inputSchema: JsonSchema,
+  options?: { form: string; keys: string[] },
+  files?: { path: string; schema: JsonSchema }[],
+): JsonSchema {
+  const stripped = stripRequired(inputSchema)
+  const values = wrapArrayOps(stripped, inputSchema, {
+    stripped,
+    original: inputSchema,
+  }) as JsonSchema
   const schema: JsonSchema = {
     type: 'object',
     properties: { values, overwrite: { type: 'boolean' } },
@@ -98,8 +275,16 @@ function fillJsonSchema(inputSchema: JsonSchema): JsonSchema {
     delete values[key]
   }
   delete values.$schema
+  for (const f of files ?? []) replaceFileField(values, schema, f.path, f.schema)
+  if (options) {
+    const suffix = ` (use ${options.form}.options to find valid values)`
+    for (const key of options.keys) annotateOptionField(values, schema, key, suffix)
+  }
   return schema
 }
+
+/** Secret `autocomplete` tokens (besides `cc-*`); mirrors the DOM adapter's exclusion list. */
+const SECRET_AUTOCOMPLETE = new Set(['current-password', 'new-password', 'one-time-code'])
 
 function isSensitiveElement(el: Element | null | undefined): boolean {
   if (!el || typeof el !== 'object') return false
@@ -127,7 +312,7 @@ function isSensitiveElement(el: Element | null | undefined): boolean {
       .trim()
       .toLowerCase()
       .split(/\s+/)
-      .some((token) => token.startsWith('cc-'))
+      .some((token) => token.startsWith('cc-') || SECRET_AUTOCOMPLETE.has(token))
   )
 }
 
@@ -489,17 +674,229 @@ function sanitize(
   return out
 }
 
+/** A form file field: its key segments and effective limits. */
+interface FileField {
+  segs: string[]
+  spec: FileFieldSpec
+  validate: StandardSchemaV1<unknown, unknown>
+}
+
+/** A file value found in the agent's input, to be replaced by the resolved `File`(s). */
+interface FileSlot {
+  path: string
+  raw: unknown
+  field: FileField
+  container: Record<string, unknown> | unknown[]
+  key: string
+}
+
+/** Total references of the collected slots (toward {@link MAX_FILE_REFS_PER_FILL}). */
+const slotRefCount = (slots: FileSlot[]): number =>
+  slots.reduce((n, slot) => n + fileRefCount(slot.raw, slot.field.spec), 0)
+
+/**
+ * @internal Carried by a form's `fill` definition: counts the file references a `values` object
+ * holds (0 when the form has no file fields or the input is too complex to walk), so a wizard can
+ * cap the total across all its steps before any step resolves a file.
+ */
+export const FILE_REF_COUNT: unique symbol = Symbol('toolmark.fileRefCount')
+
+const matchesKey = (pattern: string[], segs: string[]): boolean =>
+  pattern.length === segs.length &&
+  pattern.every((p, i) => (p === '[]' ? /^\d+$/.test(segs[i]!) : p === segs[i]))
+
+const define = (container: object, key: string, value: unknown): void => {
+  Object.defineProperty(container, key, {
+    value,
+    enumerable: true,
+    writable: true,
+    configurable: true,
+  })
+}
+
+/**
+ * Copies the agent's `values`, collecting every value at a file path (M2 T3). `$append` segments
+ * are transparent (items of an append op match `list[]` keys). A dotted key that runs through a
+ * file path is an issue ("Expected a file reference"). Cycles, over-deep values and subtrees past
+ * `budget` are copied raw (the later walks refuse them).
+ */
+function collectFileSlots(
+  values: Record<string, unknown>,
+  fields: FileField[],
+  budget: NodeBudget,
+): {
+  tree: Record<string, unknown>
+  slots: FileSlot[]
+  issues: { path: string; message: string }[]
+} {
+  const slots: FileSlot[] = []
+  const issues: { path: string; message: string }[] = []
+  const ancestors = new WeakSet<object>()
+  const fieldAt = (segs: string[]): FileField | undefined =>
+    fields.find((f) => matchesKey(f.segs, segs))
+  const walk = (
+    node: Record<string, unknown> | unknown[],
+    match: string[],
+    real: string[],
+    depth: number,
+  ): Record<string, unknown> | unknown[] => {
+    ancestors.add(node)
+    const isArray = Array.isArray(node)
+    const out: Record<string, unknown> | unknown[] = isArray ? new Array<unknown>(node.length) : {}
+    const keys: string[] = []
+    if (isArray) {
+      for (let i = 0; i < node.length; i++) if (i in node) keys.push(String(i))
+    } else {
+      keys.push(...Object.keys(node))
+    }
+    for (const key of keys) {
+      const value = (node as Record<string, unknown>)[key]
+      const keySegs = isArray ? [key] : key.split('.')
+      const realSegs = [...real, ...keySegs]
+      const matchSegs = !isArray && key === '$append' ? match : [...match, ...keySegs]
+      let next = value
+      let through = -1
+      for (let i = 1; i < keySegs.length && through < 0; i++) {
+        if (fieldAt([...match, ...keySegs.slice(0, i)])) through = i
+      }
+      if (through > 0) {
+        issues.push({
+          path: [...real, ...keySegs.slice(0, through)].join('.'),
+          message: 'Expected a file reference',
+        })
+      } else {
+        const field = fieldAt(matchSegs)
+        if (field) {
+          if (value !== null && value !== undefined) {
+            slots.push({ path: realSegs.join('.'), raw: value, field, container: out, key })
+          }
+        } else if (
+          (isPlainObject(value) || Array.isArray(value)) &&
+          depth < 64 &&
+          !ancestors.has(value) &&
+          (!Array.isArray(value) || value.length <= budget.left) &&
+          spend(budget)
+        ) {
+          next = walk(value, matchSegs, realSegs, depth + 1)
+        } else if (Array.isArray(value) && value.length > budget.left) {
+          budget.left = -1
+        }
+      }
+      define(out, key, next)
+    }
+    ancestors.delete(node)
+    return out
+  }
+  const tree = walk(values, [], [], 0) as Record<string, unknown>
+  return { tree, slots, issues }
+}
+
+/**
+ * Validates each file slot's shape against its field's `fileFieldSchema` (issues at the slot).
+ * The count (`maxFiles`) and reference-length limits are checked first, cheaply; a slot that
+ * breaks them is not schema-validated further (no walk over thousands of items or huge strings).
+ */
+function fileShapeIssues(slots: FileSlot[]): { path: string; message: string }[] {
+  const issues: { path: string; message: string }[] = []
+  for (const slot of slots) {
+    const limits = fileLimitIssues(slot.raw, slot.field.spec, slot.path)
+    if (limits.length > 0) {
+      issues.push(...limits)
+      continue
+    }
+    const r = slot.field.validate['~standard'].validate(slot.raw)
+    if (r instanceof Promise || !r.issues) continue
+    for (const issue of r.issues) {
+      const rel = (issue.path ?? [])
+        .map((seg) => String(typeof seg === 'object' && seg !== null ? seg.key : seg))
+        .join('.')
+      issues.push({ path: rel === '' ? slot.path : `${slot.path}.${rel}`, message: issue.message })
+    }
+  }
+  return issues
+}
+
+/**
+ * Resolves every slot (sequentially, `multiple` → `File[]`) and writes the files into the copied
+ * tree. Returns the first `file_rejected` message, or `undefined` when all resolved.
+ */
+async function resolveFileSlots(
+  slots: FileSlot[],
+  files: FilesConfig,
+  signal: AbortSignal,
+): Promise<string | undefined> {
+  const resolved: { slot: FileSlot; value: File | File[] }[] = []
+  try {
+    for (const slot of slots) {
+      const spec = slot.field.spec
+      if (spec.multiple === true) {
+        const list: File[] = []
+        const refs = slot.raw as FileRef[]
+        for (let i = 0; i < refs.length; i++) {
+          list.push(
+            await resolveFileRef(refs[i]!, spec, files, signal, { path: `${slot.path}.${i}` }),
+          )
+        }
+        resolved.push({ slot, value: list })
+      } else {
+        const file = await resolveFileRef(slot.raw as FileRef, spec, files, signal, {
+          path: slot.path,
+        })
+        resolved.push({ slot, value: file })
+      }
+    }
+  } catch (e) {
+    return e instanceof ToolmarkError && e.code === 'file_rejected' ? e.message : 'File rejected'
+  }
+  for (const { slot, value } of resolved) define(slot.container, slot.key, value)
+  return undefined
+}
+
+/** A change with file values described JSON-safely (`{ file: { name, size, type } }`). */
+const safeChange = (c: FieldChange): FieldChange => ({
+  path: c.path,
+  before: jsonSafeFiles(c.before),
+  after: jsonSafeFiles(c.after),
+})
+
 const byPath = (a: { path: string }, b: { path: string }): number =>
   a.path < b.path ? -1 : a.path > b.path ? 1 : 0
 
 /**
  * Registers `<name>.fill` (partial, skips user-edited fields, undoable) and `<name>.submit`
- * (`consequential`) for a form (spec §8.1, D19).
+ * (`consequential`) for a form (spec §8.1, D19), plus `<name>.options` (`readOnly`) when
+ * `opts.options` declares async option lookups (spec §8.3).
  * @param tm - The registry.
  * @param adapter - The form adapter.
  * @param opts - Form tool options plus an optional target `scope`.
- * @returns A handle whose `dispose()` removes both tools.
+ * @returns A handle whose `dispose()` removes the form's tools.
  */
+/** Options objects the DOM scanner built for a `toolautosubmit` form (see {@link markAutosubmit}). */
+const autosubmitForms = new WeakSet<object>()
+
+/**
+ * @internal Marks a `createFormTools` options object as the DOM scanner's `toolautosubmit` form,
+ * the only case whose `hints.submit` may drop below `consequential` (the browser page itself opted
+ * into agent submission). Not reachable through any public option.
+ */
+export function markAutosubmit<T extends object>(opts: T): T {
+  autosubmitForms.add(opts)
+  return opts
+}
+
+/**
+ * The submit tool's hints: `hints.submit` merged over the floor — a submit is always at least
+ * `consequential` (or `destructive`) and never `readOnly`, except for a scanner-marked
+ * `toolautosubmit` form, whose hints are taken as given.
+ */
+function submitHints(opts: object, given: ToolHints | undefined): ToolHints {
+  if (autosubmitForms.has(opts)) return given !== undefined ? { ...given } : { consequential: true }
+  const hints: ToolHints = { ...given }
+  delete hints.readOnly
+  if (hints.destructive !== true) hints.consequential = true
+  return hints
+}
+
 export function createFormTools<V extends Record<string, unknown>>(
   tm: Toolmark,
   adapter: FormAdapter<V>,
@@ -507,6 +904,32 @@ export function createFormTools<V extends Record<string, unknown>>(
 ): { dispose(): void } {
   const state = registryState(tm)
   const fillName = `${opts.name}.fill`
+
+  // Files (M2 T3): validate the specs first; a misconfigured form registers no tools.
+  const fileKeys = opts.files ? Object.keys(opts.files) : []
+  if (state?.browser) {
+    const problems = fileKeys.flatMap((key) => [
+      ...(keySegments(key).every((seg) => seg === '[]' || isSafePath(seg))
+        ? []
+        : [`files key "${key}" is not a valid field path`]),
+      ...fileSpecProblems(key, opts.files![key]),
+    ])
+    if (problems.length > 0) {
+      state.fail('files_misconfigured', `Form "${opts.name}": ${problems.join('; ')}`, fillName)
+      return { dispose() {} }
+    }
+  }
+  const filesCfg =
+    state?.files ??
+    filesConfig(
+      undefined,
+      () => undefined,
+      () => undefined,
+    )
+  const fileFields: FileField[] = fileKeys.map((key) => {
+    const spec = effectiveSpec(opts.files![key]!, filesCfg)
+    return { segs: keySegments(key), spec, validate: fromJsonSchema(fileFieldSchema(spec)) }
+  })
 
   let inputSchema: JsonSchema = {}
   const resolved = resolveJsonSchema(
@@ -518,6 +941,7 @@ export function createFormTools<V extends Record<string, unknown>>(
       run: () => ok(null),
     },
     state?.options.jsonSchema,
+    fileKeys.length > 0 ? { libraryOptions: { unrepresentable: 'any' } } : undefined,
   )
   if (resolved.ok) {
     inputSchema = resolved.schema
@@ -555,21 +979,113 @@ export function createFormTools<V extends Record<string, unknown>>(
       return false
     })
 
+  /** Array rule (M2): a dirty path at or under `path` and the array differs from the agent's. */
+  const isArrayUserEdited = (path: string, values: unknown, dirty: string[]): boolean =>
+    dirty.some((d) => isSafePath(d) && (isUnder(d, path) || isUnder(path, d))) &&
+    differsFromAgent(values, path)
+
   async function fill(
     input: FillInput,
     registerUndo: (restore: () => ToolResult<unknown>) => void,
+    signal: AbortSignal,
   ) {
-    const { values: flat, rejected } = flattenWithRejected(input.values)
-    if (rejected.length > 0) {
-      return invalid(rejected.sort().map((path) => ({ path, message: 'Invalid field path' })))
+    // Every walk over the agent's input shares one node budget (DAG inputs from in-page callers).
+    const budget = nodeBudget()
+    const tooComplex = () => invalid([{ path: '', message: 'Input too complex' }])
+    // Files (M2 T3): (1) shape-check every file value, (2) resolve all (any failure refuses the
+    // fill, nothing set), (3) continue with the resolved `File`s merged into the input.
+    let values = input.values
+    if (fileFields.length > 0) {
+      const collected = collectFileSlots(values, fileFields, budget)
+      if (budget.left < 0) return tooComplex()
+      // Total cap (all slots, `[]` items and `multiple` lists together) before any shape check
+      // or resolution: an agent cannot make the resolver / fetch run thousands of times.
+      if (slotRefCount(collected.slots) > MAX_FILE_REFS_PER_FILL) {
+        return invalid([{ ...TOO_MANY_FILES_PER_FILL }])
+      }
+      const shapeIssues = [...collected.issues, ...fileShapeIssues(collected.slots)]
+      if (shapeIssues.length > 0) return invalid(shapeIssues.sort(byPath))
+      const failure = await resolveFileSlots(collected.slots, filesCfg, signal)
+      if (failure !== undefined) return refuse('file_rejected', failure)
+      values = collected.tree
     }
     const current = adapter.getValues()
+    // Array ops (M2): an object where the schema declares only an array, or a `$`-keyed object
+    // unless the schema declares an object (record / open object) and no array there, so
+    // `$`-keyed record data stays plain data (I3) while `{ $append }` on a scalar is still an op
+    // (then "Array operations apply to array fields only").
+    const nodeFor = (path: string): unknown => {
+      const at = nodeAt(inputSchema, path, current)
+      return typeof at === 'object' ? at.node : undefined
+    }
+    const {
+      rest,
+      ops,
+      duplicates: opDuplicates,
+    } = extractArrayOps(
+      values,
+      (path) => {
+        const node = nodeFor(path)
+        return node !== undefined && arrayOnlyShape(node, inputSchema) !== undefined
+      },
+      (path) => {
+        const node = nodeFor(path)
+        if (node === undefined) return true
+        const arr = collect(node, 'array', inputSchema)
+        return (
+          (arr !== undefined && arr !== 'open') ||
+          collect(node, 'object', inputSchema) === undefined
+        )
+      },
+      budget,
+    )
+    if (budget.left < 0) return tooComplex()
+    const { values: flat, rejected, duplicates } = flattenWithRejected(rest, undefined, budget)
+    if (budget.left < 0) return tooComplex()
+    const issues = rejected.map((path) => ({ path, message: 'Invalid field path' }))
+    // m1: two values (ops or plain) resolving to the same path are refused, nothing is set.
+    const duplicated = new Set([...duplicates, ...opDuplicates])
+    for (const path of ops.keys()) if (Object.hasOwn(flat, path)) duplicated.add(path)
+    for (const path of duplicated) issues.push({ path, message: 'Duplicate field path' })
+    const opKinds = new Map<string, 'append' | 'remove'>()
+    for (const [path, op] of ops) {
+      if (duplicated.has(path)) continue
+      const node = nodeFor(path)
+      const conflict = Object.keys(flat).find((p) => isUnder(p, path) || isUnder(path, p))
+      if (node === undefined || collect(node, 'array', inputSchema) === undefined) {
+        issues.push({ path, message: 'Array operations apply to array fields only' })
+      } else if (conflict !== undefined) {
+        issues.push({ path: conflict, message: 'Conflicts with an array operation' })
+      } else {
+        const applied = applyArrayOp(op, getPath(current, path), path, budget)
+        if (budget.left < 0) return tooComplex()
+        if ('error' in applied) {
+          issues.push({ path, message: applied.error })
+        } else {
+          opKinds.set(path, applied.kind)
+          Object.defineProperty(flat, path, {
+            value: applied.next,
+            enumerable: true,
+            writable: true,
+            configurable: true,
+          })
+        }
+      }
+    }
+    if (issues.length > 0) return invalid(issues.sort(byPath))
     const dirty = adapter.dirtyPaths()
     const skipped: string[] = []
     const touched: string[] = []
     for (const path of Object.keys(flat)) {
       if (flat[path] === undefined) continue
-      if (input.overwrite !== true && isUserEdited(path, current, dirty)) {
+      const kind = opKinds.get(path)
+      const edited =
+        kind === 'append'
+          ? false // `$append` keeps existing items untouched, so it is applied even when edited.
+          : kind === 'remove' || Array.isArray(flat[path])
+            ? isArrayUserEdited(path, current, dirty)
+            : isUserEdited(path, current, dirty)
+      if (input.overwrite !== true && edited) {
         skipped.push(path)
       } else {
         touched.push(path)
@@ -663,32 +1179,50 @@ export function createFormTools<V extends Record<string, unknown>>(
           undoChanges.push({ path, before: getPath(now, path), after: getPath(restored, path) })
         }
         return ok({
-          changes: redact(undoChanges, sensitivePaths(opts, adapter.fields())).sort(byPath),
+          changes: redact(undoChanges.map(safeChange), sensitivePaths(opts, adapter.fields())).sort(
+            byPath,
+          ),
           skipped: undoSkipped.sort(),
         })
       })
     }
 
     return ok({
-      changes: redact(changes, sensitivePaths(opts, adapter.fields())).sort(byPath),
+      changes: redact(changes.map(safeChange), sensitivePaths(opts, adapter.fields())).sort(byPath),
       skipped: skipped.sort(),
     })
   }
 
+  const optionKeys = opts.options ? Object.keys(opts.options) : []
   const title = opts.title !== undefined ? { title: opts.title } : {}
-  const fillReg = tm.register(
-    {
-      name: fillName,
-      ...title,
-      description:
-        `${opts.description} Fill form fields: pass a partial object in "values" (null clears a ` +
-        `field). Fields the user edited are skipped unless "overwrite" is true.`,
-      input: fillInputSchema,
-      jsonSchema: fillJsonSchema(inputSchema),
-      run: (input, ctx) => fill(input, (restore) => ctx.registerUndo(restore)),
-    },
-    opts.scope ? { scope: opts.scope } : undefined,
-  )
+  const countFileRefs = (values: unknown): number => {
+    if (fileFields.length === 0 || !isPlainObject(values)) return 0
+    const budget = nodeBudget()
+    const { slots } = collectFileSlots(values, fileFields, budget)
+    return budget.left < 0 ? 0 : slotRefCount(slots)
+  }
+  const fillDef: ToolDefinition<FillInput, unknown> & {
+    [FILE_REF_COUNT]: (values: unknown) => number
+  } = {
+    name: fillName,
+    ...title,
+    ...(opts.origin !== undefined ? { origin: opts.origin } : {}),
+    ...(opts.nativeName?.fill !== undefined ? { nativeName: opts.nativeName.fill } : {}),
+    ...(opts.hints?.fill !== undefined ? { hints: { ...opts.hints.fill } } : {}),
+    description:
+      `${opts.description} Fill form fields: pass a partial object in "values" (null clears a ` +
+      `field). Fields the user edited are skipped unless "overwrite" is true.` +
+      (fileFields.length > 0 ? ' File fields take { "ref": "..." } or { "url": "..." }.' : ''),
+    input: fillInputSchema,
+    jsonSchema: fillJsonSchema(
+      inputSchema,
+      optionKeys.length > 0 ? { form: opts.name, keys: optionKeys } : undefined,
+      fileKeys.map((path, i) => ({ path, schema: fileFieldSchema(fileFields[i]!.spec) })),
+    ),
+    run: (input, ctx) => fill(input, (restore) => ctx.registerUndo(restore), ctx.signal),
+    [FILE_REF_COUNT]: countFileRefs,
+  }
+  const fillReg = tm.register(fillDef, opts.scope ? { scope: opts.scope } : undefined)
   // I3: a confirmation is refused `stale` when the form changed after it was requested.
   const snapshotHook: ConfirmSnapshotHook = {
     take: () => snapshotValue(adapter.getValues()),
@@ -699,7 +1233,9 @@ export function createFormTools<V extends Record<string, unknown>>(
       name: `${opts.name}.submit`,
       ...title,
       description: `${opts.description} Submit the form.`,
-      hints: { consequential: true },
+      hints: submitHints(opts, opts.hints?.submit),
+      ...(opts.origin !== undefined ? { origin: opts.origin } : {}),
+      ...(opts.nativeName?.submit !== undefined ? { nativeName: opts.nativeName.submit } : {}),
       summary: () =>
         opts.submitSummary?.(adapter.getValues()) ?? `Submit ${opts.title ?? opts.name}`,
       run: () => adapter.submit(),
@@ -722,10 +1258,31 @@ export function createFormTools<V extends Record<string, unknown>>(
     fillReg.dispose()
     return { dispose() {} }
   }
+  // M2 T2: `<name>.options` when any field declares async options; all or nothing, like the pair.
+  let optionsReg: Registration | undefined
+  if (opts.options && optionKeys.length > 0) {
+    try {
+      const optionsTool = optionsToolDefinition(tm, opts.name, opts.description, opts.options)
+      optionsReg = tm.register(
+        opts.origin !== undefined ? { ...optionsTool, origin: opts.origin } : optionsTool,
+        scopeOpt,
+      )
+    } catch (e) {
+      fillReg.dispose()
+      submitReg.dispose()
+      throw e
+    }
+    if (!isLive(optionsReg)) {
+      fillReg.dispose()
+      submitReg.dispose()
+      return { dispose() {} }
+    }
+  }
   return {
     dispose() {
       fillReg.dispose()
       submitReg.dispose()
+      optionsReg?.dispose()
     },
   }
 }

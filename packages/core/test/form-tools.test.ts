@@ -97,9 +97,16 @@ describe('form tools', () => {
       },
       required: ['values'],
     })
-    expect(
-      JSON.stringify((fill.inputSchema.properties as Record<string, unknown>).values),
-    ).not.toContain('"required"')
+    // M2: array-op branches keep their own `required` (pass-2 ruling); nothing else does.
+    const values = (fill.inputSchema.properties as Record<string, JsonSchema>).values!
+    const isOpBranch = (b: unknown): boolean => {
+      const props = (b as { properties?: Record<string, unknown> } | null)?.properties
+      return props !== undefined && ('$append' in props || '$remove' in props)
+    }
+    const withoutOps = JSON.stringify(values, (key, v: unknown) =>
+      key === 'anyOf' && Array.isArray(v) ? v.filter((b) => !isOpBranch(b)) : v,
+    )
+    expect(withoutOps).not.toContain('"required"')
     tools.dispose()
     expect(tm.manifest().tools).toEqual([])
   })
@@ -313,6 +320,17 @@ describe('form tools', () => {
     expect(r3).toMatchObject({
       data: { changes: [{ path: 'address.city', before: '[redacted]' }] },
     })
+    for (const token of ['current-password', 'section-a NEW-PASSWORD', 'one-time-code']) {
+      const pwEl = {
+        tagName: 'INPUT',
+        getAttribute: (n: string) => (n === 'autocomplete' ? token : null),
+      }
+      adapter.fieldInfo = [{ path: 'title', element: pwEl as unknown as Element }]
+      const r4 = await fill({ title: `T-${token}` })
+      expect(r4).toMatchObject({
+        data: { changes: [{ path: 'title', before: '[redacted]', after: '[redacted]' }] },
+      })
+    }
   })
 
   it('undo_restores_before_values', async () => {
@@ -853,5 +871,43 @@ describe('form tools', () => {
       createFormTools(tm, adapter, { name: 'b', description: 'd', input: schema })
       expect(tm.describe('b.submit', { caller: 'inapp' })).toBeUndefined()
     })
+  })
+})
+
+describe('form tools: submit hint floor (final review M3)', () => {
+  it('app_supplied_submit_hints_cannot_remove_the_confirmation', async () => {
+    for (const submit of [
+      {},
+      { readOnly: true },
+      { consequential: false },
+      { untrustedContent: true },
+    ]) {
+      const tm = createTestRegistry()
+      const adapter = new FakeAdapter()
+      const submitSpy = vi.spyOn(adapter, 'submit')
+      createFormTools(tm, adapter, {
+        name: 'f',
+        description: 'F.',
+        input: schema,
+        hints: { submit },
+      })
+      const hints = tm.describe('f.submit')!.hints
+      expect(hints?.consequential, JSON.stringify(submit)).toBe(true)
+      expect(hints?.readOnly).toBeUndefined()
+      const r = await tm.call('f.submit', {}, { caller: 'inapp' })
+      expect(r.status, JSON.stringify(submit)).toBe('needs_confirmation')
+      expect(submitSpy).not.toHaveBeenCalled()
+    }
+  })
+
+  it('destructive_submit_hint_is_kept', () => {
+    const tm = createTestRegistry()
+    createFormTools(tm, new FakeAdapter(), {
+      name: 'f',
+      description: 'F.',
+      input: schema,
+      hints: { submit: { destructive: true } },
+    })
+    expect(tm.describe('f.submit')!.hints).toMatchObject({ destructive: true })
   })
 })

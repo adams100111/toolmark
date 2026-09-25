@@ -1,8 +1,16 @@
+import type { FileRef } from './files.js'
 import type { FieldChange, ToolResult } from './result.js'
 import type { StandardSchemaV1 } from './standard-schema.js'
 
 /** Who is calling a tool. `human` is the app's own UI (e.g. an approved confirmation). */
 export type Caller = 'inapp' | 'webmcp' | 'mcp' | 'test' | 'tour' | 'human'
+
+/**
+ * Where a tool came from (spec §5): app code (`'code'`, the default), a native declarative
+ * `toolname` form (`'native-form'`), the DOM scanner (`'dom'`) or a server declaration
+ * (`'server'`). Read through `tm.info(name)`; never part of a manifest.
+ */
+export type ToolOrigin = 'code' | 'native-form' | 'dom' | 'server'
 
 /** A JSON Schema document (draft 2020-12) as a plain object. */
 export type JsonSchema = Record<string, unknown>
@@ -41,9 +49,6 @@ export interface ToolState<I> {
   step?: string
 }
 
-/** A reference to a file an agent wants to hand to a tool (D27). Implemented in M2. */
-export type FileRef = { ref: string } | { url: string }
-
 /** Outcome of a confirmation: approved (optionally with edited input) or rejected. */
 export type ConfirmOutcome =
   { approved: true; input?: unknown } | { approved: false; reason?: string }
@@ -63,7 +68,12 @@ export interface ToolContext {
   confirm(req: { summary: string; changes?: FieldChange[] }): Promise<ConfirmOutcome>
   /** Store a restorer for `tm.undo(callId)`. */
   registerUndo(restore: () => ToolResult<unknown> | Promise<ToolResult<unknown>>): void
-  /** File resolution (D27). In M1 it rejects with `ToolmarkError('files_not_configured')`. */
+  /**
+   * File resolution (D27, spec §8.4) under the registry's `files` options and limits. Rejects with
+   * `ToolmarkError('file_rejected')` (a `{ ref }` without `files.resolve`, a URL that is not
+   * allowed, a size/type violation, …); a tool that lets it propagate returns `refused`
+   * `file_rejected` with the message.
+   */
   files: { resolve(ref: FileRef): Promise<File> }
 }
 
@@ -92,6 +102,15 @@ export interface ToolDefinition<I = unknown, O = unknown> {
   anchors?: AnchorSpec
   /** State snapshot (behaviour in M3). */
   state?: () => ToolState<I>
+  /** `'stepwise'` marks a stepwise wizard's tools; reported in manifest entries (spec §8.2). */
+  mode?: 'stepwise'
+  /** Where the tool came from (default `'code'`); read via `tm.info`, never in a manifest. */
+  origin?: ToolOrigin
+  /**
+   * For `origin: 'native-form'`: the form's `toolname`, so consumers that the browser already
+   * serves natively (WebMCP) can skip the tool. Read via `tm.info`, never in a manifest.
+   */
+  nativeName?: string
   /** Runs the tool with validated input. Never needs to throw: return a {@link ToolResult}. */
   run(input: I, ctx: ToolContext): ToolResult<O> | Promise<ToolResult<O>>
 }
