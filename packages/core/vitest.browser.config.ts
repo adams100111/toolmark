@@ -10,7 +10,7 @@ export default defineProject({
   ssr: { resolve: { conditions: serverConditions } },
   // Pre-bundle what DOM tests import up front so a mid-run dependency discovery cannot reload the
   // browser page (React fixtures use `React.createElement` + `react-dom/client`, no JSX).
-  optimizeDeps: { include: ['react', 'react-dom/client'] },
+  optimizeDeps: { include: ['react', 'react-dom/client', 'zod', '@mcp-b/webmcp-polyfill'] },
   test: {
     name: 'core-browser',
     root: import.meta.dirname,
