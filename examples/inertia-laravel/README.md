@@ -21,6 +21,19 @@ pnpm build
 pnpm exec playwright test                     # starts artisan serve (8010) and Reverb (8081)
 ```
 
+`composer run setup` covers the PHP side only (dependencies, `.env`, key, migrations); the
+frontend is installed with pnpm from the repository root (`pnpm install`) and built with
+`pnpm build`.
+
+The e2e bundle is separate: Playwright's `globalSetup` runs `vite build --mode e2e`, which keeps
+the test hook and writes to `public/build-e2e`, and starts `artisan serve` with
+`TOOLMARK_E2E_BUILD=true` so the app serves that directory (honoured only when `APP_ENV` is
+`local` or `testing`). `public/build` only ever holds the production bundle from `pnpm build`,
+which has no test hook.
+
+The demo seeder (Alice and Bob, password `password`) refuses to run outside `local` and
+`testing`.
+
 Sign in locally at `http://127.0.0.1:8010/testing/login/alice@example.test` (or `bob@…`).
 Ports: app `8010`, Reverb `8081`. Run `toolmark:setup` only while the servers are stopped
 (`migrate:fresh` truncates the SQLite file).
