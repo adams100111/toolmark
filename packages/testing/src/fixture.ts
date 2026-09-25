@@ -15,8 +15,13 @@ const CALLER: TestHookCaller = 'test'
 export interface ToolsFixture {
   /** Summary manifest visible to caller `test`. */
   list(): Promise<ToolManifestSummary[]>
-  /** Full manifest entry of one tool, visible to caller `test`. */
-  get(name: string): Promise<ToolManifest>
+  /**
+   * Full manifest entry of one tool, as caller `test` sees it.
+   * @param name - Full tool name.
+   * @returns The entry, or `undefined` when no such tool is registered or it is hidden from
+   * caller `test` (`when: false`, policy).
+   */
+  get(name: string): Promise<ToolManifest | undefined>
   /**
    * Calls a tool as caller `test`. When {@link ToolsFixture.autoConfirm} is on and the result is
    * `needs_confirmation`, approves it and returns the final result instead.
@@ -78,7 +83,7 @@ function createToolsFixture(page: Page): ToolsFixture {
       return page.evaluate(([n, c]) => globalThis.__toolmark_test__!.describe(n, { caller: c }), [
         name,
         CALLER,
-      ] as const) as Promise<ToolManifest>
+      ] as const)
     },
     call,
     confirm,
