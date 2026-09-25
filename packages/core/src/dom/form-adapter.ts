@@ -1,6 +1,7 @@
 import type { FieldInfo, FormAdapter } from '../forms/types.js'
 import { deepEqual, getPath, setPath } from '../forms/paths.js'
 import { invalid, ok, type ToolResult } from '../result.js'
+import { isAgentActivation } from './activation.js'
 import {
   discover,
   formElements,
@@ -56,6 +57,15 @@ const isUnder = (path: string, base: string): boolean =>
  *   `validationMessage` at its path (an excluded or read-only control is reported at `""` without
  *   its name);
  *   else `form.requestSubmit()` → `ok({ submitted: true })`.
+ * - **`onUserInteraction`** (tour hooks, spec §13) reports trusted (`isTrusted`) `input` and
+ *   `focusin` events on a field (`{ path, kind: 'input' | 'focus' }`) and a trusted `submit` of the
+ *   form (`{ path: '', kind: 'submit' }`). Events caused by the adapter's own `setValues` and
+ *   `submit` are never reported, nor are events on excluded controls (password, `cc-*`, hidden,
+ *   disabled, `[data-tool-ignore]`): those fields do not exist for tools. Only paths are reported,
+ *   never values. Note that `element.focus()` from page script also yields a trusted `focusin`.
+ *   The trusted `submit` caused by a DOM button tool's `click()` (an agent activation) is not
+ *   reported either. While subscribed, the control → path map is cached and invalidated by a
+ *   `MutationObserver` on the form's root.
  *
  * @param form - The form element.
  * @param opts - Optional submit override.
@@ -94,7 +104,7 @@ export function domFormAdapter(
   // are the agent's, not the user's.
   let writing = false
   const onUserEvent = (event: Event): void => {
-    if (!event.isTrusted || writing) return
+    if (!event.isTrusted || writing || isAgentActivation()) return
     const composed = event.composedPath()
     const first = composed[0]
     if (first !== undefined && !pending.has(first)) pending.set(first, composed)
@@ -119,6 +129,72 @@ export function domFormAdapter(
   root.addEventListener('change', onUserEvent, true)
   // Through the prototype: a control named `addEventListener` clobbers the form's own.
   EventTarget.prototype.addEventListener.call(form, 'reset', onReset)
+
+  // Interaction events (tour hooks, spec §13): trusted `input` / `focusin` on a (non-excluded)
+  // field and trusted `submit` of the form, never while the adapter itself writes or submits.
+  // Listeners are attached only while someone subscribes.
+  type Interaction = { path: string; kind: 'input' | 'focus' | 'submit' }
+  const subscribers = new Set<(e: Interaction) => void>()
+  let submitting = false
+  const report = (e: Interaction): void => {
+    for (const cb of [...subscribers]) {
+      try {
+        cb({ ...e })
+      } catch (error) {
+        console.error(error)
+      }
+    }
+  }
+  // Control → field path, cached while someone subscribes so keystrokes do not re-run field
+  // discovery. A MutationObserver on the root invalidates it on any child-list or attribute change
+  // (`name`, `type`, `disabled`, `autocomplete`, `data-tool-ignore`, `form`, …); pending records
+  // are taken synchronously on every lookup, so a change made in the same task is never missed.
+  let pathByControl: Map<EventTarget, string> | undefined
+  const observer =
+    typeof MutationObserver === 'function'
+      ? new MutationObserver(() => {
+          pathByControl = undefined
+        })
+      : undefined
+  const controlPaths = (): Map<EventTarget, string> => {
+    if (!observer || observer.takeRecords().length > 0) pathByControl = undefined
+    if (!pathByControl) {
+      pathByControl = new Map()
+      for (const f of fields()) for (const c of f.controls) pathByControl.set(c, f.path)
+    }
+    return pathByControl
+  }
+  const onInteraction = (event: Event): void => {
+    if (!event.isTrusted || writing || isAgentActivation() || subscribers.size === 0) return
+    if (event.type === 'submit') {
+      if (!submitting && event.target === form) report({ path: '', kind: 'submit' })
+      return
+    }
+    // The field an event came from: the first field control on its composed path. Excluded
+    // controls (password, `cc-*`, hidden, disabled, ignored) are not fields and never report.
+    const paths = controlPaths()
+    for (const target of event.composedPath()) {
+      const path = paths.get(target)
+      if (path !== undefined) {
+        report({ path, kind: event.type === 'input' ? 'input' : 'focus' })
+        return
+      }
+    }
+  }
+  const listen = (on: boolean): void => {
+    if (on) {
+      root.addEventListener('input', onInteraction, true)
+      root.addEventListener('focusin', onInteraction, true)
+      EventTarget.prototype.addEventListener.call(form, 'submit', onInteraction, true)
+      observer?.observe(root, { subtree: true, childList: true, attributes: true })
+    } else {
+      root.removeEventListener('input', onInteraction, true)
+      root.removeEventListener('focusin', onInteraction, true)
+      EventTarget.prototype.removeEventListener.call(form, 'submit', onInteraction, true)
+      observer?.disconnect()
+      pathByControl = undefined
+    }
+  }
 
   const adapter: DomFormAdapter = {
     getValues() {
@@ -159,12 +235,19 @@ export function domFormAdapter(
     },
 
     submit() {
-      if (opts?.submit) return opts.submit(form)
-      if (!HTMLFormElement.prototype.checkValidity.call(form)) {
-        return Promise.resolve(invalid(validityIssues(form)))
+      // `requestSubmit()` dispatches a trusted `submit` synchronously: it is the agent's, not the
+      // user's (an override's synchronous part is covered the same way).
+      submitting = true
+      try {
+        if (opts?.submit) return opts.submit(form)
+        if (!HTMLFormElement.prototype.checkValidity.call(form)) {
+          return Promise.resolve(invalid(validityIssues(form)))
+        }
+        HTMLFormElement.prototype.requestSubmit.call(form)
+        return Promise.resolve(ok({ submitted: true }))
+      } finally {
+        submitting = false
       }
-      HTMLFormElement.prototype.requestSubmit.call(form)
-      return Promise.resolve(ok({ submitted: true }))
     },
 
     fields(): FieldInfo[] {
@@ -174,7 +257,20 @@ export function domFormAdapter(
       })
     },
 
+    onUserInteraction(cb) {
+      if (typeof cb !== 'function') return () => undefined
+      const own = (e: Interaction): void => cb(e)
+      if (subscribers.size === 0) listen(true)
+      subscribers.add(own)
+      return () => {
+        if (!subscribers.delete(own)) return
+        if (subscribers.size === 0) listen(false)
+      }
+    },
+
     dispose() {
+      if (subscribers.size > 0) listen(false)
+      subscribers.clear()
       root.removeEventListener('input', onUserEvent, true)
       root.removeEventListener('change', onUserEvent, true)
       EventTarget.prototype.removeEventListener.call(form, 'reset', onReset)

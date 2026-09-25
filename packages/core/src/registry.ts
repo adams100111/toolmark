@@ -42,6 +42,7 @@ import type {
 import { anchorFromSpec, createAnchorOverrides } from './anchors.js'
 import { createCallRuntime } from './call.js'
 import { filesConfig, type FilesConfig, type FilesOptions } from './files.js'
+import { inputSensitiveHookOf } from './input-redaction.js'
 import type { PendingConfirmation } from './confirm.js'
 
 /** A confirmation request handed to the inline `confirm` handler. */
@@ -311,6 +312,49 @@ export function isDevRegistry(tm: Toolmark): boolean {
 /** @internal */
 export function registryState(tm: Toolmark): RegistryState | undefined {
   return stateOf.get(tm)
+}
+
+/**
+ * @internal The `nativeName` of a live tool (`tm.info(name).nativeName`) without evaluating its
+ * `sensitivePaths()` — for consumers that only need the static facts on a hot path (WebMCP sync).
+ * @param tm - The registry.
+ * @param name - Full tool name.
+ */
+export function nativeNameOf(tm: Toolmark, name: string): string | undefined {
+  const entry = stateOf.get(tm)?.entries.get(name)
+  return entry?.alive === true ? entry.info.nativeName : undefined
+}
+
+/**
+ * @internal The sensitive paths of a live tool expressed in the shape of its call *input*, for
+ * consumers that redact inputs (the OTel exporter). A tool carrying the `INPUT_SENSITIVE_PATHS`
+ * hook (form and wizard fills: `values.<p>`, `steps.<step>.<p>`) answers through it; any other
+ * tool's `sensitivePaths()` is used as-is. Paths may contain `[]` wildcards. `[]` for an unknown
+ * tool; `null` when the hook throws or returns a non-array (reported as `tool_threw`), in which
+ * case the consumer must not record the input at all.
+ * @param tm - The registry.
+ * @param name - Full tool name.
+ */
+export function inputSensitivePaths(tm: Toolmark, name: string): string[] | null {
+  const state = stateOf.get(tm)
+  const entry = state?.entries.get(name)
+  if (!state || entry?.alive !== true) return []
+  const hook = inputSensitiveHookOf(entry.tool)
+  if (!hook) return tm.info(name)?.sensitivePaths ?? []
+  let paths: unknown
+  try {
+    paths = hook()
+  } catch (cause) {
+    state.report({
+      code: 'tool_threw',
+      message: `input redaction of "${entry.fullName}" threw`,
+      tool: entry.fullName,
+      cause,
+    })
+    return null
+  }
+  if (!Array.isArray(paths)) return null
+  return (paths as unknown[]).filter((p): p is string => typeof p === 'string')
 }
 
 const ORIGINS: readonly ToolOrigin[] = ['code', 'native-form', 'dom', 'server']
@@ -708,6 +752,12 @@ export function createToolmark(options: ToolmarkOptions = {}): Toolmark {
     setAnchor(name, param, el) {
       if (!browser || typeof name !== 'string') return
       if (param !== undefined && typeof param !== 'string') return
+      // Untyped callers may pass anything; only DOM elements (or null to clear) are stored.
+      if (
+        el != null &&
+        (typeof el !== 'object' || (typeof Element !== 'undefined' && !(el instanceof Element)))
+      )
+        return
       anchorOverrides.set(name, param, el ?? null)
     },
     state(name) {

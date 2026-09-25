@@ -2,6 +2,7 @@ import { CONFIRM_SNAPSHOT, type ConfirmSnapshotHook } from '../confirm-snapshot.
 import { deepEqual, snapshotValue } from '../forms/paths.js'
 import { ok, refuse } from '../result.js'
 import type { ToolDefinition, ToolHints } from '../tool.js'
+import { asAgentActivation } from './activation.js'
 import { cap, discover, getAttr, nestValues, readField } from './elements.js'
 
 /** @internal Longest `data-tool-confirm` summary kept (longer text is truncated with `…`). */
@@ -81,7 +82,7 @@ function formValues(form: HTMLFormElement): unknown {
  * button submits or resets its form, else the button's own `data-tool-confirm`, else `fallback`.
  * The tool carries a confirm snapshot of the button's form owner and that form's non-excluded
  * values, so an approval given before the form (or the owner) changed is refused `stale` and the
- * button is not clicked.
+ * button is not clicked. Its anchor (`tm.anchor(name)`) is the button element.
  * @param button - The button.
  * @param name - Local tool name.
  * @param description - LLM-facing description (from app-authored markup).
@@ -118,10 +119,13 @@ export function buttonToolDefinition(
     description,
     hints: buttonHints(button),
     origin: 'dom',
+    // Tour hooks (spec §13): the button itself.
+    anchors: { element: () => button },
     summary,
     run() {
       if (!clickable(button)) return refuse('not_allowed', 'Button is disabled or hidden')
-      HTMLElement.prototype.click.call(button)
+      // The activation's trusted `submit` / `input` events are the agent's (M3 T2 fix round 1).
+      asAgentActivation(() => HTMLElement.prototype.click.call(button))
       return ok({ clicked: true as const })
     },
     [CONFIRM_SNAPSHOT]: snapshotHook,

@@ -211,6 +211,41 @@ describe('inertiaFormComponentAdapter', () => {
     await expect(pending2).resolves.toEqual({ status: 'cancelled', by: 'signal' })
   })
 
+  it('form_component_submit_without_start_settles_error_after_window', async () => {
+    vi.spyOn(router, 'visit').mockImplementation(() => undefined)
+    const { element, formRef } = mountForm()
+    const fake = fakeRouter()
+    const adapter = inertiaFormComponentAdapter({ element, formRef, router: fake })
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      let settled = false
+      const pending = adapter.submit().then((r) => {
+        settled = true
+        return r
+      })
+      // No `start` (e.g. an `onBefore` returned false, or the submit was swallowed).
+      await vi.advanceTimersByTimeAsync(999)
+      expect(settled).toBe(false)
+      await vi.advanceTimersByTimeAsync(1)
+      await expect(pending).resolves.toEqual({
+        status: 'error',
+        message: 'Submit did not start a visit',
+      })
+      expect(fake.listenerCount()).toBe(0)
+
+      // A visit that starts in time is not cut off by the window, however long it runs.
+      const pending2 = adapter.submit()
+      fake.fire('start', { visit: {} })
+      await vi.advanceTimersByTimeAsync(5000)
+      fake.fire('finish', { visit: { cancelled: false, interrupted: false } })
+      await expect(pending2).resolves.toEqual({ status: 'ok', data: {} })
+      expect(fake.listenerCount()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+      adapter.dispose()
+    }
+  })
+
   it('form_component_ignores_interleaved_unrelated_visit', async () => {
     vi.spyOn(router, 'visit').mockImplementation(() => undefined)
     const { element, formRef } = mountForm()

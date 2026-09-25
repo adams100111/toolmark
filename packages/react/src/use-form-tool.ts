@@ -50,16 +50,6 @@ function wrapOptions<V extends Record<string, unknown>>(
 }
 
 /**
- * @internal A `FormAdapter` extended with the not-yet-core-typed `onUserInteraction` hook (spec §9,
- * §13; the field lands on {@link FormAdapter} itself in M3 for tour interaction events). Adapters
- * that already carry it (e.g. a DOM/native-form adapter) get it forwarded through the stable proxy
- * below rather than silently dropped, so M3 wiring it up needs no change here.
- */
-interface FormAdapterWithInteraction<V extends Record<string, unknown>> extends FormAdapter<V> {
-  onUserInteraction?: (...args: never[]) => unknown
-}
-
-/**
  * Registers `<name>.fill` and `<name>.submit` for `adapter` (spec §8.1, §9) while the component is
  * mounted.
  *
@@ -85,18 +75,18 @@ export function useFormTool<V extends Record<string, unknown>>(
   // A stable proxy so `createFormTools` always calls the latest adapter/`submitSummary`, without
   // that forcing a re-registration when the caller passes fresh function/object identities.
   const stableAdapter = useMemo<FormAdapter<V>>(() => {
-    const proxy: FormAdapterWithInteraction<V> = {
+    const proxy: FormAdapter<V> = {
       getValues: () => adapterRef.current.getValues(),
       setValues: (values, o) => adapterRef.current.setValues(values, o),
       dirtyPaths: () => adapterRef.current.dirtyPaths(),
       submit: () => adapterRef.current.submit(),
       fields: () => adapterRef.current.fields(),
     }
-    // Forward `onUserInteraction` live (through the ref): the getter always reflects whatever the
-    // *latest* adapter carries, `undefined` when it has none.
+    // Forward `onUserInteraction` (tour interaction events, spec §13) live through the ref: the
+    // getter always reflects whatever the *latest* adapter carries, `undefined` when it has none.
     Object.defineProperty(proxy, 'onUserInteraction', {
       enumerable: true,
-      get: () => (adapterRef.current as FormAdapterWithInteraction<V>).onUserInteraction,
+      get: () => adapterRef.current.onUserInteraction?.bind(adapterRef.current),
     })
     return proxy
   }, [])

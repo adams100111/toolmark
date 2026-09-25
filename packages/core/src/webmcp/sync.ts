@@ -1,5 +1,6 @@
+import { boundsProblem, utf8Exceeds } from '../bounds.js'
 import type { ToolManifest } from '../manifest.js'
-import { emitEvent, type Toolmark } from '../registry.js'
+import { emitEvent, nativeNameOf, type Toolmark } from '../registry.js'
 import { invalid, refuse } from '../result.js'
 import type {
   ModelContextLike,
@@ -13,6 +14,13 @@ export interface SyncOptions {
   filter: ((t: ToolManifest) => boolean) | undefined
   exposedTo: string[] | undefined
 }
+
+/**
+ * Largest accepted `execute` input: a JSON string of at most this many UTF-8 bytes, or a value
+ * whose JSON serialization is at most this large (the bridge's default inbound limit). Nesting is
+ * bounded at the bridge's depth of 64 too.
+ */
+const MAX_INPUT_BYTES = 1_048_576
 
 interface Registered {
   fingerprint: string
@@ -68,11 +76,26 @@ export function createSync(tm: Toolmark, mc: ModelContextLike, opts: SyncOptions
       const signal = options?.signal
       let value = input
       if (typeof input === 'string') {
+        // Bounded before parsing: the host hands over whatever the agent sent (M9).
+        if (utf8Exceeds(input, MAX_INPUT_BYTES)) {
+          return invalid([{ path: '', message: 'Input is too large' }])
+        }
         try {
           value = JSON.parse(input) as unknown
         } catch {
           return invalid([{ path: '', message: 'Input is not valid JSON' }])
         }
+      }
+      const problem = boundsProblem(value, MAX_INPUT_BYTES)
+      if (problem !== null) {
+        return invalid([
+          {
+            path: '',
+            message: problem.startsWith('message nested')
+              ? 'Input is nested too deeply'
+              : 'Input is too large',
+          },
+        ])
       }
       return tm.call(name, value, { caller: 'webmcp', ...(signal ? { signal } : {}) })
     }
@@ -174,7 +197,8 @@ export function createSync(tm: Toolmark, mc: ModelContextLike, opts: SyncOptions
 
     const desired = new Map<string, { tool: ToolManifest; fingerprint: string }>()
     for (const t of filtered) {
-      const nativeName = tm.info(t.name)?.nativeName
+      // Static fact only: `tm.info` would also evaluate the tool's `sensitivePaths()` (M8).
+      const nativeName = nativeNameOf(tm, t.name)
       if (nativeName !== undefined && existing.has(nativeName)) continue
       desired.set(t.name, { tool: t, fingerprint: fingerprints.get(t.name)! })
     }

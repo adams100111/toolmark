@@ -44,7 +44,7 @@ describe('navigationTool', () => {
       { route: 'orders.show', params: { id: 7 } },
       { caller: 'inapp' },
     )
-    expect(r).toMatchObject({ status: 'ok', data: { url: '/orders/7' } })
+    expect(r).toMatchObject({ status: 'ok', data: { url: `${location.origin}/orders/7` } })
     expect(visit).toHaveBeenCalledWith(`${location.origin}/orders/7`, { method: 'get' })
 
     const unknown = await tm.call('navigate', { route: 'nope' }, { caller: 'inapp' })
@@ -121,7 +121,7 @@ describe('navigationTool', () => {
 
     const r = await tm.call('navigate', { route: 'orders.index' }, { caller: 'inapp' })
     order.push(`result ${r.status}`)
-    expect(r).toMatchObject({ status: 'ok', data: { url: '/orders' } })
+    expect(r).toMatchObject({ status: 'ok', data: { url: `${location.origin}/orders` } })
     expect(tm.info('orders.approve')).toBeDefined()
 
     await vi.waitFor(() => expect(order).toContain('navigate'))
@@ -152,21 +152,20 @@ describe('navigationTool', () => {
       navigationTool({ routes: { rel: () => ({ url: 'a/../b?x=1', method: 'get' }) }, visit }),
     )
     const r = await tm.call('navigate', { route: 'rel' }, { caller: 'inapp' })
-    expect(r.status).toBe('ok')
-    expect(visit).toHaveBeenCalledWith(new URL('b?x=1', location.href).href, { method: 'get' })
+    const href = new URL('b?x=1', location.href).href
+    // The result reports the canonical href that was actually visited, not the route's raw URL.
+    expect(r).toEqual({ status: 'ok', data: { url: href } })
+    expect(visit).toHaveBeenCalledWith(href, { method: 'get' })
   })
 
-  it('navigation_empty_routes_every_call_invalid', async () => {
-    const tm = createToolmark()
+  it('navigation_empty_routes_throws_at_construction', () => {
     const visit = vi.fn<(url: string, opts: { method: 'get' }) => void>()
-    // fromJsonSchema accepts `enum: []`; no route name can then validate.
-    tm.register(navigationTool({ routes: {}, visit }))
-    const props = (tm.describe('navigate')?.inputSchema as { properties: { route: { enum: [] } } })
-      .properties
-    expect(props.route.enum).toEqual([])
-    const r = await tm.call('navigate', { route: 'anything' }, { caller: 'inapp' })
-    expect(r.status).toBe('invalid')
-    expect(visit).not.toHaveBeenCalled()
+    expect(() => navigationTool({ routes: {}, visit })).toThrow(
+      new TypeError('navigationTool needs at least one route'),
+    )
+    expect(() =>
+      navigationTool({ routes: undefined as unknown as Record<string, never>, visit }),
+    ).toThrow(TypeError)
   })
 })
 

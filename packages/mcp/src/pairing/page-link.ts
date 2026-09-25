@@ -13,6 +13,9 @@ import { isPlainObject, utf8Length } from '../server/tool-mapping.js'
 
 /** Result text of calls pending on a page that reloaded (a new `clientId` was adopted). */
 export const RELOAD_TEXT = 'The page reloaded before the result arrived; the outcome is unknown.'
+/** Result text of calls pending on a page that another page replaced (a new pairing code was used). */
+export const SUPERSEDED_TEXT =
+  'Another page took over the MCP connection before the result arrived.'
 /** Result text of calls pending on a page that stayed away past the unpaired grace. */
 export const DISCONNECTED_TEXT =
   'The page disconnected before the result arrived; the outcome is unknown.'
@@ -30,6 +33,8 @@ export const DESCRIBE_TIMEOUT_MS = 10_000
 export const MAX_CALL_FRAME_BYTES = 1_048_576
 /** Most calls and describes waiting for the page at once. */
 export const MAX_PENDING_REQUESTS = 256
+/** Most call ids kept for a deferred `cancel` (oldest dropped first). */
+export const MAX_DEFERRED_CANCELS = 1024
 /** Longest page-controlled text quoted in a stderr line. */
 const MAX_QUOTED = 120
 
@@ -41,8 +46,12 @@ export interface LinkSocket {
 
 /** @internal The link plus the hooks the pairing server drives. */
 export interface PageLinkController extends PageLink {
-  /** A socket completed pairing; the next `manifest` on it fixes the `clientId`. */
-  attach(socket: LinkSocket): void
+  /**
+   * A socket completed pairing; the next `manifest` on it fixes the `clientId`. `how` is the
+   * handshake it used: a `pair` (fresh code) that brings a new `clientId` is another page taking
+   * over; a `resume` (session token) that does is the same tab reloaded (default).
+   */
+  attach(socket: LinkSocket, how?: 'pair' | 'resume'): void
   /** A socket closed; the unpaired grace starts when it was the paired one. */
   detach(socket: LinkSocket): void
   /** A text frame arrived on a paired socket. */
@@ -53,6 +62,8 @@ export interface PageLinkController extends PageLink {
 
 interface Pending {
   clientId: string
+  /** `call` (the page may run it) or `describe` (read-only). */
+  kind: 'call' | 'describe'
   resolve(result: ToolResult<unknown>): void
 }
 
@@ -63,7 +74,8 @@ const quote = (s: string): string =>
  * @internal Creates the CLI's {@link PageLink}: the bridge-protocol agent side of the paired page
  * (spec §11.3, §12). Page frames are validated with `validateMessage(…, 'toAgent')` and bound to
  * the adopted `clientId`; calls carry a deadline and are cancelled on the page on deadline or
- * abort; a reload (new `clientId`) or a page gone past the grace fails pending calls.
+ * abort; a reload (new `clientId`) or a page gone past the grace fails pending calls. Inbound
+ * `changed` frames are ignored: the paired page announces every revision with a full `manifest`.
  */
 export function createPageLink(o: {
   callTimeoutMs: number
@@ -75,7 +87,15 @@ export function createPageLink(o: {
   const listeners = new Set<() => void>()
   const pending = new Map<string, Pending>()
   const describeCache = new Map<string, Promise<ToolManifest | null>>()
+  /**
+   * Calls that ended (deadline, abort, grace expiry) while no `cancel` could reach the page, by
+   * call id → the `clientId` they were sent to. Insertion order is FIFO. When a manifest re-adopts
+   * that `clientId`, a `cancel` for each is sent before anything else, so a still-live inline
+   * confirmation on the page can never run a call the agent already saw end (spec §11.3).
+   */
+  const deferredCancels = new Map<string, string>()
   let socket: LinkSocket | null = null
+  let attachedBy: 'pair' | 'resume' = 'resume'
   let awaitingManifest = true
   let clientId: string | null = null
   let paired = false
@@ -115,16 +135,35 @@ export function createPageLink(o: {
     }
   }
 
-  const failPending = (message: string): void => {
-    const entries = [...pending.values()]
+  const deferCancel = (id: string, cid: string): void => {
+    deferredCancels.delete(id)
+    deferredCancels.set(id, cid)
+    while (deferredCancels.size > MAX_DEFERRED_CANCELS) {
+      deferredCancels.delete(deferredCancels.keys().next().value!)
+    }
+  }
+
+  /** Sends `cancel` for call `id` now when the page that holds it is live, else defers it. */
+  const cancelOnPage = (id: string, cid: string): void => {
+    const text = JSON.stringify({ protocol: 1, type: 'cancel', clientId: cid, id })
+    if (!awaitingManifest && clientId === cid && sendText(text)) return
+    deferCancel(id, cid)
+  }
+
+  const failPending = (message: string, cancelCalls = false): void => {
+    const entries = [...pending.entries()]
     pending.clear()
-    for (const p of entries) p.resolve({ status: 'error', message })
+    for (const [id, p] of entries) {
+      if (cancelCalls && p.kind === 'call') deferCancel(id, p.clientId)
+      p.resolve({ status: 'error', message })
+    }
   }
 
   /** Registers a request; `resolve` runs at most once (deadline, abort, answer or failure). */
   const track = (
     id: string,
     cid: string,
+    kind: Pending['kind'],
     timeoutMs: number,
     onTimeout: () => ToolResult<unknown>,
     signal?: AbortSignal,
@@ -143,7 +182,7 @@ export function createPageLink(o: {
         signal?.removeEventListener('abort', abort)
         resolve(r)
       }
-      pending.set(id, { clientId: cid, resolve: finish })
+      pending.set(id, { clientId: cid, kind, resolve: finish })
       if (signal && onAbort) signal.addEventListener('abort', abort, { once: true })
     })
 
@@ -161,7 +200,7 @@ export function createPageLink(o: {
     if (pending.size >= MAX_PENDING_REQUESTS) return Promise.resolve(skip('too many requests'))
     const id = randomUUID()
     const promise = (async (): Promise<ToolManifest | null> => {
-      const answer = track(id, cid, DESCRIBE_TIMEOUT_MS, () => ({
+      const answer = track(id, cid, 'describe', DESCRIBE_TIMEOUT_MS, () => ({
         status: 'error',
         message: 'describe timed out',
       }))
@@ -189,11 +228,16 @@ export function createPageLink(o: {
 
   const adopt = (id: string): void => {
     if (clientId !== null && clientId !== id) {
-      failPending(RELOAD_TEXT)
+      failPending(attachedBy === 'pair' ? SUPERSEDED_TEXT : RELOAD_TEXT)
       describeCache.clear()
     }
     clientId = id
     awaitingManifest = false
+    // Deferred cancels go out first, and only to the page instance that holds those calls; a
+    // different `clientId` is a new page instance that never saw them.
+    const owed = [...deferredCancels].filter(([, cid]) => cid === id)
+    deferredCancels.clear()
+    for (const [callId, cid] of owed) cancelOnPage(callId, cid)
   }
 
   const applyManifest = (nextRev: number, nextTools: ToolManifestSummary[]): void => {
@@ -212,7 +256,7 @@ export function createPageLink(o: {
   const unpair = (): void => {
     graceTimer = undefined
     if (socket !== null) return
-    failPending(DISCONNECTED_TEXT)
+    failPending(DISCONNECTED_TEXT, true)
     describeCache.clear()
     clientId = null
     awaitingManifest = true
@@ -274,12 +318,10 @@ export function createPageLink(o: {
       }
       if (!sendText(text)) return Promise.resolve({ status: 'error', message: NOT_CONNECTED_TEXT })
       const cancel = (): ToolResult<unknown> => {
-        if (clientId === cid) {
-          sendText(JSON.stringify({ protocol: 1, type: 'cancel', clientId: cid, id }))
-        }
+        cancelOnPage(id, cid)
         return cancelled('signal')
       }
-      return track(id, cid, o.callTimeoutMs, cancel, signal, cancel)
+      return track(id, cid, 'call', o.callTimeoutMs, cancel, signal, cancel)
     },
 
     pairingCode: () => o.pairingCode(),
@@ -291,9 +333,10 @@ export function createPageLink(o: {
       }
     },
 
-    attach(s) {
+    attach(s, how = 'resume') {
       if (disposed) return
       socket = s
+      attachedBy = how
       awaitingManifest = true
       if (graceTimer !== undefined) clearTimeout(graceTimer)
       graceTimer = undefined
@@ -335,7 +378,9 @@ export function createPageLink(o: {
           applyManifest(m.rev, m.tools)
           return
         case 'changed':
-          rev = m.rev
+          // Ignored (M7): `mcpPairing` always sends full manifests (`onChange: 'manifest'`), so a
+          // bare `changed` is not ours to trust — adopting its `rev` without the tool list would
+          // pin later calls to a revision whose tools this link never saw.
           return
         case 'result': {
           const p = pending.get(m.id)
@@ -355,6 +400,7 @@ export function createPageLink(o: {
       graceTimer = undefined
       failPending(SHUTDOWN_TEXT)
       describeCache.clear()
+      deferredCancels.clear()
       socket = null
       paired = false
       listeners.clear()

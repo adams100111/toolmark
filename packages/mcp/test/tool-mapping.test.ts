@@ -142,12 +142,22 @@ describe('toMcpTool caps', () => {
   })
 
   it('non_object_property_values_become_object', () => {
-    for (const bad of [null, 'string', 1, true, ['x']]) {
+    for (const bad of [null, 'string', 1, ['x']]) {
       const schema = { type: 'object', properties: { a: { type: 'string' }, b: bad } }
       expect(toMcpTool(entry('a.p', { inputSchema: schema })).inputSchema).toEqual({
         type: 'object',
       })
     }
+  })
+
+  it('boolean_property_schemas_kept', () => {
+    // `true` / `false` are valid JSON Schemas (accept anything / nothing).
+    const schema = {
+      type: 'object',
+      properties: { a: { type: 'string' }, any: true, never: false },
+      required: ['a'],
+    }
+    expect(toMcpTool(entry('a.b', { inputSchema: schema })).inputSchema).toEqual(schema)
   })
 })
 

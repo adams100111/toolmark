@@ -51,7 +51,9 @@ export interface WebMcpOptions {
  *   by default) under their full names, one `AbortSignal` each, with `readOnlyHint`,
  *   `consequentialHint` (consequential or destructive) and `untrustedContentHint`.
  * - `execute` runs `tm.call(name, input, { caller: 'webmcp' })` — consequential tools confirm inline
- *   through the app's `confirm` handler — and resolves the `ToolResult` object.
+ *   through the app's `confirm` handler — and resolves the `ToolResult` object. A JSON-string
+ *   input is parsed first. Input larger than 1 MiB (string bytes or serialized size) or nested
+ *   deeper than 64 resolves `invalid` without calling the tool.
  * - Re-syncs on every revision: removed or changed tools are unregistered, new or changed ones
  *   registered, unchanged ones kept. Native declarative forms the browser already exposes
  *   (`tm.info(name).nativeName`) are skipped.

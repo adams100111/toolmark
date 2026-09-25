@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Toolmark — plain DOM form example</title>
+  </head>
+  <body>
+    <main>
+      <h1>Sign up</h1>
+      <form
+        toolname="signup"
+        tooldescription="Sign up for the newsletter with a name and email."
+        aria-label="Sign up"
+      >
+        <input type="hidden" name="_token" value="csrf-secret-token" />
+        <label>Name <input type="text" name="name" /></label>
+        <label>Email <input type="email" name="email" /></label>
+        <button type="submit">Sign up</button>
+      </form>
+
+      <h2>People</h2>
+      <table data-tool="people" data-tool-description="The people directory.">
+        <thead>
+          <tr>
+            <th data-tool-column="name">Name</th>
+            <th data-tool-column="role">Role</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Ada Lovelace</td>
+            <td>Engineer</td>
+          </tr>
+          <tr>
+            <td>Grace Hopper</td>
+            <td>Admiral</td>
+          </tr>
+          <tr>
+            <td>Alan Turing</td>
+            <td>Mathematician</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <button
+        type="button"
+        data-tool="refresh"
+        data-tool-description="Refresh the people directory."
+      >
+        Refresh
+      </button>
+    </main>
+    <script type="module" src="/src/dom-page.ts"></script>
+  </body>
+</html>

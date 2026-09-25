@@ -60,7 +60,10 @@ const NON_GET_MESSAGE = 'Only GET routes can be navigated; declare a server tool
  * server tool for mutations"); a throwing route, a malformed route result or a URL outside this
  * page's origin → `refused` `navigation_failed`. No hints. Register it at the root scope (never
  * inside the `inertiaPages` page scope), so it survives navigation. The visit receives the canonical
- * absolute URL; empty `routes` yields an empty `route` enum, so every call is `invalid`; `params` with a `__proto__`/`constructor`/`prototype` key are `invalid`.
+ * absolute URL, and `ok({ url })` reports that same canonical href (not the route's raw URL).
+ * `params` with a `__proto__`/`constructor`/`prototype` key are `invalid`.
+ * @throws TypeError `"navigationTool needs at least one route"` when `routes` is empty (or not an
+ * object) — such a tool could never succeed.
  * @param o - Routes, the visit function and optional name/description.
  * @returns A tool definition for `tm.register`.
  */
@@ -68,6 +71,9 @@ export function navigationTool(
   o: NavigationToolOptions,
 ): ToolDefinition<NavigationInput, { url: string }> {
   const routes = o.routes
+  if (typeof routes !== 'object' || routes === null || Object.keys(routes).length === 0) {
+    throw new TypeError('navigationTool needs at least one route')
+  }
   const input = fromJsonSchema<NavigationInput>({
     type: 'object',
     properties: {
@@ -111,7 +117,7 @@ export function navigationTool(
       } catch {
         return refuse('navigation_failed', `Navigation to "${route}" could not be started`)
       }
-      return ok({ url })
+      return ok({ url: href })
     },
   }
 }

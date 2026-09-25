@@ -98,6 +98,10 @@ describe('otel', () => {
     const span = exporter.getFinishedSpans()[0]!
     expect(span.attributes['toolmark.status']).toBe('error')
     expect(span.status.code).toBe(SpanStatusCode.ERROR)
+    // The span status message is always the fixed generic text, never the thrown cause: it must
+    // never carry the tool's secret, even though the thrown Error's message was 'secret'.
+    expect(span.status.message).toBe('Tool failed')
+    expect(span.status.message).not.toContain('secret')
 
     // A non-`error` result (e.g. `cancelled`) leaves status UNSET.
     exporter.reset()
@@ -250,6 +254,58 @@ describe('otel', () => {
       data: { changes: { path: string; before: unknown; after: unknown }[] }
     }
     const changes = result.data.changes
+    expect(changes.find((c) => c.path === 'email')).toEqual({
+      path: 'email',
+      before: 'a@x.com',
+      after: 'b@x.com',
+    })
+    expect(changes.find((c) => c.path === 'password')).toEqual({
+      path: 'password',
+      before: '[redacted]',
+      after: '[redacted]',
+    })
+    expect(changes.find((c) => c.path === 'profile.ssn')).toEqual({
+      path: 'profile.ssn',
+      before: '[redacted]',
+      after: '[redacted]',
+    })
+  })
+
+  it('payload_redacts_sensitive_paths_on_needs_confirmation', async () => {
+    const { tracer, exporter, shutdown } = tracing()
+    cleanups.push(shutdown)
+    const tm = createTestRegistry()
+    tm.register({
+      name: 'save',
+      description: 'd',
+      input: z.record(z.string(), z.unknown()),
+      sensitivePaths: () => ['password', 'profile.ssn'],
+      // A synthetic `needs_confirmation` result (a confirmation card can carry the same
+      // sensitive-path field values a completed save would): no `ctx.confirm()` round trip
+      // needed, `run` just returns the result literal directly.
+      run: () =>
+        Promise.resolve({
+          status: 'needs_confirmation' as const,
+          confirmId: 'c1',
+          summary: 'Save it?',
+          changes: [
+            { path: 'email', before: 'a@x.com', after: 'b@x.com' },
+            { path: 'password', before: 'old', after: 'new' },
+            { path: 'profile.ssn', before: '111', after: '222' },
+          ],
+        }),
+    })
+    const dispose = tm.use(otel({ tracer, recordPayloads: true }))
+    cleanups.push(dispose)
+
+    const result = await tm.call('save', { email: 'b@x.com' }, { caller: 'test' })
+    expect(result.status).toBe('needs_confirmation')
+
+    const span = exporter.getFinishedSpans()[0]!
+    const resultAttr = JSON.parse(span.attributes['toolmark.result'] as string) as {
+      changes: { path: string; before: unknown; after: unknown }[]
+    }
+    const changes = resultAttr.changes
     expect(changes.find((c) => c.path === 'email')).toEqual({
       path: 'email',
       before: 'a@x.com',
