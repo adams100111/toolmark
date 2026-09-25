@@ -30,6 +30,7 @@ final class ScriptedAgentController
             'steps' => ['required', 'array', 'min:1', 'max:20'],
             'steps.*.type' => ['required', Rule::in(['call', 'describe'])],
             'steps.*.tool' => ['required', 'string', 'max:128'],
+            'steps.*.input' => ['sometimes', 'array'], // a JSON object (`{}` decodes to [])
         ]);
         $conversation = Conversation::whereKey($request->string('conversationId')->toString())
             ->where('user_id', $request->user()->getKey())
