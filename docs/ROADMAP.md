@@ -33,8 +33,8 @@ Post-1.0 consumer track:          └─► Innov P0 ─► P1 ─► P2 ─► 
 
 | Unit | Repo | Plan | Depends on | Exit check | Status | Branch | Updated |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| T-M1 Core | toolmark | `…-m1-core.md` | — | CI green; round budget `simple_form_within_3_rounds`; tarball smoke | active | `feat/m1-core` | 2026-09-24 |
-| T-M2 Forms | toolmark | `…-m2-forms.md` | T-M1 | round budget `wizard_within_5_rounds`; tarball smoke | todo | — | — |
+| T-M1 Core | toolmark | `…-m1-core.md` | — | CI green; round budget `simple_form_within_3_rounds`; tarball smoke | done | `feat/m1-core` (PR #2) | 2026-09-25 |
+| T-M2 Forms | toolmark | `…-m2-forms.md` | T-M1 | round budget `wizard_within_5_rounds`; tarball smoke | active | `feat/m2-forms` | 2026-09-25 |
 | T-M3 Reach | toolmark | `…-m3-reach.md` | T-M2 | same tool via WebMCP + MCP + Playwright (`reach.spec.ts`); tarball smoke incl. `toolmark-mcp` | todo | — | — |
 | T-M4 Tours & tooling | toolmark | `…-m4-tours-tooling.md` | T-M3 | authored + planned tours (3 browsers, axe-clean); Laravel authored tour; same-tools e2e; Laravel + Next.js suites; `docs:build`; lint clean; tarball smoke | todo | — | — |
 | T-M5 Release | toolmark | `…-m5-release.md` | T-M4 | all §21 gates (incl. round budget + smoke on the RC); publish (owner) | todo | — | — |
@@ -56,8 +56,8 @@ its exit check passes. Task numbers refer to the unit's plan.
 - [x] Wave 1 · Lane C (T10–T12) React + RHF
 - [x] Wave 1 · Lane D (T13) Inertia adapter + visit-outcome mapping
 - [x] Wave 1 · Lane E (T14) testing package
-- [ ] Wave 2 · Lane F (T15–T16, high; T16 **security**) example + round-budget e2e, docs, Laravel reference, CI, tarballs + smoke → `docs/release/{round-budget,next-tarballs}.md`
-- [ ] Unit exit: CI green on `main`; `simple_form_within_3_rounds`; tarball smoke logged
+- [x] Wave 2 · Lane F (T15–T16, high; T16 **security**) example + round-budget e2e, docs, Laravel reference, CI, tarballs + smoke → `docs/release/{round-budget,next-tarballs}.md`
+- [x] Unit exit: CI green on `main`; `simple_form_within_3_rounds`; tarball smoke logged
 
 ### T-M2 Forms (toolmark)
 - [ ] W0 · A (T1–T4, high, **security**) arrays, `tm.info`, JSON-Schema subset + options, files, wizard
@@ -225,3 +225,8 @@ also record progress in Innovation's own branch history.
 - 2026-09-24 — Plan audit complete (4 passes + independent blocker verification; PR #1 merged).
   Owner goal: execute M1→M5 autonomously to a complete 1.0, stopping only at owner actions.
   T-M1 started on `feat/m1-core` (worktree `~/repos/toolmark-wt/m1`).
+- 2026-09-25 — **T-M1 done** (PR #2): 4 packages at `0.1.0-next.0`, round budget 3 rounds, tarball
+  smoke 56/56, CI green on `main`. M1 rulings recorded in spec §23. The M1 sdd ledger was lost when
+  `gh pr merge --delete-branch` removed the milestone worktree (code unaffected); ledgers now live in
+  the main checkout. Execution switched to the slot scheduler (sdd-lanes, K=4). T-M2 started on
+  `feat/m2-forms`.
