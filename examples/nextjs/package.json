@@ -1,0 +1,33 @@
+{
+  "name": "@toolmark-examples/nextjs",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "dev": "next dev -p 3100",
+    "build": "next build",
+    "start": "next start -p 3101",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@toolmark/core": "workspace:*",
+    "@toolmark/react": "workspace:*",
+    "next": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "react-hook-form": "catalog:",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@playwright/test": "catalog:",
+    "@toolmark/lint": "workspace:*",
+    "@toolmark/testing": "workspace:*",
+    "@types/node": "catalog:",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "typescript": "catalog:"
+  }
+}
