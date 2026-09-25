@@ -130,7 +130,7 @@ export type RestoreOutcome = { ok: true; value: unknown } | { ok: false; path: s
  * @internal SEC-11: the approver-edited `edited` input with every `'[redacted]'` placeholder that
  * stands at a sensitive input path (one {@link redactInput} would redact) put back to the node at
  * the same position in `raw`, the stored real input. A sensitive path the approver changed keeps
- * its new value, and a placeholder outside the sensitive paths is kept as ordinary text. A root
+ * its new value. A root
  * `'[redacted]'` (the whole input was hidden) restores `raw` whole. Positions are matched key by
  * key, as {@link redactInput} walks them (dotted keys and `$append` included).
  *
@@ -139,8 +139,10 @@ export type RestoreOutcome = { ok: true; value: unknown } | { ok: false; path: s
  * is unchanged. Otherwise (a row deleted, inserted, reordered or edited) its placeholders have no
  * source. SEC-27: a placeholder at a sensitive path with no source (that, or a key the approver
  * restructured) is refused: `{ ok: false, path }`, the caller answers `invalid` "Re-enter
- * sensitive field" there. The walk is bounded like {@link redactInput} and fails closed (path
- * `''`) past its node budget.
+ * sensitive field" there. SEC-28: so is any placeholder left in the result that `raw` does not
+ * hold at the same position (outside the sensitive paths, or with `paths` empty because they could
+ * not be read), so the tool never runs with a literal `'[redacted]'` it was not sent. The walk is
+ * bounded like {@link redactInput} and fails closed (path `''`) past its node budget.
  */
 export function restoreRedacted(
   edited: unknown,
@@ -148,7 +150,6 @@ export function restoreRedacted(
   paths: readonly string[],
 ): RestoreOutcome {
   if (edited === REDACTED) return { ok: true, value: raw }
-  if (paths.length === 0) return { ok: true, value: edited }
   let nodes = 0
   let failed: string | undefined
   const sensitive = (segs: readonly string[]): boolean => {
@@ -229,10 +230,13 @@ export function restoreRedacted(
     }
     // Only plain objects are rebuilt; anything else (a `File`, a class instance) is kept as is.
     if (!isPlainObject(node)) return node
+    // SEC-30: an object never takes its sources from a raw array (an index-keyed rewrite of the
+    // rows would bind secrets by key with no row-identity check).
+    const from = Array.isArray(source?.value) ? undefined : source?.value
     let changed = false
     const out: Record<string, unknown> = {}
     for (const [key, value] of Object.entries(node)) {
-      const next = walk(value, own(source?.value, key), keySegs(segs, key), depth + 1)
+      const next = walk(value, own(from, key), keySegs(segs, key), depth + 1)
       if (next !== value) changed = true
       Object.defineProperty(out, key, {
         value: next,
@@ -244,5 +248,47 @@ export function restoreRedacted(
     return changed ? out : node
   }
   const value = walk(edited, { value: raw }, [], 0)
-  return failed === undefined ? { ok: true, value } : { ok: false, path: failed }
+  if (failed !== undefined) return { ok: false, path: failed }
+  const left = strayPlaceholder(value, raw)
+  return left === undefined ? { ok: true, value } : { ok: false, path: left }
+}
+
+/**
+ * SEC-28: the path of a `'[redacted]'` placeholder in `value` (a restored edit) that `raw` does not
+ * hold at the same position, i.e. one that would reach the tool as literal text; `undefined` when
+ * there is none. Past the node budget or the depth bound it fails closed (the current path).
+ */
+function strayPlaceholder(value: unknown, raw: unknown): string | undefined {
+  let nodes = 0
+  const at = (node: unknown, key: string): unknown =>
+    typeof node === 'object' && node !== null && Object.prototype.hasOwnProperty.call(node, key)
+      ? (node as Record<string, unknown>)[key]
+      : undefined
+  const scan = (
+    node: unknown,
+    source: unknown,
+    segs: string[],
+    depth: number,
+  ): string | undefined => {
+    if (++nodes > MAX_REDACT_NODES) return ''
+    if (node === REDACTED) return source === REDACTED ? undefined : segs.join('.')
+    if (typeof node !== 'object' || node === null) return undefined
+    if (node === source) return undefined
+    if (depth >= MAX_REDACT_DEPTH) return segs.join('.')
+    if (Array.isArray(node)) {
+      for (let i = 0; i < node.length; i++) {
+        const hit = scan(node[i], at(source, String(i)), [...segs, String(i)], depth + 1)
+        if (hit !== undefined) return hit
+      }
+      return undefined
+    }
+    if (!isPlainObject(node)) return undefined
+    for (const [key, v] of Object.entries(node)) {
+      const next = key === '$append' ? segs : [...segs, ...key.split('.')]
+      const hit = scan(v, at(source, key), next, depth + 1)
+      if (hit !== undefined) return hit
+    }
+    return undefined
+  }
+  return scan(value, raw, [], 0)
 }

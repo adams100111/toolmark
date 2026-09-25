@@ -40,7 +40,8 @@
   option lists. `ctx.confirm` and OpenTelemetry field changes honour `[]` wildcard sensitive paths.
   An approval that edits the input gets the real values back for `'[redacted]'` placeholders, but
   only on the same array row; a placeholder in a deleted, inserted, reordered or edited row is
-  refused as `invalid` "Re-enter sensitive field". An open `ctx.confirm` pauses `callTimeoutMs`.
+  refused as `invalid` "Re-enter sensitive field", as is any other placeholder the tool would
+  receive as literal text. An open `ctx.confirm` pauses `callTimeoutMs`.
 
 ## 1.0.0-next.4
 

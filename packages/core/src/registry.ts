@@ -63,7 +63,8 @@ export interface ConfirmRequest {
    * approval that edits `input` may send this copy back with its changes: a sensitive path still
    * holding `'[redacted]'` gets its real value back, one the approver changed keeps the new value.
    * A placeholder inside an array row that was deleted, inserted, reordered or edited (or under a
-   * restructured key) is refused as `invalid` "Re-enter sensitive field" at its path.
+   * restructured key), or any other placeholder the original input did not hold at that position,
+   * is refused as `invalid` "Re-enter sensitive field" at its path.
    */
   input: unknown
   /** The tool's hints. */

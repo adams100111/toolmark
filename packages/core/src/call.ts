@@ -190,7 +190,9 @@ export function createCallRuntime(state: RegistryState): CallRuntime {
    * was built from put back to the real values of `raw` (a sensitive path the approver changed
    * keeps the new value), so an edit never replaces a secret by the placeholder. SEC-26/SEC-27: a
    * placeholder whose source is ambiguous (array rows deleted, inserted, reordered or edited) or
-   * missing is refused as `invalid` "Re-enter sensitive field" at its path.
+   * missing is refused as `invalid` "Re-enter sensitive field" at its path. SEC-28: when the paths
+   * cannot be read now, no placeholder is restored, and any placeholder left (anywhere) is refused
+   * the same way, so the tool never runs with a literal `'[redacted]'`.
    */
   const restoreEdit = (
     entry: Entry,
