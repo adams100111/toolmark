@@ -76,6 +76,13 @@ describe('runCli', () => {
     expect(stderr()).toContain('invalid manifest file:')
   })
 
+  it('i1_manifest_with_tool_missing_hints_and_inputSchema_exits_2_not_a_TypeError', async () => {
+    const { io, stderr } = fakeIo()
+    const code = await runCli(['--manifest', `${FIXTURES}manifest-invalid-tool.json`], io)
+    expect(code).toBe(EXIT_USAGE_OR_RUNTIME_FAILURE)
+    expect(stderr()).toContain(`invalid manifest file: ${FIXTURES}manifest-invalid-tool.json`)
+  })
+
   it('cli_exit_codes (unknown flag exits 2)', async () => {
     const { io } = fakeIo()
     const code = await runCli(['--not-a-real-flag'], io)

@@ -4,7 +4,11 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
 import { collectFromUrl, LintUsageError, MISSING_HOOK_MESSAGE } from '../src/collect.js'
-import { startStaticServer, type StaticServer } from './support/static-server.js'
+import {
+  startHangingServer,
+  startStaticServer,
+  type StaticServer,
+} from './support/static-server.js'
 
 const FIXTURES = fileURLToPath(new URL('./fixtures/', import.meta.url))
 
@@ -33,6 +37,15 @@ describe('collectFromUrl', () => {
     expect(error).toBeInstanceOf(LintUsageError)
     expect(error).toHaveProperty('message', MISSING_HOOK_MESSAGE)
   }, 15_000)
+
+  it('m2_non_responding_url_fails_clearly_within_30s', async () => {
+    server = await startHangingServer()
+    const rejection = collectFromUrl(server.url).catch((e: unknown) => e)
+    const error = await rejection
+    expect(error).toBeInstanceOf(LintUsageError)
+    expect((error as Error).message).toContain(server.url)
+    expect((error as Error).message.toLowerCase()).toMatch(/time(d)? ?out|did not respond/)
+  }, 35_000)
 
   it('storage_state_passed_to_context', async () => {
     server = await startStaticServer(join(FIXTURES, 'page-with-hook.html'))

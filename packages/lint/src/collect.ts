@@ -4,6 +4,9 @@ import type { ManifestFile } from './types.js'
 /** Time {@link collectFromUrl} waits for the page's test hook (matches `@toolmark/testing`). */
 const HOOK_WAIT_MS = 5000
 
+/** Time {@link collectFromUrl} waits for `page.goto` to finish navigating to `--url`. */
+const GOTO_TIMEOUT_MS = 30000
+
 /**
  * Message used when `--url`'s page never installs the test hook (Task 3 brief: "the M1 hook error
  * message"; verbatim copy of `@toolmark/testing`'s `MISSING_HOOK_MESSAGE`, kept local so
@@ -35,7 +38,8 @@ export interface CollectFromUrlOptions {
  * `@playwright/test` peer), waits for `__toolmark_test__`, and collects its full manifest as
  * caller `'inapp'`.
  * @throws {LintUsageError} `@playwright/test` is not installed (`--url requires
- * @playwright/test`), or the page never installs the hook within {@link HOOK_WAIT_MS}
+ * @playwright/test`), navigation doesn't finish within {@link GOTO_TIMEOUT_MS} (e.g. a
+ * non-responding URL), or the page never installs the hook within {@link HOOK_WAIT_MS}
  * ({@link MISSING_HOOK_MESSAGE}).
  */
 export async function collectFromUrl(
@@ -56,7 +60,13 @@ export async function collectFromUrl(
     )
     try {
       const page = await context.newPage()
-      await page.goto(url)
+      try {
+        await page.goto(url, { timeout: GOTO_TIMEOUT_MS })
+      } catch (e) {
+        throw new LintUsageError(
+          `--url ${url} did not respond within ${GOTO_TIMEOUT_MS}ms: ${e instanceof Error ? e.message : String(e)}`,
+        )
+      }
       try {
         await page.waitForFunction(() => Boolean(globalThis.__toolmark_test__), undefined, {
           timeout: HOOK_WAIT_MS,
