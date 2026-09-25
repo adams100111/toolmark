@@ -7,7 +7,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 /**
- * One message of a conversation: `role` user/assistant/system, the text the model sees in
+ * One message of a conversation: `role` user/assistant/tool, the text the model sees in
  * `content`, app bookkeeping in `meta`, and for assistant turns the tool names it could call.
  *
  * @property string $role

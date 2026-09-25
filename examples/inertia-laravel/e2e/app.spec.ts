@@ -7,6 +7,8 @@ import { validateMessage } from '@toolmark/core/protocol'
 import { BASE_URL, ROOT, STORAGE_STATE } from './global-setup.js'
 
 type ToolResult = { status: string; [key: string]: unknown }
+/** A fill's result as `page_call` hands it to the model: marked untrusted page data (SEC-7). */
+const UNTRUSTED_OK = { untrustedContent: true, result: { status: 'ok' } }
 type Step = { type: 'call' | 'describe'; tool: string; input?: unknown }
 
 interface ConnectedPage {
@@ -68,7 +70,7 @@ test('fill_create_form_via_bridge', async ({ page }) => {
   ])
 
   expect(calls).toBe(1)
-  expect(results[0]).toMatchObject({ status: 'ok' })
+  expect(results[0]).toMatchObject(UNTRUSTED_OK)
   await expect(page.getByLabel('Title (English)')).toHaveValue('Innovation challenge')
   await expect(page.getByLabel('Title (Arabic)')).toHaveValue('تحدي الابتكار')
   await expect(page.getByLabel('Type')).toHaveValue('hackathon')
@@ -94,7 +96,7 @@ test('wizard_one_call', async ({ page }) => {
 
   // One call filled all three steps.
   expect(calls).toBe(1)
-  expect(results[0]).toMatchObject({ status: 'ok' })
+  expect(results[0]).toMatchObject(UNTRUSTED_OK)
   await expect(page.getByLabel('Team name')).toHaveValue('Rockets')
   await expect(page.getByLabel('Team size')).toHaveValue('4')
   await page.getByRole('button', { name: 'Next' }).click()
@@ -163,7 +165,8 @@ test('archive_requires_confirmation', async ({ page }) => {
       return after.length
     })
     .toBe(2)
-  expect(after[0]).toMatchObject({ role: 'system', meta: { confirm_id: confirmId } })
+  // SEC-8: a tool result (after its synthetic tool use), never a system message.
+  expect(after[0]).toMatchObject({ role: 'tool', meta: { confirm_id: confirmId } })
   expect(after[1]!.role).toBe('assistant')
   expect(after[1]!.tools).not.toContain('page_call')
   expect(after[1]!.tools).not.toContain('page_describe')
@@ -186,7 +189,7 @@ test('navigation_then_new_page_tools', async ({ page }) => {
   expect(calls).toBe(3)
   expect(results[0]).toMatchObject({ status: 'ok' })
   expect(results[1]).toMatchObject({ status: 'ok', data: { name: 'challenges.create.fill' } })
-  expect(results[2]).toMatchObject({ status: 'ok' })
+  expect(results[2]).toMatchObject(UNTRUSTED_OK)
   await expect(page).toHaveURL(/\/challenges\/create$/)
   await expect(page.getByTestId('toolmark-client-id')).toHaveText(connected.clientId)
   await expect(page.getByLabel('Title (English)')).toHaveValue('After navigation')
