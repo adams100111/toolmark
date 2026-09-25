@@ -1,6 +1,12 @@
 import { createToolmark, ok, type ToolmarkErrorEvent } from '@toolmark/core'
 import { describe, expect, it, vi } from 'vitest'
-import { propsTools } from '../src/props-tools.js'
+import {
+  MAX_PROPS_TOOL_DESCRIPTION_LENGTH,
+  MAX_PROPS_TOOL_SCHEMA_LENGTH,
+  MAX_PROPS_TOOL_TITLE_LENGTH,
+  MAX_PROPS_TOOLS_PER_PAGE,
+  propsTools,
+} from '../src/props-tools.js'
 import type { InertiaVisitCallbacks } from '../src/visit-outcome.js'
 
 interface Visit {
@@ -71,7 +77,7 @@ describe('propsTools', () => {
     const { tm, router } = setup([entry()])
     const p1 = tm.call('orders.approve', { note: 'ok' }, { caller: 'human' })
     const v1 = await visited(router)
-    expect(v1.url).toBe('/orders/7/approve')
+    expect(v1.url).toBe(`${location.origin}/orders/7/approve`)
     expect(v1.opts.method).toBe('post')
     expect(v1.opts.data).toEqual({ note: 'ok' })
     expect(v1.opts.preserveState).toBe(true)
@@ -167,7 +173,9 @@ describe('propsTools', () => {
   })
 
   it('props_tool_non_object_input_never_visits', async () => {
-    const { tm, router } = setup([entry({ inputSchema: { type: 'string' } })])
+    const { tm, router } = setup([
+      entry({ inputSchema: { type: 'string' }, visit: { url: '/orders/7', method: 'get' } }),
+    ])
     const r = await tm.call('orders.approve', 'x', { caller: 'human' })
     expect(r.status).toBe('invalid')
     expect(router.visits).toHaveLength(0)
@@ -242,5 +250,137 @@ describe('propsTools', () => {
     expect(errors.map((e) => e.code)).toEqual(['duplicate_name'])
     expect(errors[0]?.tool).toBe('a.b')
     expect(tm.info('a.b')).toBeUndefined()
+  })
+
+  it('props_non_get_requires_closed_object_schema', () => {
+    const open = [
+      entry({ name: 'o1', inputSchema: { type: 'object', properties: {} } }),
+      entry({
+        name: 'o2',
+        inputSchema: { type: 'object', properties: {}, additionalProperties: true },
+      }),
+      entry({ name: 'o3', inputSchema: { properties: {}, additionalProperties: false } }),
+      entry({
+        name: 'o4',
+        inputSchema: { type: 'object', additionalProperties: { type: 'string' } },
+      }),
+      entry({ name: 'o5', inputSchema: { type: ['object'], additionalProperties: false } }),
+    ]
+    const { tm, errors } = setup([
+      ...open,
+      // A get tool may keep an open schema (its data is a same-origin query string).
+      entry({ name: 'g1', inputSchema: { type: 'object' }, visit: { url: '/x', method: 'get' } }),
+    ])
+    expect(tm.manifest().tools.map((t) => t.name)).toEqual(['g1'])
+    expect(errors.map((e) => e.code)).toEqual(open.map(() => 'invalid_props_tool'))
+    expect(errors.map((e) => e.tool)).toEqual(['o1', 'o2', 'o3', 'o4', 'o5'])
+  })
+
+  it('props_reserved_keys_in_input_refused', async () => {
+    const { tm, router } = setup([
+      entry({
+        name: 'q.get',
+        inputSchema: { type: 'object' },
+        visit: { url: '/q', method: 'get' },
+      }),
+      entry({
+        name: 'q.post',
+        inputSchema: {
+          type: 'object',
+          properties: { meta: { type: 'object' } },
+          additionalProperties: false,
+        },
+      }),
+    ])
+    for (const [name, data, path] of [
+      ['q.get', { _method: 'delete' }, '_method'],
+      ['q.get', { a: 1, _token: 'x' }, '_token'],
+      ['q.post', { meta: { _method: 'delete' } }, 'meta._method'],
+      ['q.post', { meta: { list: [{ _token: 't' }] } }, 'meta.list.0._token'],
+    ] as const) {
+      const r = await tm.call(name, data, { caller: 'human' })
+      expect(r).toMatchObject({ status: 'invalid', issues: [{ path }] })
+    }
+    // A closed non-get schema already rejects a root `_method` as an unknown field.
+    const root = await tm.call('q.post', { _method: 'delete' }, { caller: 'human' })
+    expect(root.status).toBe('invalid')
+    expect(router.visits).toHaveLength(0)
+  })
+
+  it('props_schema_declaring_reserved_key_skipped', () => {
+    const declares = (key: string, nested: boolean): Record<string, unknown> => ({
+      type: 'object',
+      properties: nested
+        ? { inner: { type: 'object', properties: { [key]: { type: 'string' } } } }
+        : { [key]: { type: 'string' } },
+      additionalProperties: false,
+    })
+    const { tm, errors } = setup([
+      entry({ name: 'r1', inputSchema: declares('_method', false) }),
+      entry({ name: 'r2', inputSchema: declares('_token', false) }),
+      entry({ name: 'r3', inputSchema: declares('_method', true) }),
+      entry({
+        name: 'r4',
+        inputSchema: declares('_token', false),
+        visit: { url: '/x', method: 'get' },
+      }),
+      entry({ name: 'ok' }),
+    ])
+    expect(tm.manifest().tools.map((t) => t.name)).toEqual(['ok'])
+    expect(errors.map((e) => e.code)).toEqual([
+      'invalid_props_tool',
+      'invalid_props_tool',
+      'invalid_props_tool',
+      'invalid_props_tool',
+    ])
+    expect(errors[0]?.message).toContain('_method')
+  })
+
+  it('props_visit_url_resolved_at_registration', async () => {
+    const start = location.pathname + location.search
+    history.pushState(null, '', '/orders/7/')
+    try {
+      const { tm, router } = setup([entry({ visit: { url: 'approve', method: 'post' } })])
+      // An in-app navigation changes the base a relative URL would resolve against.
+      history.pushState(null, '', '/elsewhere/deep/')
+      void tm.call('orders.approve', { note: 'a' }, { caller: 'human' })
+      const v = await visited(router)
+      expect(v.url).toBe(`${location.origin}/orders/7/approve`)
+    } finally {
+      history.pushState(null, '', start)
+    }
+  })
+
+  it('props_entry_caps', () => {
+    const big = (n: number): Record<string, unknown> => ({
+      type: 'object',
+      properties: { note: { type: 'string', description: 'x'.repeat(n) } },
+      additionalProperties: false,
+    })
+    const overhead = JSON.stringify(big(0)).length
+    const { tm, errors } = setup([
+      entry({ name: 'd.max', description: 'd'.repeat(MAX_PROPS_TOOL_DESCRIPTION_LENGTH) }),
+      entry({ name: 'd.over', description: 'd'.repeat(MAX_PROPS_TOOL_DESCRIPTION_LENGTH + 1) }),
+      entry({ name: 't.max', title: 't'.repeat(MAX_PROPS_TOOL_TITLE_LENGTH) }),
+      entry({ name: 't.over', title: 't'.repeat(MAX_PROPS_TOOL_TITLE_LENGTH + 1) }),
+      entry({ name: 's.max', inputSchema: big(MAX_PROPS_TOOL_SCHEMA_LENGTH - overhead) }),
+      entry({ name: 's.over', inputSchema: big(MAX_PROPS_TOOL_SCHEMA_LENGTH - overhead + 1) }),
+    ])
+    expect(tm.manifest().tools.map((t) => t.name)).toEqual(['d.max', 's.max', 't.max'])
+    expect(errors.map((e) => [e.code, e.tool])).toEqual([
+      ['invalid_props_tool', 'd.over'],
+      ['invalid_props_tool', 't.over'],
+      ['invalid_props_tool', 's.over'],
+    ])
+  })
+
+  it('props_entries_per_page_capped_with_one_event', () => {
+    const n = MAX_PROPS_TOOLS_PER_PAGE + 5
+    const { tm, errors } = setup(Array.from({ length: n }, (_, i) => entry({ name: `t${i}` })))
+    expect(tm.manifest().tools).toHaveLength(MAX_PROPS_TOOLS_PER_PAGE)
+    expect(tm.info(`t${MAX_PROPS_TOOLS_PER_PAGE - 1}`)).toBeDefined()
+    expect(tm.info(`t${MAX_PROPS_TOOLS_PER_PAGE}`)).toBeUndefined()
+    expect(errors.map((e) => e.code)).toEqual(['invalid_props_tool'])
+    expect(errors[0]?.message).toContain('5 props tool entries skipped')
   })
 })

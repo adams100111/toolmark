@@ -185,4 +185,52 @@ describe('inertiaPages', () => {
     expect(names(tm)).toEqual([])
     detach()
   })
+
+  it('second_consumer_reports_duplicate_and_is_ignored', () => {
+    for (const dev of [true, false]) {
+      const errors: ToolmarkErrorEvent[] = []
+      const tm = createToolmark({ dev, onError: (e) => errors.push(e) })
+      const r1 = fakeRouter()
+      const r2 = fakeRouter()
+      const detach1 = tm.use(
+        inertiaPages({ router: r1, initialPage: { props: { toolmark: [tool('a.one')] } } }),
+      )
+      let detach2: () => void = () => {}
+      expect(() => {
+        detach2 = tm.use(
+          inertiaPages({ router: r2, initialPage: { props: { toolmark: [tool('b.one')] } } }),
+        )
+      }).not.toThrow()
+      const dup = errors.filter((e) => e.code === 'duplicate_name')
+      expect(dup).toHaveLength(1)
+      expect(dup[0]?.message).toContain('inertiaPages already attached')
+      expect(names(tm)).toEqual(['a.one'])
+      expect(r2.listenerCount()).toBe(0)
+      detach2()
+      expect(names(tm)).toEqual(['a.one'])
+      // After the first detaches, a new consumer may attach.
+      detach1()
+      tm.use(inertiaPages({ router: r2, initialPage: { props: { toolmark: [tool('b.one')] } } }))
+      expect(names(tm)).toEqual(['b.one'])
+    }
+  })
+
+  it('relative_visit_url_survives_same_list_navigation', async () => {
+    const start = location.pathname + location.search
+    history.pushState(null, '', '/orders/7/')
+    try {
+      const tm = createToolmark()
+      const router = fakeRouter()
+      const entries = [{ ...tool('a.one'), visit: { url: 'approve', method: 'post' } }]
+      tm.use(inertiaPages({ router, initialPage: { props: { toolmark: entries } } }))
+      // In-app navigation to another path, re-rendering the same entry list.
+      history.pushState(null, '', '/customers/9/')
+      router.fire('navigate', page(structuredClone(entries)))
+      void tm.call('a.one', {}, { caller: 'human' })
+      await vi.waitFor(() => expect(router.visits).toHaveLength(1))
+      expect(router.visits[0]?.url).toBe(`${location.origin}/orders/7/approve`)
+    } finally {
+      history.pushState(null, '', start)
+    }
+  })
 })

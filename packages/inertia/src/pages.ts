@@ -14,6 +14,9 @@ export interface InertiaPagesOptions {
 
 const DEFAULT_PROPS_KEY = 'toolmark'
 
+/** Registries an `inertiaPages` consumer is currently attached to (at most one per registry). */
+const attached = new WeakSet<Toolmark>()
+
 /** Reads `value[key]` as an own property, tolerating any shape. */
 function ownProp(value: unknown, key: string): unknown {
   if (typeof value !== 'object' || value === null) return undefined
@@ -39,7 +42,9 @@ function signature(value: unknown): string | undefined {
  * `preserveState` visits) keeps the current scope and registrations, so it causes no revision
  * bump; a changed list bumps `rev` once. A navigation does not cancel in-flight props calls (a
  * props tool's own visit swaps the page before its `onSuccess`); only the returned disposer does.
- * Register `navigationTool` at the root scope, never in this page scope.
+ * Register `navigationTool` at the root scope, never in this page scope. At most one `inertiaPages`
+ * consumer may be attached to a registry at a time: a second one does nothing and emits an `error`
+ * event `duplicate_name` ("inertiaPages already attached"), in development and production alike.
  * @param o - The router, the initial page and an optional `propsKey` (default `'toolmark'`).
  * @returns A consumer for `tm.use(...)`; its disposer removes the page tools, unsubscribes from the
  * router and resolves every in-flight props call as `cancelled` `signal`. Under SSR it does nothing.
@@ -47,6 +52,14 @@ function signature(value: unknown): string | undefined {
 export function inertiaPages(o: InertiaPagesOptions): (tm: Toolmark) => () => void {
   return (tm) => {
     if (typeof document === 'undefined') return () => {}
+    if (attached.has(tm)) {
+      emitEvent(tm, 'error', {
+        code: 'duplicate_name',
+        message: 'inertiaPages already attached to this Toolmark; the second consumer is ignored',
+      })
+      return () => {}
+    }
+    attached.add(tm)
     const key = o.propsKey ?? DEFAULT_PROPS_KEY
     const inflight = new AbortController()
     let scope: Scope | null = null
@@ -93,6 +106,7 @@ export function inertiaPages(o: InertiaPagesOptions): (tm: Toolmark) => () => vo
     return () => {
       if (disposed) return
       disposed = true
+      attached.delete(tm)
       off()
       inflight.abort()
       scope?.dispose()
