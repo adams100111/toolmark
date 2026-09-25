@@ -1,6 +1,8 @@
 /**
- * `@toolmark/core/dom` — DOM scanning and the DOM form adapter (filled in by M2 Lane B). The entry
- * has no top-level DOM access, so it imports under Node (SSR).
+ * `@toolmark/core/dom` — DOM scanning and the DOM form adapter (spec §10.2). The entry has no
+ * top-level DOM access, so it imports under Node (SSR).
  * @packageDocumentation
  */
-export {}
+export type { DomFormAdapter, DomFormAdapterOptions } from './form-adapter.js'
+export { domFormAdapter } from './form-adapter.js'
+export { synthesizeFormSchema } from './synthesize.js'
