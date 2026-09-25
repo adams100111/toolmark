@@ -1,6 +1,7 @@
 import { StrictMode, useState, type ReactElement } from 'react'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { z } from 'zod'
 import { createToolmark, ok, type ToolmarkErrorEvent } from '@toolmark/core'
 import { ToolmarkProvider, ToolScope, useTool } from '../src/index.js'
 
@@ -183,5 +184,43 @@ describe('useTool', () => {
     expect(() => render(<GreetTool />)).toThrow(
       'useToolmark must be used inside <ToolmarkProvider>',
     )
+  })
+})
+
+describe('useTool churn warning follows the registry dev flag', () => {
+  function Churner({ n }: { n: number }): ReactElement {
+    // A fresh input schema every render forces a re-registration each time.
+    useTool({ name: 'churn', description: 'Churns', input: z.object({}), run: () => ok(null) })
+    return <div>{n}</div>
+  }
+
+  function churn(dev: boolean): number {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    try {
+      const tm = createToolmark({ dev })
+      const { rerender } = render(
+        <ToolmarkProvider toolmark={tm}>
+          <Churner n={0} />
+        </ToolmarkProvider>,
+      )
+      for (let i = 1; i <= 5; i++) {
+        rerender(
+          <ToolmarkProvider toolmark={tm}>
+            <Churner n={i} />
+          </ToolmarkProvider>,
+        )
+      }
+      return warn.mock.calls.filter((c) => String(c[0]).includes('re-registered')).length
+    } finally {
+      warn.mockRestore()
+    }
+  }
+
+  it('use_tool_churn_warns_in_dev_registry', () => {
+    expect(churn(true)).toBe(1)
+  })
+
+  it('use_tool_churn_silent_in_prod_registry', () => {
+    expect(churn(false)).toBe(0)
   })
 })

@@ -263,6 +263,19 @@ export function onPendingConsumed(tm: Toolmark, fn: () => void): () => void {
   }
 }
 
+/**
+ * @internal For `@toolmark/react` hooks' own misconfiguration checks; not part of the stable API.
+ * Whether `tm` was created with `dev: true` (its "throw in development, `error` event in production"
+ * contract). `false` for an SSR (inert) registry and for any object not created by
+ * {@link createToolmark}.
+ * @param tm - The registry.
+ * @returns `true` only for a live browser registry created with `dev: true`.
+ */
+export function isDevRegistry(tm: Toolmark): boolean {
+  const state = stateOf.get(tm)
+  return state !== undefined && state.browser && state.dev
+}
+
 /** @internal */
 export function registryState(tm: Toolmark): RegistryState | undefined {
   return stateOf.get(tm)

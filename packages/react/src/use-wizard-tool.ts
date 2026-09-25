@@ -3,6 +3,7 @@ import {
   createStepwiseWizardTools,
   createWizardTools,
   emitEvent,
+  isDevRegistry,
   ToolmarkError,
   type FormAdapter,
   type OptionsProvider,
@@ -12,36 +13,6 @@ import {
 } from '@toolmark/core'
 import { useCurrentScope } from './scope.js'
 import { useToolmark } from './provider.js'
-
-// Bundlers (webpack, Next.js, esbuild) statically replace `process.env.NODE_ENV`; declaring the
-// ambient shape (instead of depending on `@types/node`, which this package doesn't have) lets that
-// replacement/dead-code-elimination happen without a real Node `process` at runtime.
-declare const process: { env: Record<string, string | undefined> } | undefined
-
-/**
- * @internal Best-effort dev-mode detection with no bundler-specific dependency. Duplicated from
- * `use-tool.ts` (outside this file's ownership for this task): the registry's own `dev` flag
- * (which drives core's identical "throw in dev, event in prod" contract, e.g. `wizard_misconfigured`
- * for an empty/duplicate step list) is a construction-time option with no public getter on
- * `Toolmark`, so this hook-level misconfiguration check (missing `next`/`previous`/`currentAdapter`
- * in stepwise mode, which core never sees) uses the same bundler-environment heuristic `useTool`
- * already relies on for its dev-only churn warning.
- */
-function isDevEnvironment(): boolean {
-  try {
-    const meta = import.meta as unknown as { env?: { DEV?: boolean; MODE?: string } }
-    if (meta.env) {
-      if (typeof meta.env.DEV === 'boolean') return meta.env.DEV
-      if (typeof meta.env.MODE === 'string') return meta.env.MODE !== 'production'
-    }
-  } catch {
-    // Not bundled with a `define`d `import.meta.env`; fall through.
-  }
-  if (typeof process !== 'undefined' && process.env.NODE_ENV) {
-    return process.env.NODE_ENV !== 'production'
-  }
-  return false
-}
 
 /** Options for {@link useWizardTool} (spec §8.2, D25). */
 export interface UseWizardToolOptions {
@@ -100,12 +71,17 @@ export interface UseWizardToolOptions {
   /** Moves back one step. Stepwise mode only; required there. */
   previous?(): void
   /**
-   * Submits the wizard (consequential). In parent-state mode this is wrapped exactly like
-   * {@link goTo}: the mounted current step's values are written into {@link data} first, so the
-   * app's own `submit` (which typically reads {@link data}) sees them even when the agent never
-   * navigated away from the current step before submitting.
+   * Submits the wizard (consequential). In parent-state mode this is wrapped like {@link goTo}: the
+   * mounted current step's values are first merged into {@link data} (via {@link setData}), and
+   * the merged parent data is passed as the argument.
+   *
+   * **Use the argument, not closed-over state.** `setData` typically schedules a React state update
+   * that only becomes visible on the next render, while `submit` runs in the same tick — so a
+   * `data` captured by this closure is the pre-merge snapshot and misses the current step's latest
+   * edits. A zero-argument `submit` still works (the argument is simply ignored). In stepwise mode
+   * (no {@link data}) the argument is `{}`.
    */
-  submit(): Promise<ToolResult<unknown>>
+  submit(data: Record<string, Record<string, unknown>>): Promise<ToolResult<unknown>>
   /**
    * User-facing submit confirmation summary. In stepwise mode (no {@link data}) this is called
    * with `{}` — the hook has no parent data to hand it in that mode.
@@ -196,8 +172,8 @@ function buildStableStep(
  * (`opts.data` + `opts.setData` present) uses `createWizardTools`; otherwise the stepwise fallback
  * (`createStepwiseWizardTools`) is used, which requires `opts.next`, `opts.previous` and
  * `opts.currentAdapter` — their absence is a misconfiguration (`ToolmarkError` code
- * `wizard_misconfigured` in development, an `error` event of the same code in production; nothing
- * is registered either way).
+ * `wizard_misconfigured` when the registry was created with `dev: true`, an `error` event of the
+ * same code otherwise; nothing is registered either way).
  *
  * Registration happens in an effect, under the current scope. `submit`, `goTo`, `next`,
  * `previous`, `setData`, `resetCurrent`, `currentAdapter` and every step's `options` providers are
@@ -210,8 +186,9 @@ function buildStableStep(
  * step only through its mounted `currentAdapter`, never into `data` — so `data` alone can miss the
  * current step's latest edits. This hook closes that gap: right before `<name>.goTo` navigates
  * away and right before `<name>.submit` runs the app's `submit`, it writes the current step's
- * `currentAdapter.getValues()` into `data` (via `setData`), so a later `tm.undo()` or the app's own
- * `submit` (which typically reads `data`) both see them.
+ * `currentAdapter.getValues()` into `data` (via `setData`), so a later `tm.undo()` sees them. The
+ * app's `submit` receives that merged data as its argument — read it from there, not from
+ * closed-over state, which is still the pre-merge snapshot in that same tick.
  *
  * **Synchronous parent-data reads (requirement (a)):** `setData` updates an internal ref
  * synchronously (in addition to calling the app's `setData`, which typically triggers a React
@@ -254,12 +231,14 @@ export function useWizardTool(opts: UseWizardToolOptions): void {
     [],
   )
 
+  // Returns the (possibly merged) parent data, so `submit` can hand it to the app directly.
   const syncCurrentIntoData = useMemo(
-    () => (): void => {
+    () => (): Record<string, Record<string, unknown>> => {
       const adapter = optsRef.current.currentAdapter
-      if (!adapter) return
+      if (!adapter) return dataRef.current ?? {}
       const merged = { ...(dataRef.current ?? {}), [currentRef.current]: adapter.getValues() }
       stableSetData(merged)
+      return merged
     },
     [stableSetData],
   )
@@ -279,15 +258,12 @@ export function useWizardTool(opts: UseWizardToolOptions): void {
   )
 
   const stableWizardSubmit = useMemo(
-    () => (): Promise<ToolResult<unknown>> => {
-      syncCurrentIntoData()
-      return optsRef.current.submit()
-    },
+    () => (): Promise<ToolResult<unknown>> => optsRef.current.submit(syncCurrentIntoData()),
     [syncCurrentIntoData],
   )
 
   const stableStepwiseSubmit = useMemo(
-    () => (): Promise<ToolResult<unknown>> => optsRef.current.submit(),
+    () => (): Promise<ToolResult<unknown>> => optsRef.current.submit({}),
     [],
   )
 
@@ -343,7 +319,7 @@ export function useWizardTool(opts: UseWizardToolOptions): void {
         const message =
           `Wizard "${current.name}": the stepwise fallback (no data/setData) requires next, ` +
           `previous and currentAdapter`
-        if (isDevEnvironment()) throw new ToolmarkError('wizard_misconfigured', message)
+        if (isDevRegistry(toolmark)) throw new ToolmarkError('wizard_misconfigured', message)
         emitEvent(toolmark, 'error', {
           code: 'wizard_misconfigured',
           message,
