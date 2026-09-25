@@ -11,7 +11,8 @@ declare global {
   var __toolmark_test__: unknown
 }
 
-const HYDRATION_ISSUE = /hydrat|did not match|server rendered HTML|Minified React error #4(18|23|25)/i
+const HYDRATION_ISSUE =
+  /hydrat|did not match|server rendered HTML|Minified React error #4(18|23|25)/i
 const SERVER_LOG_ISSUE = /(^|\s)(⨯|Error\b)|toolmark/i
 
 /** Fails if any line of `test-results/<logName>` matches the brief's server-log issue pattern. */
