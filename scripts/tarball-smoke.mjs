@@ -6,7 +6,7 @@
 //
 // (a) every `exports` target exists (wildcards expanded against the packed files); every JS entry
 //     is dynamically imported by `node` (entries listed in BROWSER_ONLY are only resolved with
-//     `import.meta.resolve`); JSON entries are parsed;
+//     `import.meta.resolve`) and must declare a `types` condition; JSON entries are parsed;
 // (b) a generated `smoke.ts` importing every entry's types is type-checked with TypeScript 6.0.3
 //     and 7.0.2, each in `nodenext` and `preserve`/`bundler` mode (`strict`, `skipLibCheck: false`,
 //     `types: ['node']`, no `customConditions`);
@@ -331,7 +331,12 @@ async function main() {
             const r = run(process.execPath, ['--input-type=module', '-e', code], project, 60000)
             if (r.status === 0) pass(`${browserOnly ? 'resolve' : 'import'} ${spec}`)
             else fail(`${browserOnly ? 'resolve' : 'import'} ${spec}`, firstLines(r.output, 8))
-            if (types) typeSpecifiers.push(spec)
+            if (types) {
+              typeSpecifiers.push(spec)
+              pass(`types ${spec}`, types[1])
+            } else {
+              fail(`types ${spec}`, 'JS entry has no "types" condition')
+            }
           }
         }
       }
