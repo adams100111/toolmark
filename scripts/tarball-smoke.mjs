@@ -6,11 +6,13 @@
 //
 // (a) every `exports` target exists (wildcards expanded against the packed files); every JS entry
 //     is dynamically imported by `node` (entries listed in BROWSER_ONLY are only resolved with
-//     `import.meta.resolve`) and must declare a `types` condition; JSON entries are parsed;
+//     `import.meta.resolve`) and must declare a `types` condition; JSON entries are parsed; any
+//     other target (an asset such as `@toolmark/tour/styles.css`) must be a non-empty file;
 // (b) a generated `smoke.ts` importing every entry's types is type-checked with TypeScript 6.0.3
 //     and 7.0.2, each in `nodenext` and `preserve`/`bundler` mode (`strict`, `skipLibCheck: false`,
 //     `types: ['node']`, no `customConditions`);
-// (c) every declared `bin` runs with `--help`.
+// (c) every declared `bin` runs with `--help`, and with `<subcommand> --help` for the documented
+//     subcommands in BIN_SUBCOMMANDS (`toolmark lint --help`).
 //
 // Prints one line per check and exits 0 (all passed) or 1. Dependencies: Node and pnpm only.
 // pnpm >= 11 no longer reads the `pnpm` field of package.json, so the tarball overrides are
@@ -25,6 +27,9 @@ import { gunzipSync } from 'node:zlib'
 
 /** Entries that need a DOM to evaluate; resolved, never imported. Empty in M1 (D24). */
 const BROWSER_ONLY = []
+
+/** Documented subcommands per bin name, each also run as `<bin> <subcommand> --help`. */
+const BIN_SUBCOMMANDS = { toolmark: ['lint'] }
 
 const TYPESCRIPT_6 = '6.0.3'
 const TYPESCRIPT_7 = '7.0.2'
@@ -313,7 +318,8 @@ async function main() {
           pass(`exports ${spec}`, `${entry.targets.length} target(s)`)
 
           const runtime = entry.targets.find(
-            ([c]) => c.includes('import') || c.includes('default') || c.length === 0,
+            ([c]) =>
+              c.includes('import') || c.includes('node') || c.includes('default') || c.length === 0,
           )
           const types = entry.targets.find(([c]) => c.includes('types'))
           if (runtime && /\.json$/.test(runtime[1])) {
@@ -323,7 +329,11 @@ async function main() {
             } catch (e) {
               fail(`json ${spec}`, e.message)
             }
-          } else if (runtime && /\.(m|c)?js$/.test(runtime[1])) {
+          } else if (runtime && !/\.(m|c)?js$/.test(runtime[1])) {
+            const bytes = (await readFile(join(pkgDir, runtime[1]))).length
+            if (bytes > 0) pass(`asset ${spec}`, `${runtime[1]}, ${bytes} bytes`)
+            else fail(`asset ${spec}`, `${runtime[1]} is empty`)
+          } else if (runtime) {
             const browserOnly = BROWSER_ONLY.includes(spec)
             const code = browserOnly
               ? `import.meta.resolve(${JSON.stringify(spec)})`
@@ -400,9 +410,15 @@ async function main() {
           ? { [manifest.name.split('/').pop()]: manifest.bin }
           : (manifest.bin ?? {})
       for (const [bin, file] of Object.entries(bins)) {
-        const r = run(process.execPath, [join(pkgDir, file), '--help'], project, 60000)
-        if (r.status === 0) pass(`bin ${bin} --help`)
-        else fail(`bin ${bin} --help`, firstLines(r.output, 8))
+        for (const argv of [
+          ['--help'],
+          ...(BIN_SUBCOMMANDS[bin] ?? []).map((c) => [c, '--help']),
+        ]) {
+          const label = `bin ${bin} ${argv.join(' ')}`
+          const r = run(process.execPath, [join(pkgDir, file), ...argv], project, 60000)
+          if (r.status === 0) pass(label)
+          else fail(label, firstLines(r.output, 8))
+        }
       }
     }
   } finally {
