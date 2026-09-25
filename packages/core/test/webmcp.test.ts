@@ -475,4 +475,153 @@ describe('webmcp consumer', () => {
     expect(getTools.mock.calls.length).toBeLessThanOrEqual(3)
     for (const name of ['a', 'b', 'c']) expect(fake.callsFor(name)).toHaveLength(1)
   })
+
+  it('stale_execute_after_abort_refuses_unknown_tool_without_calling', async () => {
+    const { tm } = setup()
+    const fake = fakeModelContext()
+    const seen: string[] = []
+    tm.events.on('call', (e) => seen.push(e.tool))
+    tm.register(tool('a'))
+    const dispose = tm.use(webmcp({ modelContext: () => fake.mc }))
+    await settle()
+    const staleTool = fake.tool('a')
+    // The registration's own controller aborts on disposer, without a resync pass in between.
+    dispose()
+    const r = await staleTool.execute({})
+    expect(r).toEqual({
+      status: 'refused',
+      code: 'unknown_tool',
+      message: expect.any(String) as string,
+    })
+    expect(seen).toEqual([])
+  })
+
+  it('disposed_scope_unregisters_and_stale_execute_refuses_unknown_tool', async () => {
+    const { tm } = setup()
+    const fake = fakeModelContext()
+    const seen: string[] = []
+    tm.events.on('call', (e) => seen.push(e.tool))
+    const reg = tm.register(tool('a'))
+    tm.use(webmcp({ modelContext: () => fake.mc }))
+    await settle()
+    const staleTool = fake.tool('a')
+
+    reg.dispose()
+    await settle()
+    expect(fake.live.has('a')).toBe(false)
+
+    const r = await staleTool.execute({})
+    expect(r).toEqual({
+      status: 'refused',
+      code: 'unknown_tool',
+      message: expect.any(String) as string,
+    })
+    expect(seen).toEqual([])
+  })
+
+  it('throwing_filter_reports_webmcp_register_failed_once_per_fingerprint', async () => {
+    const { tm, errors } = setup()
+    const fake = fakeModelContext()
+    const boom = new Error('filter exploded')
+    const regA = tm.register(tool('a'))
+    tm.register(tool('b'))
+    tm.use(
+      webmcp({
+        modelContext: () => fake.mc,
+        filter: (t) => {
+          if (t.name === 'a') throw boom
+          return true
+        },
+      }),
+    )
+    await settle()
+    expect([...fake.live.keys()]).toEqual(['b'])
+    expect(errors.filter((e) => e.code === 'webmcp_register_failed')).toHaveLength(1)
+    expect(errors[0]).toEqual(expect.objectContaining({ tool: 'a', cause: boom }))
+
+    // Further passes with the same tool fingerprint do not re-report.
+    tm.register(tool('c'))
+    await settle()
+    tm.register(tool('d'))
+    await settle()
+    expect(errors.filter((e) => e.code === 'webmcp_register_failed')).toHaveLength(1)
+
+    // A fingerprint change (new description) is retried and, if it still throws, reported again.
+    regA.dispose()
+    tm.register(tool('a', undefined, { description: 'Changed.' }))
+    await settle()
+    expect(errors.filter((e) => e.code === 'webmcp_register_failed')).toHaveLength(2)
+  })
+
+  it('abort_rejection_ignored_when_reason_is_named_abort_error', async () => {
+    const { tm, errors } = setup()
+    const calls: { tool: WebMcpToolDescriptor; options: RegisterOptions | undefined }[] = []
+    const live = new Map<string, WebMcpToolDescriptor>()
+    const mc: ModelContextLike = {
+      registerTool(t, options) {
+        calls.push({ tool: t, options })
+        live.set(t.name, t)
+        const signal = options?.signal
+        return new Promise<void>((_, reject) => {
+          signal?.addEventListener(
+            'abort',
+            () => {
+              live.delete(t.name)
+              // A host that reports its own AbortError instance rather than the signal's reason.
+              reject(new DOMException('aborted by host', 'AbortError'))
+            },
+            { once: true },
+          )
+        })
+      },
+      getTools() {
+        return Promise.resolve([...live.keys()].map((name) => ({ name })))
+      },
+    }
+    const reg = tm.register(tool('a'))
+    const dispose = tm.use(webmcp({ modelContext: () => mc }))
+    await settle()
+    reg.dispose()
+    await settle()
+    dispose()
+    await settle()
+    expect(errors).toEqual([])
+  })
+
+  it('subscribes_to_toolchange_and_unsubscribes_on_stop', async () => {
+    const { tm } = setup()
+    const fake = fakeModelContext()
+    const target = new EventTarget()
+    const mc: ModelContextLike & EventTarget = Object.assign(fake.mc, {
+      addEventListener: target.addEventListener.bind(target),
+      removeEventListener: target.removeEventListener.bind(target),
+      dispatchEvent: target.dispatchEvent.bind(target),
+    })
+    tm.register(tool('a'))
+    const dispose = tm.use(webmcp({ modelContext: () => mc }))
+    await settle()
+
+    const getTools = vi.spyOn(mc, 'getTools')
+    mc.dispatchEvent(new Event('toolchange'))
+    await settle()
+    expect(getTools).toHaveBeenCalled()
+
+    dispose()
+    getTools.mockClear()
+    mc.dispatchEvent(new Event('toolchange'))
+    await settle()
+    expect(getTools).not.toHaveBeenCalled()
+  })
+
+  it('consequential_without_confirm_handler_not_registered_via_webmcp', async () => {
+    // No `confirm` handler configured: `setup()` always supplies one, so build the registry
+    // directly.
+    const tm = createTestRegistry()
+    const fake = fakeModelContext()
+    tm.register(tool('pay', { consequential: true }))
+    tm.register(tool('ok'))
+    tm.use(webmcp({ modelContext: () => fake.mc }))
+    await settle()
+    expect([...fake.live.keys()]).toEqual(['ok'])
+  })
 })

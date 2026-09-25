@@ -100,8 +100,18 @@ export function webmcp(o: WebMcpOptions = {}): (tm: Toolmark) => () => void {
       }
       const sync = createSync(tm, mc, { filter: o.filter, exposedTo })
       const unsubscribe = tm.subscribe(() => sync.schedule())
+      // Some hosts (native or the polyfill) fire `toolchange` when their own tool set changes
+      // (e.g. a native declarative form appears), independent of our own registry revisions.
+      const target = mc as Partial<EventTarget>
+      const onToolChange = (): void => sync.schedule()
+      if (typeof target.addEventListener === 'function') {
+        target.addEventListener('toolchange', onToolChange)
+      }
       stop = () => {
         unsubscribe()
+        if (typeof target.removeEventListener === 'function') {
+          target.removeEventListener('toolchange', onToolChange)
+        }
         sync.dispose()
       }
       sync.schedule()
