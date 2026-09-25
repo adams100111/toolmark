@@ -137,6 +137,33 @@ through a symlink too):
   both directly and through a symlink to the bin, as npm/npx `.bin` entries invoke it (the first
   pack's `toolmark` bin was a silent no-op through a symlink).
 
+## M5 release candidate — `1.0.0-next.4` (2026-09-25)
+
+Packed from commit `3aa8d2f` (`chore(release): 1.0.0 release candidate`) on branch `m5/task-7b`
+(off `feat/m5-release` `599a3a9`), after `pnpm build`. The all-major changeset
+(`.changeset/release-1-0.md`) moves the fixed group from `0.1.0-next.3` to `1.0.0-next.4` (the
+prerelease counter continues in pre mode `next`); `check-release-versions --pre next` passes for all 8. The later commit `98eafb0` (`docs(changeset): tidy 1.0.0 changelog entries`) only rewords
+`.changeset/pre/*.md` and does not change any packed file.
+
+| Tarball                                    | Bytes  | SHA-256                                                            |
+| ------------------------------------------ | ------ | ------------------------------------------------------------------ |
+| `toolmark-core-1.0.0-next.4.tgz`           | 272797 | `cc5be9eb058f680deb8409e72e496b4c4fd1002f14bf62200bb58e471c24ea7f` |
+| `toolmark-inertia-1.0.0-next.4.tgz`        | 30780  | `ce668b19770b21a26da229930fa3d26799a49eecf7a0f9255c553dad025aec59` |
+| `toolmark-judge-typesafe-1.0.0-next.4.tgz` | 11838  | `efbbf81ecbb430babff67d3b75a6173ecfe7d7f254ace66e705c10833abc02ed` |
+| `toolmark-lint-1.0.0-next.4.tgz`           | 23021  | `46b140a30811b4328f72baae3628b0b4292055ec59f402f2246f421eb50704f9` |
+| `toolmark-mcp-1.0.0-next.4.tgz`            | 55602  | `51346c55a0068505a3c99e08daa669bf22e75c5b13696232aa1cda74c3b065bf` |
+| `toolmark-react-1.0.0-next.4.tgz`          | 34078  | `7ed01b51b3521f097320e15aa76395a1755de078180d169cf9c54c2781fe6c07` |
+| `toolmark-testing-1.0.0-next.4.tgz`        | 9259   | `f5172a01a44f29fa9f8858eb9a98b4db87c01d7371468da3feb48b7bfe4df5d0` |
+| `toolmark-tour-1.0.0-next.4.tgz`           | 33401  | `12ea27d00d27688f98cf3746f4e13b9c159d26488286bbe6bb3a34f77acaf569` |
+
+**Smoke result: pass** — `tarball-smoke: 108 passed, 0 failed` (Node 22.23.2, pnpm 12.6.0, macOS),
+and `check-release-versions --tarballs dist-tarballs`: 8 passed, 0 failed (every internal range is
+`1.0.0-next.4`, no `workspace:`). Same coverage as M4: 35 `exports` entries, 23 JS entries
+imported by `node`, TypeScript 6.0.3 and 7.0.2 under `nodenext` and `preserve`/`bundler` (4/4), and
+both bins run directly and through a symlink. The changesets-packed tarballs
+(`changeset pack --from-publish-plan`) are byte-identical to these, and the two-directory smoke
+over both sets reports `216 passed, 0 failed`. Evidence: `docs/release/checklist.md`.
+
 ## Consumer recipe (optional)
 
 1. Vendor the tarballs into the consuming repo, e.g. `vendor/toolmark/*.tgz`, and check the SHA-256

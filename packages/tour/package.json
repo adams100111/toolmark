@@ -1,6 +1,6 @@
 {
   "name": "@toolmark/tour",
-  "version": "0.1.0-next.3",
+  "version": "1.0.0-next.4",
   "description": "Framework-free guided tour engine over the registry's tools, anchors and interaction events, with a vanilla-DOM overlay and a React binding.",
   "keywords": [
     "toolmark",

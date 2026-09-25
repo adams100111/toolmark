@@ -1,5 +1,16 @@
 # @toolmark/lint
 
+## 1.0.0-next.4
+
+### Major Changes
+
+- First stable release.
+
+### Patch Changes
+
+- Updated dependencies [[`238d1ef`](https://github.com/adams100111/toolmark/commit/238d1ef3edd0068554fa228d86ddee0c0a55a509)]:
+  - @toolmark/core@1.0.0-next.4
+
 ## 0.1.0-next.3
 
 ### Minor Changes
