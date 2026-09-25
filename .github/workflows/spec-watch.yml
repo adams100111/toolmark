@@ -193,6 +193,7 @@ jobs:
             /tools/
             /resources/
             /webmcp/
+            /docs/commands.json
           sparse-checkout-cone-mode: false
           persist-credentials: false
       # No Chrome Canary on Linux: run wpt's `chrome` product on the Dev channel.
