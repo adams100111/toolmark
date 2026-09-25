@@ -355,6 +355,9 @@ jobs:
         if: steps.playwright-cache.outputs.cache-hit == 'true'
         run: pnpm -F @toolmark-examples/inertia-laravel exec playwright install-deps chromium
       - run: pnpm -F @toolmark-examples/inertia-laravel build
+      # After the build: the Vite build runs Wayfinder, which generates the route/action modules
+      # the example's TypeScript imports.
+      - run: pnpm -F @toolmark-examples/inertia-laravel typecheck
       # Starts `artisan serve` (8010) and Reverb (8081) via the example's globalSetup.
       - name: Playwright (inertia-laravel, Chromium)
         run: pnpm -F @toolmark-examples/inertia-laravel exec playwright test

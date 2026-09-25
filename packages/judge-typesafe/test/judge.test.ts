@@ -237,6 +237,73 @@ describe('sdk_error_becomes_warning', () => {
   })
 })
 
+describe('judge_time_bound', () => {
+  it('a page that never answers becomes one judge/timeout warning, never a hang', async () => {
+    // A transport that ignores its abort signal and never settles: only the judge's own
+    // per-page bound can end this call.
+    const hanging = (): Promise<Response> => new Promise<Response>(() => {})
+    const started = Date.now()
+    const findings = await typesafeJudge({ apiKey: 'k', fetch: hanging, pageTimeoutMs: 100 }).judge(
+      { page: 'p', tools: [tool({ name: 'a' })] },
+    )
+    expect(Date.now() - started).toBeLessThan(5000)
+    expect(findings).toEqual([
+      expect.objectContaining({
+        rule: 'judge/timeout',
+        severity: 'warn',
+        page: 'p',
+        message: expect.stringContaining('100 ms') as unknown as string,
+      }),
+    ])
+  })
+
+  it('retries a failing request at most once', async () => {
+    let calls = 0
+    const failing = fakeErrorFetch(503, { error: 'unavailable' })
+    const counting = (input: string, init?: RequestInit): Promise<Response> => {
+      calls++
+      return failing(input, init)
+    }
+    const findings = await typesafeJudge({ apiKey: 'k', fetch: counting }).judge({
+      page: 'p',
+      tools: [tool({ name: 'a' })],
+    })
+    expect(findings).toEqual([expect.objectContaining({ rule: 'judge/unavailable' })])
+    expect(calls).toBeLessThanOrEqual(2)
+  }, 20_000)
+})
+
+describe('page_url_sent_without_query_or_hash', () => {
+  it('sends only the origin and pathname of a page URL', async () => {
+    const { fetch, calls } = fakeSystemOneFetch([{ answers: {} }])
+    await typesafeJudge({ apiKey: 'k', fetch }).judge({
+      page: 'https://app.example.com/orders/42?token=secret&x=1#/routes/a',
+      tools: [tool({ name: 'a' })],
+    })
+    const state = calls[0]!.body.state as { page: string }
+    expect(state.page).toBe('https://app.example.com/orders/42')
+    expect(JSON.stringify(calls[0]!.body)).not.toContain('secret')
+  })
+
+  it('sends a non-URL page (a --manifest page name) unchanged', async () => {
+    const { fetch, calls } = fakeSystemOneFetch([{ answers: {} }])
+    await typesafeJudge({ apiKey: 'k', fetch }).judge({
+      page: 'checkout',
+      tools: [tool({ name: 'a' })],
+    })
+    expect((calls[0]!.body.state as { page: string }).page).toBe('checkout')
+  })
+
+  it('drops userinfo from a page URL', async () => {
+    const { fetch, calls } = fakeSystemOneFetch([{ answers: {} }])
+    await typesafeJudge({ apiKey: 'k', fetch }).judge({
+      page: 'https://user:pw@app.example.com/a?q=1',
+      tools: [tool({ name: 'a' })],
+    })
+    expect((calls[0]!.body.state as { page: string }).page).toBe('https://app.example.com/a')
+  })
+})
+
 describe('state_contains_no_values', () => {
   it('sends only names, descriptions and schema paths, never enum/default/const/examples/values', async () => {
     const schema: JsonSchema = {

@@ -754,4 +754,94 @@ describe('tour engine', () => {
     const empty = await startTour(tm, { mode: 'show', steps: [] })
     expect(empty.state).toMatchObject({ status: 'stopped', message: 'no valid steps' })
   })
+
+  // -------------------------------------------------------------------------------------------
+  // final fix wave: `confirming` for ANY pending inline confirmation
+  // -------------------------------------------------------------------------------------------
+
+  it('do_mode_other_tool_inline_confirm_sets_confirming (MCP/WebMCP caller)', async () => {
+    const approvals: ((o: ConfirmOutcome) => void)[] = []
+    const tm = registry(() => new Promise<ConfirmOutcome>((r) => approvals.push(r)))
+    const anchor = el()
+    const finish = deferred<void>()
+    tm.register(
+      tool('slow', {
+        anchors: { element: () => anchor },
+        run: async () => {
+          await finish.promise
+          return ok({ changes: [], skipped: [] })
+        },
+      }),
+    )
+    tm.register(tool('danger', { hints: { consequential: true } }))
+    const tour = await startTour(tm, {
+      mode: 'do',
+      reducedMotion: true,
+      steps: [{ tool: 'slow', text: 'Slow step' }],
+    })
+    expect(tour.state).toMatchObject({ status: 'running', busy: true })
+
+    // An agent calls another (consequential) tool while the tour's call is in flight: its inline
+    // confirmation must release the tour's focus trap too.
+    const agentCall = tm.call('danger', {}, { caller: 'mcp' })
+    await vi.waitFor(() => expect(approvals).toHaveLength(1))
+    expect(tour.state).toMatchObject({ status: 'confirming', busy: true, index: 0 })
+    approvals[0]!({ approved: true })
+    await vi.waitFor(() => expect(tour.state.status).toBe('running'))
+    expect(tour.state.busy).toBe(true)
+
+    finish.resolve()
+    await vi.waitFor(() => expect(tour.state.status).toBe('done'))
+    // The agent's call runs once the tour's call is no longer in flight.
+    await expect(agentCall).resolves.toMatchObject({ status: 'ok' })
+  })
+
+  it('show_mode_any_pending_confirm_sets_confirming_until_none_pending', async () => {
+    const approvals: ((o: ConfirmOutcome) => void)[] = []
+    const tm = registry(() => new Promise<ConfirmOutcome>((r) => approvals.push(r)))
+    const anchor = el()
+    tm.register(tool('a', { anchors: { element: () => anchor } }))
+    tm.register(tool('danger', { hints: { consequential: true } }))
+    const tour = await startTour(tm, { mode: 'show', steps: [{ tool: 'a', text: 'Look' }] })
+    expect(tour.state.status).toBe('running')
+
+    const first = tm.call('danger', {}, { caller: 'webmcp' })
+    const second = tm.call('danger', {}, { caller: 'mcp' })
+    await vi.waitFor(() => expect(approvals).toHaveLength(2))
+    expect(tour.state.status).toBe('confirming')
+    approvals[0]!({ approved: true })
+    await first
+    // One confirmation still pending.
+    expect(tour.state.status).toBe('confirming')
+    approvals[1]!({ approved: false })
+    await second
+    await vi.waitFor(() => expect(tour.state.status).toBe('running'))
+    expect(tour.state.busy).toBe(false)
+  })
+
+  it('guide_mode_confirm_restores_waiting_with_its_message', async () => {
+    vi.useFakeTimers()
+    const tm = registry()
+    const email = el('input')
+    const form = el('form')
+    tm.register(
+      tool('f.fill', {
+        jsonSchema: FILL_SCHEMA,
+        anchors: { element: () => form, params: { email: () => email } },
+        state: () => ({ values: {}, issues: [{ path: 'email', message: 'Invalid email' }] }),
+      }),
+    )
+    const tour = await startTour(tm, {
+      mode: 'guide',
+      steps: [{ tool: 'f.fill', param: 'email', text: 'Type your email' }],
+    })
+    emitEvent(tm, 'interaction', { tool: 'f.fill', param: 'email', kind: 'input', caller: 'human' })
+    await vi.advanceTimersByTimeAsync(400)
+    expect(tour.state).toMatchObject({ status: 'waiting', message: 'Invalid email' })
+
+    emitEvent(tm, 'confirm', { confirmId: 'c1', tool: 'elsewhere', stage: 'pending' })
+    expect(tour.state.status).toBe('confirming')
+    emitEvent(tm, 'confirm', { confirmId: 'c1', tool: 'elsewhere', stage: 'expired' })
+    expect(tour.state).toMatchObject({ status: 'waiting', message: 'Invalid email' })
+  })
 })

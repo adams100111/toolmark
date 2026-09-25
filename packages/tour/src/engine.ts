@@ -121,6 +121,16 @@ function createEngine(
   /** `do` steps whose call already ran (never repeated after `back()`). */
   const ran = new Set<number>()
   let inFlight = false
+  /**
+   * Every inline confirmation announced `pending` by the registry's `confirm` events and not yet
+   * answered — any tool, any caller (the tour's own call, `ctx.confirm`, an MCP/WebMCP agent…).
+   * While any is pending the tour is `confirming`: the app's confirmation UI must be reachable.
+   */
+  const pendingConfirms = new Set<string>()
+  /** A hinted `do` call is in flight and its first `confirm` event has not arrived yet. */
+  let hintedAwaitingConfirm = false
+  /** The status the tour would have without a pending confirmation. */
+  let baseStatus: TourState['status'] = 'idle'
   /** The current `do` step was entered by `back()` and has not run: `next()` runs it. */
   let awaitingRun = false
   /** Whether the current step's tool was describable for `tour` on entry. */
@@ -133,7 +143,8 @@ function createEngine(
     patch: Partial<Omit<TourState, 'message'>> & { message?: string | undefined },
   ): void {
     const { message, ...rest } = patch
-    const next: TourState = { ...state, ...rest }
+    if (rest.status !== undefined) baseStatus = rest.status
+    const next: TourState = { ...state, ...rest, status: effectiveStatus() }
     if (message !== undefined) next.message = message
     else if ('message' in patch) delete next.message
     state = Object.freeze(next)
@@ -144,6 +155,19 @@ function createEngine(
         console.error('[toolmark] tour state listener threw', e)
       }
     }
+  }
+
+  /** `confirming` over `running`/`waiting` while an inline confirmation is pending. */
+  function effectiveStatus(): TourState['status'] {
+    const confirming = pendingConfirms.size > 0 || hintedAwaitingConfirm
+    return confirming && (baseStatus === 'running' || baseStatus === 'waiting')
+      ? 'confirming'
+      : baseStatus
+  }
+
+  /** Re-publishes the state when a confirmation change flips the effective status. */
+  function syncConfirming(): void {
+    if (state.status !== effectiveStatus()) update({})
   }
 
   function emit(e: TourEvent): void {
@@ -255,30 +279,21 @@ function createEngine(
     awaitingRun = false
     const manifest = tm.describe(step.tool, { caller: 'tour' })
     const hinted = manifest?.hints.consequential === true || manifest?.hints.destructive === true
-    // `confirming` while an inline confirmation of the step's tool is pending: announced by the
-    // core `confirm` events (hinted tools and `ctx.confirm` inside `run` alike). A hinted tool is
-    // `confirming` from the start, until its first confirmation event arrives.
-    const pending = new Set<string>()
-    let sawConfirm = false
-    const sync = (): void => {
-      if (ended || t !== token || !inFlight) return
-      const confirming = pending.size > 0 || (hinted && !sawConfirm)
-      const status = confirming ? 'confirming' : 'running'
-      if (state.status !== status) update({ status })
-    }
+    // A hinted tool is `confirming` from the start, until its first confirmation event arrives
+    // (then the tour-wide `pendingConfirms` takes over; see `onConfirm`).
     const offConfirm = tm.events.on('confirm', (e) => {
-      if (!inFlight || e.tool !== step.tool) return
-      sawConfirm = true
-      if (e.stage === 'pending') pending.add(e.confirmId)
-      else pending.delete(e.confirmId)
-      sync()
+      if (e.tool !== step.tool || !hintedAwaitingConfirm) return
+      hintedAwaitingConfirm = false
+      if (!ended && t === token) syncConfirming()
     })
     stepCleanup.push(offConfirm)
     inFlight = true
-    update({ busy: true, ...(hinted ? { status: 'confirming' as const } : {}) })
+    hintedAwaitingConfirm = hinted
+    update({ busy: true })
     const settle = (result: ToolResult<unknown>): void => {
       offConfirm()
       inFlight = false
+      hintedAwaitingConfirm = false
       if (ended || t !== token) return
       if (result.status !== 'ok') {
         end('stopped', failureMessage(result))
@@ -304,6 +319,12 @@ function createEngine(
     update({ highlight: tm.anchor(step.tool, path) ?? state.anchor })
     const timer = setTimeout(() => highlight(step, paths, k + 1, t), HIGHLIGHT_MS)
     stepCleanup.push(() => clearTimeout(timer))
+  }
+
+  function onConfirm(e: { confirmId: string; stage: string }): void {
+    if (e.stage === 'pending') pendingConfirms.add(e.confirmId)
+    else pendingConfirms.delete(e.confirmId)
+    if (!ended) syncConfirming()
   }
 
   function onChange(): void {
@@ -379,7 +400,7 @@ function createEngine(
         end('stopped', 'no valid steps')
         return
       }
-      globalCleanup.push(tm.events.on('change', onChange))
+      globalCleanup.push(tm.events.on('change', onChange), tm.events.on('confirm', onConfirm))
       enter(0)
     },
   }
@@ -394,8 +415,12 @@ function createEngine(
  * - `guide` waits for the user's interaction events on the step's tool/param and validates via
  *   `tm.state()` (400 ms after the last input, or at once when focus leaves the anchor).
  * - `do` calls each step's tool as caller `tour` (policy and inline confirmation apply; state
- *   `busy` while the call is in flight, `confirming` while its inline confirmation is pending),
+ *   `busy` while the call is in flight),
  *   then highlights each changed field for 600 ms (none with reduced motion) and advances.
+ *
+ * In every mode the state is `confirming` while any inline confirmation announced by the
+ * registry's `confirm` events is pending (the tour's own call, `ctx.confirm`, or any other tool
+ * and caller, e.g. an MCP/WebMCP agent), and returns to `running`/`waiting` when none is.
  *
  * Steps whose anchor is not rendered are skipped (`anchor_missing`); a step whose tool disappears
  * is skipped (`step_skipped`). The tour never reads DOM values: only anchors, `tm.state()` (redacted

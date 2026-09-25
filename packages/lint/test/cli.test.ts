@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -7,19 +7,21 @@ import { promisify } from 'node:util'
 import { afterEach, describe, expect, it } from 'vitest'
 import { EXIT_ERRORS_FOUND, EXIT_OK, EXIT_USAGE_OR_RUNTIME_FAILURE, runCli } from '../src/cli.js'
 import { loadJudge } from '../src/judge.js'
+import { startStaticServer, type StaticServer } from './support/static-server.js'
 
 const execFileAsync = promisify(execFile)
 
 const FIXTURES = fileURLToPath(new URL('./fixtures/', import.meta.url))
 const PACKAGE_ROOT = fileURLToPath(new URL('..', import.meta.url))
-const CLI_JS = join(PACKAGE_ROOT, 'dist', 'cli.js')
+const CLI_JS = join(PACKAGE_ROOT, 'dist', 'bin.js')
 
 /** Spawns the built `dist/cli.js` (regression coverage for the real `toolmark` bin entrypoint). */
 async function runBuiltCli(
   args: readonly string[],
+  binPath: string = CLI_JS,
 ): Promise<{ code: number; stdout: string; stderr: string }> {
   try {
-    const { stdout, stderr } = await execFileAsync(process.execPath, [CLI_JS, ...args])
+    const { stdout, stderr } = await execFileAsync(process.execPath, [binPath, ...args])
     return { code: 0, stdout, stderr }
   } catch (e) {
     const err = e as { code?: number; stdout?: string; stderr?: string }
@@ -101,6 +103,25 @@ describe('runCli', () => {
     expect(stderr()).toContain(`invalid manifest file: ${FIXTURES}manifest-invalid-tool.json`)
   })
 
+  it('no --manifest and no --url exits 2 with usage', async () => {
+    const { io, stderr, stdout } = fakeIo()
+    const code = await runCli([], io)
+    expect(code).toBe(EXIT_USAGE_OR_RUNTIME_FAILURE)
+    expect(stderr()).toContain('toolmark lint [options]')
+    expect(stdout()).toBe('')
+    const lintOnly = fakeIo()
+    expect(await runCli(['lint', '--format', 'json'], lintOnly.io)).toBe(
+      EXIT_USAGE_OR_RUNTIME_FAILURE,
+    )
+  })
+
+  it('--help describes --budget as the tool-budget threshold (default 40)', async () => {
+    const { io, stdout } = fakeIo()
+    await runCli(['--help'], io)
+    expect(stdout()).toMatch(/--budget <n>\s+Tool-budget threshold/)
+    expect(stdout()).toContain('default: 40')
+  })
+
   it('cli_exit_codes (unknown flag exits 2)', async () => {
     const { io } = fakeIo()
     const code = await runCli(['--not-a-real-flag'], io)
@@ -154,6 +175,34 @@ describe('runCli', () => {
     expect(code).toBe(EXIT_USAGE_OR_RUNTIME_FAILURE)
     expect(stderr()).toContain('judge module not found:')
   })
+})
+
+describe('--url (live pages)', () => {
+  let server: StaticServer | undefined
+  afterEach(async () => {
+    await server?.close()
+    server = undefined
+  })
+
+  it('a --url manifest with a malformed tool exits 2 (schema-validated like --manifest)', async () => {
+    server = await startStaticServer(`${FIXTURES}page-with-invalid-tool.html`)
+    const { io, stderr } = fakeIo()
+    const code = await runCli(['--url', server.url], io)
+    expect(code).toBe(EXIT_USAGE_OR_RUNTIME_FAILURE)
+    expect(stderr()).toContain(`invalid manifest collected from ${server.url}`)
+  }, 20_000)
+
+  it('page-supplied names/descriptions never reach the terminal with control characters', async () => {
+    server = await startStaticServer(`${FIXTURES}page-with-escape-codes.html`)
+    for (const format of ['pretty', 'json']) {
+      const { io, stdout } = fakeIo()
+      await runCli(['--url', server.url, '--format', format], io)
+      expect(stdout()).toContain('evil[2J.tool')
+      // eslint-disable-next-line no-control-regex
+      expect(stdout().trimEnd()).not.toMatch(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/)
+      expect(stdout().trimEnd()).not.toMatch(/\\u00(1b|07)/i)
+    }
+  }, 30_000)
 })
 
 describe('loadJudge', () => {
@@ -246,9 +295,29 @@ describe('lint subcommand (spawned dist/cli.js)', () => {
   })
 })
 
+describe('bin through a symlink (npm/npx .bin)', () => {
+  it('c1_symlinked_bin_runs_main (bad manifest exits 2, not a silent 0)', async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), 'toolmark-lint-bin-'))
+    const link = join(tmpDir, 'toolmark')
+    await symlink(CLI_JS, link)
+    const { code, stderr } = await runBuiltCli(['lint', '--manifest', '/nonexistent.json'], link)
+    expect(code).toBe(EXIT_USAGE_OR_RUNTIME_FAILURE)
+    expect(stderr).toContain('invalid manifest file: /nonexistent.json')
+  })
+
+  it('c1_symlinked_bin_runs_main (--help prints usage)', async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), 'toolmark-lint-bin-'))
+    const link = join(tmpDir, 'toolmark')
+    await symlink(CLI_JS, link)
+    const { code, stdout } = await runBuiltCli(['--help'], link)
+    expect(code).toBe(EXIT_OK)
+    expect(stdout).toContain('toolmark lint [options]')
+  })
+})
+
 describe('bin_has_shebang', () => {
-  it('the built cli.js keeps its shebang', async () => {
-    const contents = await readFile(join(PACKAGE_ROOT, 'dist', 'cli.js'), 'utf8')
+  it('the built bin.js keeps its shebang', async () => {
+    const contents = await readFile(CLI_JS, 'utf8')
     expect(contents.split('\n')[0]).toBe('#!/usr/bin/env node')
   })
 })

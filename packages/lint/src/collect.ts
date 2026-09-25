@@ -1,4 +1,5 @@
 import type { ToolManifest } from '@toolmark/core'
+import { parseCollectedManifest } from './manifest-file.js'
 import type { ManifestFile } from './types.js'
 
 /** Time {@link collectFromUrl} waits for the page's test hook (matches `@toolmark/testing`). */
@@ -37,11 +38,12 @@ export interface CollectFromUrlOptions {
 /**
  * Loads `url` in a fresh headless Chromium context (dynamically imports the optional
  * `@playwright/test` peer), waits for `__toolmark_test__`, and collects its full manifest as
- * caller `'inapp'`.
+ * caller `'inapp'`, validated against `manifest.schema.json` like a `--manifest` file.
  * @throws {LintUsageError} `@playwright/test` is not installed (`--url requires
  * @playwright/test`), navigation doesn't finish within {@link GOTO_TIMEOUT_MS} (e.g. a
  * non-responding URL), or the page never installs the hook within {@link HOOK_WAIT_MS}
- * ({@link MISSING_HOOK_MESSAGE}).
+ * ({@link MISSING_HOOK_MESSAGE}), or the collected manifest is malformed (`invalid manifest
+ * collected from <url>`).
  */
 export async function collectFromUrl(
   url: string,
@@ -77,13 +79,17 @@ export async function collectFromUrl(
       } catch {
         throw new LintUsageError(MISSING_HOOK_MESSAGE)
       }
-      const manifest = await page.evaluate(() =>
+      const manifest: unknown = await page.evaluate(() =>
         (globalThis as { __toolmark_test__?: PageTestHook }).__toolmark_test__!.manifest({
           detail: 'full',
           caller: 'inapp',
         }),
       )
-      return { page: url, tools: manifest.tools }
+      try {
+        return parseCollectedManifest(url, manifest)
+      } catch (e) {
+        throw new LintUsageError(e instanceof Error ? e.message : String(e))
+      }
     } finally {
       await context.close()
     }

@@ -6,14 +6,15 @@
 // with anything before `<?php`, so a synced file's own first two lines are `<?php` then the
 // marker — the marker is then part of the compared content). A marked block must equal that file
 // under the example root (line endings normalised to LF; the file's final newline is not part of
-// the block). Unmarked php blocks are not checked. Exit codes: 0 all marked blocks match; 1 a
-// mismatch, a missing file, an invalid marker, an unclosed fence or no marked block at all; 2
-// usage error.
+// the block). Unmarked php blocks are not checked. In the other direction, every
+// `app/Toolmark/**/*.php` file under the example root must have a marked block. Exit codes: 0
+// every marked block matches and every file has a block; 1 a mismatch, a missing file, a file
+// without a block, an invalid marker, an unclosed fence or no marked block at all; 2 usage error.
 //
 // Usage: node scripts/check-laravel-reference.mjs
 //          [--doc docs/guides/laravel-reference.md] [--root examples/inertia-laravel]
-import { existsSync, readFileSync } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { dirname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -61,6 +62,16 @@ function findMarker(body) {
   return null
 }
 
+/** Every `.php` file under `<root>/app/Toolmark`, as root-relative `/`-separated paths, sorted. */
+function toolmarkFiles(root) {
+  const base = join(root, 'app', 'Toolmark')
+  if (!existsSync(base)) return []
+  return readdirSync(base, { recursive: true, withFileTypes: true })
+    .filter((e) => e.isFile() && e.name.endsWith('.php'))
+    .map((e) => relative(root, join(e.parentPath, e.name)).split(sep).join('/'))
+    .sort()
+}
+
 /** Compares the doc's marked blocks with the example files; returns `{ checked, errors }`. */
 export function checkLaravelReference({ doc, root }) {
   const errors = []
@@ -71,6 +82,7 @@ export function checkLaravelReference({ doc, root }) {
     return { checked: 0, errors: [`${doc}: ${err instanceof Error ? err.message : String(err)}`] }
   }
   let checked = 0
+  const documented = new Set()
   for (const block of blocks) {
     const marker = findMarker(block.body)
     if (!marker) continue
@@ -81,6 +93,7 @@ export function checkLaravelReference({ doc, root }) {
       continue
     }
     checked++
+    documented.add(rel)
     const file = join(root, rel)
     if (!existsSync(file)) {
       errors.push(`${where}: ${rel} is missing from ${root}`)
@@ -102,6 +115,9 @@ export function checkLaravelReference({ doc, root }) {
   }
   if (checked === 0 && errors.length === 0) {
     errors.push(`${doc}: no php blocks with a "// file: app/Toolmark/<Name>.php" first line`)
+  }
+  for (const rel of toolmarkFiles(root)) {
+    if (!documented.has(rel)) errors.push(`${doc}: ${rel} has no guide block (// file: ${rel})`)
   }
   return { checked, errors }
 }

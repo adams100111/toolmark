@@ -18,7 +18,7 @@
     "src"
   ],
   "bin": {
-    "toolmark": "./dist/cli.js"
+    "toolmark": "./dist/bin.js"
   },
   "exports": {
     ".": {
