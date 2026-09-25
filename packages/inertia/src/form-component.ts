@@ -32,9 +32,25 @@ function issuesFromErrorEvent(detail: unknown): ToolIssue[] {
 }
 
 /**
+ * @internal A visit's correlation key (`"<method> <url.href>"`) read from a router event's
+ * `CustomEvent.detail.visit`. Both majors' `start`/`finish` details carry the visit, whose `url`
+ * (a `URL`) and `method` are public in Inertia 2 and 3. `undefined` when the detail carries no
+ * visit, or a visit without a readable `url`/`method`.
+ */
+function visitKey(detail: unknown): string | undefined {
+  const visit = (detail as { visit?: { url?: { href?: unknown }; method?: unknown } } | undefined)
+    ?.visit
+  const href = visit?.url?.href
+  const method = visit?.method
+  if (typeof href !== 'string' || typeof method !== 'string') return undefined
+  return `${method.toLowerCase()} ${href}`
+}
+
+/**
  * Adapts an Inertia `<Form>` component (`@inertiajs/react` 2.1+, uncontrolled; spec §10.1, D11) to
- * form tools. `getValues`, `setValues`, `dirtyPaths`, `fields` and `dispose` come unmodified from
- * {@link domFormAdapter} over the `<Form>`'s underlying `<form>` element.
+ * form tools. `getValues`, `setValues`, `dirtyPaths` and `fields` come unmodified from
+ * {@link domFormAdapter} over the `<Form>`'s underlying `<form>` element; `dispose` extends its
+ * `dispose` (see below).
  *
  * `submit()` calls `formRef.current.submit()` — the `<Form>`'s documented imperative ref method —
  * and settles from the *global* router events of the visit it starts: the `<Form>` component drives
@@ -52,9 +68,24 @@ function issuesFromErrorEvent(detail: unknown): ToolIssue[] {
  * `null`, e.g. before the `<Form>` has mounted) settles immediately with `error`
  * `"Form is not mounted"`, without attaching any listener.
  *
- * There is no visit id on the `start`/`finish` events (spec §10.1 amended nowhere covers this), so
- * "the next visit" is a simplifying assumption: a concurrent, unrelated visit that starts or
- * finishes while this one is in flight is not distinguished from it.
+ * **A bare `finish` maps to `ok` here.** A `finish` with no earlier failure event and no
+ * `cancelled`/`interrupted` flag settles `ok({})` — unlike `visit-outcome.ts` (used by
+ * `inertiaAdapter`), where a per-visit `onFinish` with no earlier outcome means `error`
+ * `"Visit did not complete"`. The difference is deliberate: that path also receives the per-visit
+ * `onSuccess`, so reaching `onFinish` without it means the request failed; here success is only
+ * observable through the global `finish` itself.
+ *
+ * **Visit correlation.** The events carry no visit id, so the visit is correlated by `url` +
+ * `method`: the first `start` after `submit()` records its `visit.url.href` and `visit.method`,
+ * and from then on a `finish` — or an `error`/`httpException`/`invalid`/`networkError`/`exception`
+ * that carries a `visit` — is only accepted when its url + method match; an interleaved, unrelated
+ * visit (a background poll, another form) is ignored. Failure events without a `visit` (their
+ * usual shape in both majors) are accepted while this visit is in flight, so an unrelated visit's
+ * failure arriving in that window is still indistinguishable from this one's. When the `start`
+ * visit has no readable url/method, every event is accepted (the pre-correlation behaviour).
+ *
+ * `dispose()` also tears down any in-flight `submit()`: its router listeners are removed and its
+ * promise settles `cancelled` `'signal'`.
  *
  * @param o - `element` is the `<Form>`'s underlying `<form>` element; `formRef` is the ref object
  * passed to `<Form ref={...}>`; `router` is `@inertiajs/react`'s `router`, passed directly.
@@ -66,9 +97,15 @@ export function inertiaFormComponentAdapter(o: {
   router: RouterLike
 }): FormAdapter & { dispose(): void } {
   const base = domFormAdapter(o.element)
+  /** Cancels each in-flight `submit()` (tears down its listeners, settles it `cancelled`). */
+  const inFlight = new Set<() => void>()
 
   return {
     ...base,
+    dispose(): void {
+      for (const cancel of [...inFlight]) cancel()
+      base.dispose()
+    },
     submit(): Promise<ToolResult<unknown>> {
       const form = o.formRef.current
       if (!form) return Promise.resolve(errorOutcome('Form is not mounted'))
@@ -79,12 +116,15 @@ export function inertiaFormComponentAdapter(o: {
         const teardown = (): void => {
           for (const off of unsubscribers.splice(0)) off()
         }
+        const cancelOnDispose = (): void => settle(cancelled('signal'))
         const settle = (result: ToolResult<unknown>): void => {
           if (settled) return
           settled = true
+          inFlight.delete(cancelOnDispose)
           teardown()
           resolve(result)
         }
+        inFlight.add(cancelOnDispose)
 
         // `RouterLike.on` is typed for only the five events both Inertia majors dispatch
         // (start/navigate/success/error/finish — task 8 Ruling 6); the request-failure names below
@@ -98,46 +138,58 @@ export function inertiaFormComponentAdapter(o: {
         ) => () => void
 
         let armed = false
+        /** This visit's `"<method> <href>"`, from its `start`; `undefined` = uncorrelated. */
+        let ownKey: string | undefined
         let sawInvalid = false
         let invalidDetail: unknown
         let sawRequestFailed = false
         let sawNetworkError = false
 
+        /** Armed, and the event carries no visit or this visit (see "Visit correlation"). */
+        const isOwn = (detail: unknown): boolean => {
+          if (!armed) return false
+          if (ownKey === undefined) return true
+          const key = visitKey(detail)
+          return key === undefined || key === ownKey
+        }
+
         unsubscribers.push(
-          on('start', () => {
+          on('start', (e) => {
+            if (armed) return
             armed = true
+            ownKey = visitKey(e.detail)
           }),
         )
         unsubscribers.push(
           on('error', (e) => {
-            if (!armed) return
+            if (!isOwn(e.detail)) return
             sawInvalid = true
             invalidDetail = e.detail
           }),
         )
         unsubscribers.push(
-          on('httpException', () => {
-            if (armed) sawRequestFailed = true
+          on('httpException', (e) => {
+            if (isOwn(e.detail)) sawRequestFailed = true
           }),
         )
         unsubscribers.push(
-          on('invalid', () => {
-            if (armed) sawRequestFailed = true
+          on('invalid', (e) => {
+            if (isOwn(e.detail)) sawRequestFailed = true
           }),
         )
         unsubscribers.push(
-          on('networkError', () => {
-            if (armed) sawNetworkError = true
+          on('networkError', (e) => {
+            if (isOwn(e.detail)) sawNetworkError = true
           }),
         )
         unsubscribers.push(
-          on('exception', () => {
-            if (armed) sawNetworkError = true
+          on('exception', (e) => {
+            if (isOwn(e.detail)) sawNetworkError = true
           }),
         )
         unsubscribers.push(
           on('finish', (e) => {
-            if (!armed) return
+            if (!isOwn(e.detail)) return
             if (sawInvalid) {
               settle(invalid(issuesFromErrorEvent(invalidDetail)))
               return

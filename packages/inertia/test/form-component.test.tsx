@@ -15,6 +15,8 @@ type FormRef = { current: ComponentRef<typeof Form> | null }
  */
 interface FakeRouter extends RouterLike {
   fire(event: InertiaEventName, detail?: unknown): void
+  /** Number of live listeners across every event name. */
+  listenerCount(): number
 }
 
 function fakeRouter(): FakeRouter {
@@ -34,6 +36,11 @@ function fakeRouter(): FakeRouter {
     },
     fire(event, detail) {
       for (const cb of [...(listeners.get(event) ?? [])]) cb(new CustomEvent(event, { detail }))
+    },
+    listenerCount() {
+      let n = 0
+      for (const set of listeners.values()) n += set.size
+      return n
     },
   }
 }
@@ -177,5 +184,59 @@ describe('inertiaFormComponentAdapter', () => {
     adapter.dispose()
     // No listener throws/leaks after dispose: fields/values still work via the DOM path.
     expect(adapter.getValues()).toEqual({ title: '' })
+  })
+
+  it('dispose_settles_in_flight_submit_cancelled', async () => {
+    vi.spyOn(router, 'visit').mockImplementation(() => undefined)
+    const { element, formRef } = mountForm()
+    const fake = fakeRouter()
+    const adapter = inertiaFormComponentAdapter({ element, formRef, router: fake })
+
+    const pending = adapter.submit()
+    fake.fire('start', { visit: { url: new URL('http://localhost/things'), method: 'post' } })
+    expect(fake.listenerCount()).toBeGreaterThan(0)
+    adapter.dispose()
+
+    expect(fake.listenerCount()).toBe(0)
+    await expect(pending).resolves.toEqual({ status: 'cancelled', by: 'signal' })
+    // A late finish after dispose changes nothing (nobody is listening).
+    fake.fire('finish', { visit: { cancelled: false, interrupted: false } })
+
+    // Disposing before the visit even started settles it the same way.
+    const fake2 = fakeRouter()
+    const adapter2 = inertiaFormComponentAdapter({ element, formRef, router: fake2 })
+    const pending2 = adapter2.submit()
+    adapter2.dispose()
+    expect(fake2.listenerCount()).toBe(0)
+    await expect(pending2).resolves.toEqual({ status: 'cancelled', by: 'signal' })
+  })
+
+  it('form_component_ignores_interleaved_unrelated_visit', async () => {
+    vi.spyOn(router, 'visit').mockImplementation(() => undefined)
+    const { element, formRef } = mountForm()
+    const fake = fakeRouter()
+    const adapter = inertiaFormComponentAdapter({ element, formRef, router: fake })
+
+    const ours = { url: new URL('http://localhost/things'), method: 'post' }
+    const poll = { url: new URL('http://localhost/poll'), method: 'get' }
+    let settled = false
+    const pending = adapter.submit().then((r) => {
+      settled = true
+      return r
+    })
+    fake.fire('start', { visit: ours })
+    // An unrelated visit (e.g. a background poll) starts and finishes first, interrupted, and a
+    // request-failure event carrying that other visit arrives too: all must be ignored.
+    fake.fire('start', { visit: poll })
+    fake.fire('httpException', { response: { status: 500 }, visit: poll })
+    fake.fire('finish', { visit: { ...poll, cancelled: false, interrupted: true } })
+    await Promise.resolve()
+    expect(settled).toBe(false)
+
+    fake.fire('success', { page: {} })
+    fake.fire('finish', { visit: { ...ours, cancelled: false, interrupted: false } })
+    await expect(pending).resolves.toEqual({ status: 'ok', data: {} })
+    expect(fake.listenerCount()).toBe(0)
+    adapter.dispose()
   })
 })
