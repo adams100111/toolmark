@@ -192,6 +192,7 @@ jobs:
             /wpt.py
             /tools/
             /resources/
+            /common/
             /webmcp/
             /docs/commands.json
           sparse-checkout-cone-mode: false
