@@ -115,3 +115,8 @@ counts as user input.
 **Wizard step changes:** core gets no step-change signal. A wizard follows its current step's form on
 every anchor or state read and every `fill`, so the events of a newly shown step start after the next
 such read (tours read anchors per step, which covers it).
+
+---
+
+Every error, refusal and event code, with the milestone that added it, is listed in
+[`reference/codes.md`](../reference/codes.md).

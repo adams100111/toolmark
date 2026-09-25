@@ -11,7 +11,12 @@
     "typecheck": "pnpm -r --filter \"./packages/*\" typecheck",
     "lint": "pnpm -r --filter \"./packages/*\" lint",
     "test": "vitest run",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "docs:api": "typedoc --options typedoc.config.mjs",
+    "docs:api:strict": "TYPEDOC_STRICT=1 typedoc --options typedoc.config.mjs",
+    "docs:dev": "pnpm docs:api && vitepress dev docs",
+    "docs:build": "pnpm docs:api && vitepress build docs",
+    "docs:preview": "vitepress preview docs"
   },
   "devDependencies": {
     "@changesets/cli": "catalog:",
@@ -25,8 +30,12 @@
     "prettier": "catalog:",
     "tsdown": "catalog:",
     "tsx": "catalog:",
+    "typedoc": "catalog:",
+    "typedoc-plugin-markdown": "catalog:",
+    "typedoc-vitepress-theme": "catalog:",
     "typescript": "catalog:",
     "typescript-eslint": "catalog:",
+    "vitepress": "catalog:",
     "vitest": "catalog:"
   }
 }

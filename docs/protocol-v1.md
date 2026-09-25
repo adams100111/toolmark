@@ -13,7 +13,7 @@ reference lives in [`guides/laravel-reference.md`](guides/laravel-reference.md).
   - `@toolmark/core/protocol/v1/agent-to-page.json` (`$id` `urn:toolmark:protocol:v1:agent-to-page`)
 
   They are emitted by `pnpm build` into `packages/core/dist/protocol/v1/` from
-  [`packages/core/src/protocol/schemas.ts`](../packages/core/src/protocol/schemas.ts) (also exported
+  [`packages/core/src/protocol/schemas.ts`](https://github.com/adams100111/toolmark/blob/main/packages/core/src/protocol/schemas.ts) (also exported
   at runtime as `protocolSchemas`). Server code can load them from the installed package, e.g.
   `node_modules/@toolmark/core/dist/protocol/v1/page-to-agent.json`.
 

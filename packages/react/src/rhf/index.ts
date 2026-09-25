@@ -1,3 +1,8 @@
+/**
+ * `@toolmark/react/rhf` — The react-hook-form adapter (`rhfAdapter`) for `useFormTool`.
+ * @packageDocumentation
+ * @module @toolmark/react/rhf
+ */
 import type { FieldValues, UseFormReturn } from 'react-hook-form'
 import {
   flatten,

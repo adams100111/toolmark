@@ -182,3 +182,8 @@ operation branches, file schemas, option hints). Each step's `$defs`/`definition
   "agent last set" records although nothing was written. Effect: at most one extra "not user
   edited" decision later.
 - The node budget is per step (10000 each).
+
+---
+
+Every error, refusal and event code, with the milestone that added it, is listed in
+[`reference/codes.md`](../reference/codes.md).

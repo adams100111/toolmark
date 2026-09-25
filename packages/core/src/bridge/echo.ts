@@ -1,3 +1,8 @@
+/**
+ * `@toolmark/core/bridge/echo` — A bridge transport over Laravel Echo private channels (D20).
+ * @packageDocumentation
+ * @module @toolmark/core/bridge/echo
+ */
 import type { PageToAgentMessage } from '../protocol/messages.js'
 import type { BridgeTransport } from './transport.js'
 

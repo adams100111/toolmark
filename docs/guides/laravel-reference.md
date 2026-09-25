@@ -71,7 +71,7 @@ Broadcast::channel('toolmark.{userId}.{conversationId}', function (User $user, s
 
 ```php
 <?php
-// app/Toolmark/ToolmarkMessage.php
+// file: app/Toolmark/ToolmarkMessage.php
 namespace App\Toolmark;
 
 use Illuminate\Broadcasting\PrivateChannel;
@@ -116,7 +116,7 @@ through the cache with polling when Redis is not available.
 
 ```php
 <?php
-// app/Toolmark/BrowserBridge.php
+// file: app/Toolmark/BrowserBridge.php
 namespace App\Toolmark;
 
 use App\Models\Conversation;
@@ -133,6 +133,13 @@ final class BrowserBridge
     /** Manifest bounds: more tools, or longer descriptions/titles, are rejected with 422. */
     private const MAX_TOOLS = 200;
     private const MAX_DESCRIPTION_CHARS = 1024;
+    /**
+     * Page-supplied ids (`clientId`, `id`, `confirmId`) end up in cache keys: accept only this
+     * shape (the page mints UUIDs). `\z`, not `$`: `$` would also match before a final newline.
+     */
+    private const ID_PATTERN = '/^[A-Za-z0-9_-]{1,128}\z/';
+    /** Known `ToolManifestSummary.mode` values (docs/protocol-v1.md). */
+    private const MODES = ['stepwise'];
 
     public function __construct(
         private readonly Cache $cache,
@@ -282,8 +289,7 @@ final class BrowserBridge
      */
     public function accept(Conversation $conversation, array $message): int
     {
-        if (($message['protocol'] ?? null) !== self::PROTOCOL
-            || ! is_string($message['clientId'] ?? null) || $message['clientId'] === '') {
+        if (($message['protocol'] ?? null) !== self::PROTOCOL || ! $this->isId($message['clientId'] ?? null)) {
             return 422;
         }
 
@@ -331,7 +337,7 @@ final class BrowserBridge
      * One validated `ToolManifestSummary` (docs/protocol-v1.md), reduced to the fields the server
      * renders, or null when malformed or oversized.
      *
-     * @return array{name: string, llmName: string, description: string, hints: array<string, bool>, title?: string, mode?: string}|null
+     * @return array{name: string, llmName: string, description: string, hints: array<string, bool>, title?: string, mode?: 'stepwise'}|null
      */
     private function summaryEntry(mixed $t): ?array
     {
@@ -341,7 +347,7 @@ final class BrowserBridge
             || ! is_string($t['description'] ?? null) || mb_strlen($t['description']) > self::MAX_DESCRIPTION_CHARS
             || ! is_array($t['hints'] ?? null) || ($t['hints'] !== [] && array_is_list($t['hints']))
             || (isset($t['title']) && (! is_string($t['title']) || mb_strlen($t['title']) > self::MAX_DESCRIPTION_CHARS))
-            || (isset($t['mode']) && ! is_string($t['mode']))) {
+            || (isset($t['mode']) && ! in_array($t['mode'], self::MODES, true))) {
             return null;
         }
         $hints = [];
@@ -379,7 +385,7 @@ final class BrowserBridge
     {
         $id = $m['id'] ?? null;
         $result = $m['result'] ?? null;
-        if (! is_string($id) || $id === '' || ! $this->isToolResult($result)) {
+        if (! $this->isId($id) || ! $this->isToolResult($result)) {
             return 422;
         }
 
@@ -432,7 +438,7 @@ final class BrowserBridge
     {
         $confirmId = $m['confirmId'] ?? null;
         $result = $m['result'] ?? null;
-        if (! is_string($confirmId) || $confirmId === '' || ! $this->isToolResult($result)) {
+        if (! $this->isId($confirmId) || ! $this->isToolResult($result)) {
             return 422;
         }
         $binding = $this->cache->get($this->confirmKey($confirmId));
@@ -483,12 +489,17 @@ final class BrowserBridge
             'ok' => true,
             'invalid' => is_array($r['issues'] ?? null),
             'refused' => is_string($r['code'] ?? null) && is_string($r['message'] ?? null),
-            'needs_confirmation' => is_string($r['confirmId'] ?? null) && $r['confirmId'] !== ''
-                && is_string($r['summary'] ?? null),
+            'needs_confirmation' => $this->isId($r['confirmId'] ?? null) && is_string($r['summary'] ?? null),
             'cancelled' => in_array($r['by'] ?? null, ['operator', 'signal', 'policy'], true),
             'error' => is_string($r['message'] ?? null),
             default => false,
         };
+    }
+
+    /** A page-supplied id of the ID_PATTERN shape. */
+    private function isId(mixed $value): bool
+    {
+        return is_string($value) && preg_match(self::ID_PATTERN, $value) === 1;
     }
 
     /** Encodes `{}` as an object: PHP's empty array would be sent as `[]`. */
@@ -558,6 +569,9 @@ Notes:
   is rejected (403).
 - The latest page wins: when the same user opens the conversation in two tabs, the tab that sent
   the most recent `manifest` receives the calls; the other tab ignores them (`clientId` filter).
+- Page-supplied ids (`clientId`, a result's `id`, `confirmId`) become cache keys: anything that
+  does not match `^[A-Za-z0-9_-]{1,128}\z` is rejected with 422 before any lookup. A manifest
+  entry's `mode` must be a known value (`stepwise`).
 
 ## 5. Authenticated POST endpoint
 
@@ -571,7 +585,7 @@ Route::post('/toolmark/bridge/{conversation}', BridgeController::class)
 
 ```php
 <?php
-// app/Toolmark/BridgeController.php
+// file: app/Toolmark/BridgeController.php
 namespace App\Toolmark;
 
 use App\Models\Conversation;
@@ -621,7 +635,7 @@ answering (Anthropic `tool_use.id`, OpenAI `tool_calls[].id`, …) to `handle()`
 
 ```php
 <?php
-// app/Toolmark/AgentTool.php
+// file: app/Toolmark/AgentTool.php
 namespace App\Toolmark;
 
 interface AgentTool
@@ -644,7 +658,7 @@ interface AgentTool
 
 ```php
 <?php
-// app/Toolmark/PageCallTool.php
+// file: app/Toolmark/PageCallTool.php
 namespace App\Toolmark;
 
 use App\Models\Conversation;
@@ -717,7 +731,7 @@ final class PageCallTool implements AgentTool
 
 ```php
 <?php
-// app/Toolmark/PageDescribeTool.php
+// file: app/Toolmark/PageDescribeTool.php
 namespace App\Toolmark;
 
 use App\Models\Conversation;
@@ -789,7 +803,7 @@ sending an empty tool list.
 
 ```php
 <?php
-// app/Toolmark/HandleToolmarkConfirmation.php
+// file: app/Toolmark/HandleToolmarkConfirmation.php
 namespace App\Toolmark;
 
 use App\Models\Conversation;
@@ -850,6 +864,28 @@ final class HandleToolmarkConfirmation implements ShouldQueue
 `PageCallTool`/`PageDescribeTool`); the essential parts are that no page tool can be called and
 the single step.
 
+```php
+<?php
+// file: app/Toolmark/AgentRunner.php
+namespace App\Toolmark;
+
+use App\Models\Conversation;
+
+/**
+ * Your agent loop, as HandleToolmarkConfirmation uses it: runs one turn of the conversation with
+ * the given tools. Implement it over your agent library (the example binds a scripted runner).
+ */
+interface AgentRunner
+{
+    /**
+     * @param list<AgentTool> $tools the tools the model may call in this turn ([] = none)
+     * @param string $instructions extra instructions for this turn only
+     * @param int $maxSteps model steps allowed in this turn
+     */
+    public function runTurn(Conversation $conversation, array $tools, string $instructions, int $maxSteps): void;
+}
+```
+
 ## 8. Props builder (server-declared tools)
 
 Server-declared tools are tools the page gets from the server in the `toolmark` Inertia prop
@@ -872,7 +908,7 @@ input schemas to that subset and test them on the page.
 
 ```php
 <?php
-// app/Toolmark/ServerTool.php
+// file: app/Toolmark/ServerTool.php
 namespace App\Toolmark;
 
 /**
@@ -910,7 +946,7 @@ final readonly class ServerTool
 
 ```php
 <?php
-// app/Toolmark/ToolmarkProps.php
+// file: app/Toolmark/ToolmarkProps.php
 namespace App\Toolmark;
 
 use Illuminate\Http\Request;

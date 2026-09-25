@@ -156,3 +156,8 @@ match the `{ ref } | { url }` object shape. The DOM scanner does exactly this
 - In Node (server-side use), `fetch` ignores `mode` and `referrerPolicy`; there the scheme, origin
   and userinfo checks are the protection.
 - References of a `multiple` field are fetched one after another, each bounded by the timeout.
+
+---
+
+Every error, refusal and event code, with the milestone that added it, is listed in
+[`reference/codes.md`](../reference/codes.md).

@@ -1,3 +1,8 @@
+/**
+ * `@toolmark/core/bridge/websocket` — A reconnecting WebSocket bridge transport.
+ * @packageDocumentation
+ * @module @toolmark/core/bridge/websocket
+ */
 import { safeCall } from '../events.js'
 import type { PageToAgentMessage } from '../protocol/messages.js'
 import type { BridgeTransport } from './transport.js'

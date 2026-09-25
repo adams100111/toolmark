@@ -4,10 +4,16 @@ import { defineConfig, devices } from '@playwright/test'
 // unrelated process on a developer machine; run with `TOOLMARK_EXAMPLE_PORT=5174` there.
 const port = Number(process.env.TOOLMARK_EXAMPLE_PORT ?? 5173)
 
+// Specs that run on every browser (spec §18: tours, multi-tab and navigation on Chromium, Firefox
+// and WebKit). Everything else — webmcp, mcp, reach, same-tools, lint-clean and round-budget —
+// runs on Chromium only (round-budget stays single-browser so its report has one row per task).
+const EVERY_BROWSER = /\/(tour|navigation|multi-client|form|wizard|dom)\.spec\.ts$/
+
 export default defineConfig({
   testDir: 'e2e',
   testMatch: '**/*.spec.ts',
-  // Builds `@toolmark/mcp` (and its workspace dependencies) once: the MCP specs spawn its CLI.
+  // Builds `@toolmark/mcp` and `@toolmark/lint` (with their workspace dependencies) once, and
+  // starts the e2e relay (`TOOLMARK_RELAY_PORT`).
   globalSetup: './e2e/global-setup.ts',
   fullyParallel: true,
   forbidOnly: Boolean(process.env.CI),
@@ -25,6 +31,9 @@ export default defineConfig({
     // orphans vite (and teardown hangs on its open stdio); SIGTERM lets pnpm forward the signal.
     gracefulShutdown: { signal: 'SIGTERM', timeout: 5000 },
   },
-  // Chromium only in M1; M5 adds firefox/webkit (round-budget stays Chromium-only).
-  projects: [{ name: 'chromium', use: devices['Desktop Chrome'] }],
+  projects: [
+    { name: 'chromium', use: devices['Desktop Chrome'] },
+    { name: 'firefox', use: devices['Desktop Firefox'], testMatch: EVERY_BROWSER },
+    { name: 'webkit', use: devices['Desktop Safari'], testMatch: EVERY_BROWSER },
+  ],
 })

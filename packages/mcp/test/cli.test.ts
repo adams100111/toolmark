@@ -139,6 +139,27 @@ describe('toolmark-mcp CLI', () => {
     expect(await r.exited).toBe(0)
   })
 
+  // Regression test for the CLI installing its SIGINT/SIGTERM handlers before any await or
+  // import-heavy setup, without waiting for the pairing-server line (or any other readiness
+  // signal) first. A literal zero-delay `kill()` right after `spawn()` races Node's own process
+  // bootstrap (module resolution + runtime init before *any* application JS runs, independent of
+  // this CLI's code — measured here at ~15-30ms even for a trivial script) rather than this bug,
+  // so it can never be reliably won by application code and isn't a meaningful regression signal.
+  // A short fixed delay that does not synchronize on any app-level readiness output instead
+  // targets exactly the app-level startup gap the fix closes: before the fix, the CLI didn't
+  // install its handlers until after creating the pairing server (a real socket listen) and the
+  // MCP server, so a signal in that window (measured here as reliably fatal up to ~50ms, and
+  // reliably survived only past ~75ms) still killed it by default action. After the fix, the
+  // handlers are installed before any of that work, so the same 50ms delay reliably exits 0.
+  const IMMEDIATE_SIGTERM_DELAY_MS = 50
+
+  it('sigterm_immediately_after_spawn_exits_0', async () => {
+    const r = run([...ORIGIN, '--port', '0'])
+    await new Promise((resolve) => setTimeout(resolve, IMMEDIATE_SIGTERM_DELAY_MS))
+    r.child.kill('SIGTERM')
+    expect(await r.exited).toBe(0)
+  })
+
   it('port_in_use_exits_1', async () => {
     const blocker = createServer()
     await new Promise<void>((resolve) => blocker.listen(0, '127.0.0.1', () => resolve()))

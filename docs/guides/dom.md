@@ -270,3 +270,8 @@ resolved `File` (use `{}` for the file field) while `jsonSchema` advertises
 - Browser behaviour (form-associated custom elements, `form=` controls) is verified in Chromium;
   Firefox and WebKit runs come with the M5 browser matrix.
 - Each animation frame with relevant mutations re-synthesizes every form under the root.
+
+---
+
+Every error, refusal and event code, with the milestone that added it, is listed in
+[`reference/codes.md`](../reference/codes.md).

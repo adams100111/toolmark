@@ -21,19 +21,24 @@
     "@toolmark/mcp": "workspace:*",
     "@toolmark/react": "workspace:*",
     "@toolmark/testing": "workspace:*",
+    "@toolmark/tour": "workspace:*",
     "react": "catalog:",
     "react-dom": "catalog:",
     "react-hook-form": "catalog:",
     "zod": "catalog:"
   },
   "devDependencies": {
+    "@axe-core/playwright": "catalog:",
     "@modelcontextprotocol/client": "2.1.0",
     "@playwright/test": "catalog:",
+    "@toolmark/lint": "workspace:*",
     "@types/node": "catalog:",
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
+    "@types/ws": "catalog:",
     "@vitejs/plugin-react": "catalog:",
     "typescript": "catalog:",
-    "vite": "catalog:"
+    "vite": "catalog:",
+    "ws": "catalog:"
   }
 }

@@ -3,6 +3,7 @@
  * span per call and per-result counters/histograms. `@opentelemetry/api` is an optional peer; this
  * is the only module of the package that imports it.
  * @packageDocumentation
+ * @module @toolmark/core/otel
  */
 import type { Meter, Span, Tracer } from '@opentelemetry/api'
 import { SpanKind, SpanStatusCode, metrics, trace } from '@opentelemetry/api'
@@ -147,8 +148,8 @@ function redactResult(result: ToolResult<unknown>, paths: readonly string[]): To
 }
 
 /**
- * An OpenTelemetry consumer (spec §11.4): `tm.use(otel())`. Starts a span named `toolmark.call
- * <tool>` (kind `INTERNAL`) on the registry's `call` event and ends it on the matching `result`
+ * An OpenTelemetry consumer (spec §11.4): `tm.use(otel())`. Starts a span named
+ * `toolmark.call <tool>` (kind `INTERNAL`) on the registry's `call` event and ends it on the matching `result`
  * event, with `toolmark.tool`, `toolmark.caller`, `toolmark.call_id` and (at the end)
  * `toolmark.status`, plus `gen_ai.operation.name: 'execute_tool'` and `gen_ai.tool.name`. The span
  * status is `ERROR` only for an `error` result; every other status leaves it `UNSET`. The status

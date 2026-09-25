@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://toolmark.dev/schemas/lint-manifest.json",
+  "title": "Toolmark lint --manifest file",
+  "description": "One of the three shapes @toolmark/lint accepts from a --manifest file: a { page, tools } object, an array of those, or the in-page test hook's { rev, tools } shape (page falls back to the file's basename).",
+  "$defs": {
+    "toolHints": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "readOnly": { "type": "boolean" },
+        "consequential": { "type": "boolean" },
+        "destructive": { "type": "boolean" },
+        "untrustedContent": { "type": "boolean" }
+      }
+    },
+    "tool": {
+      "type": "object",
+      "required": ["name", "llmName", "description", "hints", "inputSchema"],
+      "properties": {
+        "name": { "type": "string" },
+        "llmName": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "hints": { "$ref": "#/$defs/toolHints" },
+        "mode": { "const": "stepwise" },
+        "inputSchema": { "type": "object" },
+        "outputSchema": { "type": "object" }
+      }
+    },
+    "manifestFile": {
+      "type": "object",
+      "required": ["page", "tools"],
+      "properties": {
+        "page": { "type": "string" },
+        "tools": { "type": "array", "items": { "$ref": "#/$defs/tool" } }
+      }
+    },
+    "testHookShape": {
+      "type": "object",
+      "required": ["rev", "tools"],
+      "properties": {
+        "rev": { "type": "number" },
+        "tools": { "type": "array", "items": { "$ref": "#/$defs/tool" } }
+      }
+    }
+  },
+  "oneOf": [
+    { "$ref": "#/$defs/manifestFile" },
+    { "$ref": "#/$defs/testHookShape" },
+    { "type": "array", "items": { "$ref": "#/$defs/manifestFile" } }
+  ]
+}
