@@ -11,3 +11,5 @@ test-results/
 playwright-report/
 *.tsbuildinfo
 round-budget.json
+.vitest/
+round-budget.json

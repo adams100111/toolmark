@@ -67,7 +67,7 @@ export function inertiaAdapter<V extends Record<string, unknown>>(
     getValues(): V {
       return st.current as V
     },
-    setValues(values: Record<string, unknown>): void {
+    setValues(values: Record<string, unknown>, _opts: { source: 'agent' | 'undo' }): void {
       let next = st.current
       for (const [path, value] of Object.entries(values)) {
         next = setPath(next, path, value)
