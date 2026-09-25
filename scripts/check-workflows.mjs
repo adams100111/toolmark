@@ -17,9 +17,10 @@
 //     `run:` script; pass it through the step's `env:` and use "$VAR" instead;
 //   - restore no cache in a privileged job — one with any `write` permission (including
 //     `id-token: write`) or that uses `secrets.*` / `github.token` — or in any job it `needs`,
-//     directly or transitively: no `actions/cache` (or `cache/restore`), no `cache:` input on an
-//     `actions/setup-*` step, and `actions/setup-node` sets `package-manager-cache: false`
-//     (a cache entry written by any other default-branch job could plant code in the build);
+//     directly or transitively: no `actions/cache` (or any `actions/cache/*` sub-action), no
+//     truthy `cache:` input on any step (`actions/setup-*`, `pnpm/action-setup`, ...), and
+//     `actions/setup-node` sets `package-manager-cache: false` (a cache entry written by any
+//     other default-branch job could plant code in the build);
 //   - run `actions/checkout` with `persist-credentials: false`, except in a job that must push:
 //     that job sets `persist-credentials: true` explicitly and names the exception in a comment
 //     inside the job that mentions "push" (for example `# Exception ...: this job pushes ...`);
@@ -59,6 +60,8 @@ function events(on) {
 }
 
 /** Events whose runs execute pull-request code and must stay read-only and secret-free. */
+/** A step `with:` value that switches an input off (`cache: false`, `'false'` or empty). */
+const FALSY_INPUT = new Set(['false', ''])
 const PR_EVENTS = new Set(['pull_request', 'pull_request_review', 'pull_request_review_comment'])
 
 /**
@@ -209,7 +212,7 @@ function checkFile(file) {
     }
   }
 
-  // Privileged jobs and every job they need (transitively) restore no cache.
+  // Privileged jobs and every job they need (transitively) restore no cache (SEC-19, SEC-23).
   const privileged = jobs
     .filter(
       ([jobId, job]) => hasWritePermission(job?.permissions) || usesToken(jobSource.get(jobId)),
@@ -227,13 +230,15 @@ function checkFile(file) {
     const why = privileged.includes(jobId) ? 'is privileged' : 'feeds a privileged job'
     for (const step of doc.jobs?.[jobId]?.steps ?? []) {
       const uses = typeof step?.uses === 'string' ? step.uses : ''
-      if (/^actions\/cache(\/restore)?@/.test(uses)) {
+      const cache = step?.with?.cache
+      if (/^actions\/cache(\/[\w-]+)?@/.test(uses)) {
         problems.push(
-          `job "${jobId}" ${why} (write permission, id-token or secrets) and must not restore a cache (${uses.split('@')[0]})`,
+          `job "${jobId}" ${why} (write permission, id-token or secrets) and must not use a cache (${uses.split('@')[0]})`,
         )
-      } else if (/^actions\/setup-[\w-]+@/.test(uses) && step.with?.cache) {
+      } else if (cache !== undefined && cache !== null && !FALSY_INPUT.has(String(cache))) {
+        // Any action's `cache:` input (actions/setup-*, pnpm/action-setup, ...), quoted or not.
         problems.push(
-          `job "${jobId}" ${why} (write permission, id-token or secrets) and must not restore a cache (\`cache: ${step.with.cache}\`)`,
+          `job "${jobId}" ${why} (write permission, id-token or secrets) and must not restore a cache (${uses.split('@')[0]} \`cache: ${cache}\`)`,
         )
       } else if (/^actions\/setup-node@/.test(uses)) {
         const pmc = step.with?.['package-manager-cache']

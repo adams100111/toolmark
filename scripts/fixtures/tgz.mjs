@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { gzipSync } from 'node:zlib'
 
-function header(name, size) {
+function header(name, size, { type = '0', prefix = '', badChecksum = false } = {}) {
   const h = Buffer.alloc(512)
   h.write(name, 0, 100, 'utf8')
   h.write('0000644\0', 100)
@@ -15,13 +15,48 @@ function header(name, size) {
   h.write(`${size.toString(8).padStart(11, '0')}\0`, 124)
   h.write('00000000000\0', 136)
   h.write('        ', 148)
-  h.write('0', 156)
+  h.write(type, 156)
   h.write('ustar\0', 257)
   h.write('00', 263)
+  h.write(prefix, 345, 155, 'utf8')
   let sum = 0
   for (const b of h) sum += b
+  if (badChecksum) sum += 1
   h.write(`${sum.toString(8).padStart(6, '0')}\0 `, 148)
   return h
+}
+
+/** One PAX record (`<len> <key>=<value>\n`, where `<len>` counts the whole record). */
+export function paxRecord(key, value) {
+  const rest = ` ${key}=${value}\n`
+  let len = rest.length + 1
+  while (String(len).length + rest.length !== len) len = String(len).length + rest.length
+  return `${len}${rest}`
+}
+
+/**
+ * Writes raw tar `entries` as a gzipped tarball at `file`, in order. Each entry is
+ * `{ name, content?, type?, prefix?, badChecksum? }` (`type` is the ustar typeflag, default `'0'`)
+ * or `{ zeroBlock: true }` for a bare 512-byte null block. Unlike `writeTgz`, names may repeat and
+ * any typeflag (PAX `x`/`g`, GNU `L`/`K`) can be written.
+ */
+export async function writeTarEntries(file, entries) {
+  const parts = []
+  for (const e of entries) {
+    if (e.zeroBlock) {
+      parts.push(Buffer.alloc(512))
+      continue
+    }
+    const body = Buffer.from(e.content ?? '')
+    parts.push(
+      header(e.name, body.length, e),
+      body,
+      Buffer.alloc((512 - (body.length % 512)) % 512),
+    )
+  }
+  parts.push(Buffer.alloc(1024))
+  await mkdir(dirname(file), { recursive: true })
+  await writeFile(file, gzipSync(Buffer.concat(parts)))
 }
 
 /** Writes `files` (`{ 'package/x': string }`) as a gzipped tarball at `file`. */

@@ -35,24 +35,21 @@ test('sec_14_jobs_feeding_publish_restore_no_cache', () => {
   }
 })
 
-test('sec_15_release_step_refuses_a_tag_at_another_commit', () => {
+test('sec_15_release_step_runs_the_tag_guard_before_and_after_each_release', () => {
+  // The guard's behaviour is tested by running it (scripts/require-tag-at-sha.test.mjs); this
+  // pins where the workflow calls it.
   const step = workflow.jobs.publish.steps.find((s) => s.name === 'Git tags and GitHub releases')
   assert.ok(step, 'the tags-and-releases step exists')
-  const run = step.run
-  assert.match(run, /git\/ref\/tags\//, 'resolves the existing tag through the API')
-  assert.match(run, /git\/tags\//, 'dereferences annotated tags')
-  assert.match(run, /!= "\$GITHUB_SHA"/, 'compares the tag commit with the run commit')
-  const loop = run.slice(run.indexOf('while IFS'))
+  const loop = step.run.slice(step.run.indexOf('while IFS'))
+  const guard = /scripts\/require-tag-at-sha\.sh "\$remote" "\$tag" "\$GITHUB_SHA"/
+  const after = /scripts\/require-tag-at-sha\.sh --must-exist "\$remote" "\$tag" "\$GITHUB_SHA"/
+  const view = loop.indexOf('gh release view')
   const create = loop.indexOf('gh release create')
-  const checks = [...loop.matchAll(/require_tag_at_sha "\$tag"/g)].map((m) => m.index)
-  assert.ok(
-    checks.some((i) => i < loop.indexOf('gh release view')),
-    'checked before the release',
-  )
-  assert.ok(
-    checks.some((i) => i > create),
-    'checked again after gh release create',
-  )
+  assert.ok(view >= 0 && create > view, 'views, then creates the release')
+  const before = loop.search(guard)
+  assert.ok(before >= 0 && before < view, 'checked before gh release view')
+  assert.ok(loop.search(after) > create, 'checked again (tag must exist) after gh release create')
+  assert.match(step.run, /remote="\$GITHUB_SERVER_URL\/\$GITHUB_REPOSITORY\.git"/)
 })
 
 test('sec_16_publish_checks_plan_against_packed_manifests_first', () => {
@@ -66,6 +63,16 @@ test('sec_16_publish_checks_plan_against_packed_manifests_first', () => {
     /\^packages\/\[a-z0-9-\]\+-\[0-9A-Za-z\.-\]\+\\\.tgz\$/,
     'the loop re-checks the path',
   )
+})
+
+test('sec_22_publish_asks_npm_what_each_tarball_is_before_publishing', () => {
+  const plan = stepIndex('publish', /check-release-versions\.mjs --plan dist-pack/)
+  const npm = stepIndex('publish', /check-release-versions\.mjs --npm-dry-run dist-pack/)
+  const publish = stepIndex('publish', /npm publish/)
+  assert.ok(npm > plan, 'after the packed-manifest check')
+  assert.ok(npm < publish, 'before any npm publish')
+  // No token reaches the dry-run step (the script also strips the environment it gives npm).
+  assert.equal(workflow.jobs.publish.steps[npm].env, undefined)
 })
 
 test('sec_17_doc_lists_main_only_deployment_branches_as_a_gate', () => {
