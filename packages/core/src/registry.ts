@@ -184,6 +184,8 @@ export interface RegistryState {
   /** Whether `caller` has no confirmation path for confirmable tools (inline, no handler). */
   inlineWithoutHandler(caller: Caller): boolean
   modeOf(caller: Caller): ConfirmMode | undefined
+  /** Listeners notified when `confirmPending` consumes a pending confirmation (m5). */
+  readonly pendingConsumed: Set<() => void>
 }
 
 const stateOf = new WeakMap<Toolmark, RegistryState>()
@@ -201,6 +203,28 @@ export function emitEvent<K extends keyof ToolmarkEventMap>(
   if (!state) return
   if (type === 'error') state.report(payload as ToolmarkErrorEvent)
   else state.emitter.emit(type, payload)
+}
+
+/**
+ * @internal For `@toolmark/react`'s `usePendingConfirmations`; not part of the stable API.
+ * Subscribes to "`confirmPending` consumed a pending confirmation": fired synchronously when the
+ * id is taken — before the approved tool runs, whereas the `confirm` event's `approved` stage only
+ * fires once it settled — so a confirmation UI can drop the item (and block a double click)
+ * immediately. `tm.pendingConfirmations()` no longer lists the id at that point.
+ * @param tm - The registry.
+ * @param fn - Listener (a throwing listener is reported to the console and ignored).
+ * @returns An unsubscribe function.
+ */
+export function onPendingConsumed(tm: Toolmark, fn: () => void): () => void {
+  const state = stateOf.get(tm)
+  if (!state) return () => undefined
+  const listener = (): void => {
+    fn()
+  }
+  state.pendingConsumed.add(listener)
+  return () => {
+    state.pendingConsumed.delete(listener)
+  }
 }
 
 /** @internal */
@@ -335,6 +359,7 @@ export function createToolmark(options: ToolmarkOptions = {}): Toolmark {
   }
 
   const root = new ScopeNode('', null, true, {
+    attach: browser,
     onWhenChange(node) {
       for (const e of entries.values()) {
         if (e.scope.isWithin(node)) {
@@ -555,6 +580,7 @@ export function createToolmark(options: ToolmarkOptions = {}): Toolmark {
     visible,
     inlineWithoutHandler,
     modeOf,
+    pendingConsumed: new Set(),
   }
   const runtime = createCallRuntime(state)
   stateOf.set(tm, state)

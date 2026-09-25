@@ -28,7 +28,7 @@ describe('ctx.confirm', () => {
     // human → approved
     const plain = createTestRegistry()
     const humanOutcomes = asker(plain)
-    await plain.call('ask', { x: 1 }, { caller: 'human' })
+    await plain.call('ask', {}, { caller: 'human' })
     expect(humanOutcomes).toEqual([{ approved: true }])
 
     // webmcp with handler → handler called
@@ -42,13 +42,13 @@ describe('ctx.confirm', () => {
     const confirmStages: string[] = []
     withHandler.events.on('confirm', (e) => confirmStages.push(e.stage))
     const outcomes = asker(withHandler)
-    await withHandler.call('ask', { x: 1 }, { caller: 'webmcp' })
+    await withHandler.call('ask', {}, { caller: 'webmcp' })
     expect(outcomes).toEqual([{ approved: false, reason: 'user said no' }])
     expect(requests[0]).toMatchObject({
       confirmId: expect.any(String) as string,
       tool: 'ask',
       caller: 'webmcp',
-      input: { x: 1 },
+      input: {},
       summary: 'Sure?',
       changes: [{ path: 'a', before: 1, after: 2 }],
     })

@@ -5,6 +5,7 @@ import {
   type ToolmarkErrorEvent,
   type ToolmarkOptions,
 } from '@toolmark/core'
+import type { ScopeNode } from '../src/scope.js'
 import { createTestRegistry } from './helpers/create-test-registry.js'
 import { flushMicrotasks, tool } from './helpers/tools.js'
 
@@ -169,6 +170,20 @@ describe('registry', () => {
     tm.register(tool('f'))
     await flushMicrotasks()
     expect(seen).toHaveLength(1)
+  })
+
+  it('ssr_scope_is_detached', () => {
+    const tm = createToolmark({ dev: true, __environment: 'server' })
+    const child = tm.scope('a')
+    const grandchild = child.scope('b')
+    expect(grandchild.path).toBe('a.b')
+    for (const node of [child, grandchild] as ScopeNode[]) {
+      expect(node.parent?.children.has(node)).toBe(false)
+    }
+    expect(() => {
+      grandchild.setWhen(false)
+      child.dispose()
+    }).not.toThrow()
   })
 
   it('ssr_is_inert', async () => {

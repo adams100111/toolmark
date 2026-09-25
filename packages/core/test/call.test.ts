@@ -68,7 +68,7 @@ describe('call pipeline', () => {
       seen.push(`result:${e.result.status}`)
       expect(e.durationMs).toBeGreaterThanOrEqual(0)
     })
-    await tm.call('x', { a: 1 }, { caller: 'test' })
+    await tm.call('x', {}, { caller: 'test' })
     expect(seen).toEqual(['call:x:test', 'result:ok'])
   })
 
@@ -245,5 +245,27 @@ describe('call pipeline', () => {
     gate.resolve()
     expect(await first).toEqual(ok('done'))
     expect(await second).toMatchObject({ status: 'refused', code: 'unknown_tool' })
+  })
+
+  it('no_input_tool_accepts_only_undefined_or_empty_object', async () => {
+    const tm = createTestRegistry()
+    const seen: unknown[] = []
+    tm.register(
+      tool('bare', undefined, {
+        run: (input) => {
+          seen.push(input)
+          return ok(null)
+        },
+      }),
+    )
+    expect(await tm.call('bare', undefined, { caller: 'inapp' })).toEqual(ok(null))
+    expect(await tm.call('bare', {}, { caller: 'inapp' })).toEqual(ok(null))
+    for (const bad of [{ a: 1 }, [], 'x', 0, null, new Date(0)]) {
+      expect(await tm.call('bare', bad, { caller: 'inapp' })).toEqual({
+        status: 'invalid',
+        issues: [{ path: '', message: 'This tool takes no input' }],
+      })
+    }
+    expect(seen).toEqual([undefined, {}])
   })
 })
