@@ -1,11 +1,11 @@
 // TypeDoc options for the generated API reference (docs/api, git-ignored).
 // Entry points come from every package's `exports` map (`@toolmark/source` targets), so a new
-// subpath can never be missed. Validation is non-strict through M4 (R5); `pnpm docs:api:strict`
-// (TYPEDOC_STRICT=1) turns `notExported`/`notDocumented` on and becomes the default in M5.
+// subpath can never be missed. Strict validation (`notExported`/`notDocumented` as errors) is the
+// default from M5 (R5); set `TYPEDOC_STRICT=0` to opt back into the pre-M5, non-strict behaviour.
 import { readdirSync, readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 
-const strict = process.env.TYPEDOC_STRICT === '1'
+const strict = process.env.TYPEDOC_STRICT !== '0'
 
 /** Every `@toolmark/source` target in `packages/<name>/package.json` `exports`. */
 function entryPointsFrom(packagesDir) {

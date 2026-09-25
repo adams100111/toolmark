@@ -122,6 +122,14 @@ function patternSegments(path: string): string[] | undefined {
 const INDEX = /^\d+$/
 
 /**
+ * @internal Whether `pattern` is a well-formed sensitive path (dot segments, `[]` wildcards, no
+ * empty segment or prototype key) that {@link isUnderSensitive} and {@link sensitiveBelow} match.
+ */
+export function isSensitivePattern(pattern: string): boolean {
+  return patternSegments(pattern) !== undefined
+}
+
+/**
  * @internal The concrete dot paths that the sensitive path `pattern` addresses in `values`: the
  * path itself when it has no `[]`, else every existing match (`cards[].cvc` → `cards.0.cvc`,
  * `cards.1.cvc`, …). At most 10000 nodes are visited; past that the walk fails closed and returns

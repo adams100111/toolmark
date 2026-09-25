@@ -13,3 +13,4 @@ playwright-report/
 round-budget.json
 .vitest/
 round-budget.json
+.quality/

@@ -1,0 +1,222 @@
+[
+  {
+    "name": "@toolmark/core",
+    "path": "packages/core/dist/index.js",
+    "import": "*",
+    "gzip": true,
+    "ignore": ["@mcp-b/webmcp-polyfill", "@opentelemetry/api"],
+    "limit": "29.5 kB"
+  },
+  {
+    "name": "@toolmark/core/protocol",
+    "path": "packages/core/dist/protocol/index.js",
+    "import": "*",
+    "gzip": true,
+    "ignore": ["@mcp-b/webmcp-polyfill", "@opentelemetry/api"],
+    "limit": "2.5 kB"
+  },
+  {
+    "name": "@toolmark/core/protocol/v1/*.json",
+    "path": "packages/core/dist/protocol/v1/*.json",
+    "rolldown": false,
+    "gzip": true,
+    "limit": "1.5 kB"
+  },
+  {
+    "name": "@toolmark/core/bridge",
+    "path": "packages/core/dist/bridge/index.js",
+    "import": "*",
+    "gzip": true,
+    "ignore": ["@mcp-b/webmcp-polyfill", "@opentelemetry/api"],
+    "limit": "6 kB"
+  },
+  {
+    "name": "@toolmark/core/bridge/echo",
+    "path": "packages/core/dist/bridge/echo.js",
+    "import": "*",
+    "gzip": true,
+    "ignore": ["@mcp-b/webmcp-polyfill", "@opentelemetry/api"],
+    "limit": "1 kB"
+  },
+  {
+    "name": "@toolmark/core/bridge/websocket",
+    "path": "packages/core/dist/bridge/websocket.js",
+    "import": "*",
+    "gzip": true,
+    "ignore": ["@mcp-b/webmcp-polyfill", "@opentelemetry/api"],
+    "limit": "2 kB"
+  },
+  {
+    "name": "@toolmark/core/bridge/post-message",
+    "path": "packages/core/dist/bridge/post-message.js",
+    "import": "*",
+    "gzip": true,
+    "ignore": ["@mcp-b/webmcp-polyfill", "@opentelemetry/api"],
+    "limit": "1 kB"
+  },
+  {
+    "name": "@toolmark/core/bridge/in-page",
+    "path": "packages/core/dist/bridge/in-page.js",
+    "import": "*",
+    "gzip": true,
+    "ignore": ["@mcp-b/webmcp-polyfill", "@opentelemetry/api"],
+    "limit": "0.5 kB"
+  },
+  {
+    "name": "@toolmark/core/dom",
+    "path": "packages/core/dist/dom.js",
+    "import": "*",
+    "gzip": true,
+    "ignore": ["@mcp-b/webmcp-polyfill", "@opentelemetry/api"],
+    "limit": "28.5 kB"
+  },
+  {
+    "name": "@toolmark/core/webmcp",
+    "path": "packages/core/dist/webmcp.js",
+    "import": "*",
+    "gzip": true,
+    "ignore": ["@mcp-b/webmcp-polyfill", "@opentelemetry/api"],
+    "limit": "3 kB"
+  },
+  {
+    "name": "@toolmark/core/otel",
+    "path": "packages/core/dist/otel.js",
+    "import": "*",
+    "gzip": true,
+    "ignore": ["@mcp-b/webmcp-polyfill", "@opentelemetry/api"],
+    "limit": "2.75 kB"
+  },
+  {
+    "name": "@toolmark/inertia",
+    "path": "packages/inertia/dist/index.js",
+    "import": "*",
+    "gzip": true,
+    "ignore": ["@inertiajs/react", "react"],
+    "limit": "13 kB"
+  },
+  {
+    "name": "@toolmark/judge-typesafe",
+    "path": ["packages/judge-typesafe/dist/index.js"],
+    "rolldown": false,
+    "gzip": true,
+    "limit": "5 kB"
+  },
+  {
+    "name": "@toolmark/lint",
+    "path": ["packages/lint/dist/index.js", "packages/lint/dist/run-*.js"],
+    "rolldown": false,
+    "gzip": true,
+    "limit": "5.5 kB"
+  },
+  {
+    "name": "@toolmark/lint/manifest.schema.json",
+    "path": "packages/lint/dist/manifest.schema.json",
+    "rolldown": false,
+    "gzip": true,
+    "limit": "1 kB"
+  },
+  {
+    "name": "@toolmark/lint (bin toolmark)",
+    "path": ["packages/lint/dist/bin.js", "packages/lint/dist/run-*.js"],
+    "rolldown": false,
+    "gzip": true,
+    "limit": "9.5 kB"
+  },
+  {
+    "name": "@toolmark/mcp",
+    "path": ["packages/mcp/dist/index.js"],
+    "rolldown": false,
+    "gzip": true,
+    "limit": "14 kB"
+  },
+  {
+    "name": "@toolmark/mcp/client",
+    "path": "packages/mcp/dist/client.js",
+    "import": "*",
+    "gzip": true,
+    "limit": "6 kB"
+  },
+  {
+    "name": "@toolmark/mcp (bin toolmark-mcp)",
+    "path": [
+      "packages/mcp/dist/cli.js",
+      "packages/mcp/dist/args-*.js",
+      "packages/mcp/dist/ws-server-*.js",
+      "packages/mcp/dist/server-*.js"
+    ],
+    "rolldown": false,
+    "gzip": true,
+    "limit": "17 kB"
+  },
+  {
+    "name": "@toolmark/react",
+    "path": "packages/react/dist/index.js",
+    "import": "*",
+    "gzip": true,
+    "ignore": ["react", "react-hook-form"],
+    "limit": "32 kB"
+  },
+  {
+    "name": "@toolmark/react/rhf",
+    "path": "packages/react/dist/rhf/index.js",
+    "import": "*",
+    "gzip": true,
+    "ignore": ["react", "react-hook-form"],
+    "limit": "2.5 kB"
+  },
+  {
+    "name": "@toolmark/testing",
+    "path": "packages/testing/dist/index.js",
+    "import": "*",
+    "gzip": true,
+    "ignore": ["@playwright/test"],
+    "limit": "17.5 kB"
+  },
+  {
+    "name": "@toolmark/testing/vitest",
+    "path": "packages/testing/dist/vitest.js",
+    "import": "*",
+    "gzip": true,
+    "ignore": ["@playwright/test"],
+    "limit": "17 kB"
+  },
+  {
+    "name": "@toolmark/testing/page",
+    "path": "packages/testing/dist/page/install-test-hook.js",
+    "import": "*",
+    "gzip": true,
+    "ignore": ["@playwright/test"],
+    "limit": "0.5 kB"
+  },
+  {
+    "name": "@toolmark/tour",
+    "path": "packages/tour/dist/index.js",
+    "import": "*",
+    "gzip": true,
+    "ignore": ["react"],
+    "limit": "4 kB"
+  },
+  {
+    "name": "@toolmark/tour/overlay",
+    "path": "packages/tour/dist/overlay.js",
+    "import": "*",
+    "gzip": true,
+    "ignore": ["react"],
+    "limit": "3.5 kB"
+  },
+  {
+    "name": "@toolmark/tour/react",
+    "path": "packages/tour/dist/react.js",
+    "import": "*",
+    "gzip": true,
+    "ignore": ["react"],
+    "limit": "0.5 kB"
+  },
+  {
+    "name": "@toolmark/tour/styles.css",
+    "path": "packages/tour/dist/styles.css",
+    "rolldown": false,
+    "gzip": true,
+    "limit": "1.5 kB"
+  }
+]

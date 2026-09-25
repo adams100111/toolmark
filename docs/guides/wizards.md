@@ -14,6 +14,8 @@ D25). Two modes exist:
 Fill semantics are the form-fill semantics of [forms](forms.md) applied per step: fail-closed
 undeclared paths, forbidden keys, duplicate paths, the node budget (10000 nodes per step), array
 operations, [files](files.md), `null` clears, redaction and skipping of user-edited fields.
+`<name>.fill` and `<name>.step.fill` are `untrustedContent`: their results carry values the user
+typed or the page loaded.
 
 ## React: parent-state mode
 

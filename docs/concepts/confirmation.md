@@ -44,6 +44,28 @@ const tm = createToolmark({ confirm: queue.handler })
 - A pending confirmation expires (default 10 minutes, `confirmExpiryMs`) and is dropped when its
   scope is disposed. A `confirmId` is **single use**: the first `confirmPending` consumes it, any
   later one gets `refused` `confirmation_expired`. At most 100 are pending; the oldest expire first.
+  Expiry is checked against the clock at approval time, not only by a timer: browsers delay timers
+  in background tabs and across device sleep, so an approval that arrives after `expiresAt` (inline
+  or deferred) is expired and the tool does not run.
+- **Sensitive values stay out of confirmation payloads.** `ConfirmRequest.input`,
+  `PendingConfirmation.input` (`tm.pendingConfirmations()`, `usePendingConfirmations`) and
+  `ctx.confirm` changes carry `'[redacted]'` at the tool's sensitive paths (`sensitivePaths()`,
+  mapped onto the input shape for form and wizard fills; the whole input when that list cannot be
+  read). The approved run still gets the real input. An approval that edits `input` (inline,
+  deferred or through `ctx.confirm`) may send the public input back with its changes: every
+  sensitive path that still holds the literal `'[redacted]'` gets its real value back before the
+  edit is validated, so a secret is never replaced by the placeholder; a sensitive path the
+  approver changed keeps the new value.
+  `[]` in a sensitive path matches any array index, also in `ctx.confirm` changes: a change at
+  `cards.0.cvc` is redacted, and a change of `cards` or `cards.0` keeps its value with each `cvc`
+  inside it redacted. A secret is only restored onto the same array row: when the edited array
+  has a different length, or the row's non-sensitive values changed (a row deleted, inserted,
+  reordered or edited), a `'[redacted]'` left in that row has no real value to take. Such a
+  placeholder, one under a key the approver restructured, or any other `'[redacted]'` the tool
+  was not sent at that position (outside the sensitive paths, or anywhere when the sensitive
+  paths cannot be read at approval), is refused as `invalid` with the
+  issue "Re-enter sensitive field" at its path (inside `ctx.confirm`, the outcome is
+  `{ approved: false, reason: 'invalid' }`); the approver re-enters the value and approves again.
 - A deferred form or wizard submit approved after the form's values changed is refused `stale`
   ("Form changed since confirmation was requested").
 - **Registration check.** Registering a consequential or destructive tool fails
@@ -51,7 +73,9 @@ const tm = createToolmark({ confirm: queue.handler })
   inline-mode caller without a `confirm` handler simply does not see such tools (and a call from it
   is `refused` `not_allowed`); a development-only `missing_confirm_handler` warning event says so.
 - **`ctx.confirm({ summary, changes? })`** inside `run` asks mid-run: `human` → approved; an inline
-  caller → awaits the handler (bounded by the call signal and the expiry); a deferred caller or no
+  caller → awaits the handler (bounded by the call signal and the expiry, and not by
+  `callTimeoutMs`: the call deadline is paused while the confirmation is open and resumes with the
+  time that was left); a deferred caller or no
   handler → `{ approved: false, reason: 'confirmation_unavailable' }` plus the development event
   `ctx_confirm_unavailable`. It never throws. Tools that always need confirmation should declare
   `consequential` instead.

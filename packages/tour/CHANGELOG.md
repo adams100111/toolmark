@@ -1,5 +1,38 @@
 # @toolmark/tour
 
+## 1.0.0
+
+### Major Changes
+
+- [`3aa8d2f`](https://github.com/adams100111/toolmark/commit/3aa8d2ff9231402345c244aadf2c2b31ff057a5c) Thanks [@adams100111](https://github.com/adams100111)! - First stable release.
+
+### Minor Changes
+
+- [#5](https://github.com/adams100111/toolmark/pull/5) [`dcaf0e5`](https://github.com/adams100111/toolmark/commit/dcaf0e5c5f6c2111701f1865af7b6b601576f9cb) Thanks [@adams100111](https://github.com/adams100111)! - Guided tours over the same tool declarations in the `@toolmark/tour` package (`startTour` in
+  `show`, `guide` and `do` modes, authored steps or steps from an app-supplied `Planner`, the
+  themeable vanilla-DOM overlay `mountTourOverlay` with `@toolmark/tour/styles.css`, and `useTour` in
+  `@toolmark/tour/react`); the `toolmark lint` CLI and `lint` API in the `@toolmark/lint` package
+  (manifest files or live pages via Playwright, rule ids from `name-format` to
+  `options-without-hint`, `pretty`/`json` output, exit codes 0/1/2, and `manifest.schema.json`); and
+  the optional TypeSafe description judge `@toolmark/judge-typesafe` (warnings only, disabled without
+  an API key).
+
+### Patch Changes
+
+- Updated dependencies [[`826127a`](https://github.com/adams100111/toolmark/commit/826127aeec43c70b8dead15d426e8aab6b6de896), [`1f75289`](https://github.com/adams100111/toolmark/commit/1f75289f1f6bea53658b9a5bc33ad2231a533287), [`ad3fb62`](https://github.com/adams100111/toolmark/commit/ad3fb62cd76ebcf96956c8b410e64ecc55549f85), [`238d1ef`](https://github.com/adams100111/toolmark/commit/238d1ef3edd0068554fa228d86ddee0c0a55a509), [`3aa8d2f`](https://github.com/adams100111/toolmark/commit/3aa8d2ff9231402345c244aadf2c2b31ff057a5c)]:
+  - @toolmark/core@1.0.0
+
+## 1.0.0-next.4
+
+### Major Changes
+
+- First stable release.
+
+### Patch Changes
+
+- Updated dependencies [[`238d1ef`](https://github.com/adams100111/toolmark/commit/238d1ef3edd0068554fa228d86ddee0c0a55a509)]:
+  - @toolmark/core@1.0.0-next.4
+
 ## 0.1.0-next.3
 
 ### Minor Changes

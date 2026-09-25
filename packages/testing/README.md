@@ -34,6 +34,9 @@ test('agent can fill the sign-up form', async ({ page, tools }) => {
 
 Protocol and server contract: [docs/protocol-v1.md](https://github.com/adams100111/toolmark/blob/main/docs/protocol-v1.md).
 
+Docs: [Getting started](https://adams100111.github.io/toolmark/getting-started) ·
+[API reference](https://adams100111.github.io/toolmark/api/@toolmark/testing/).
+
 ## License
 
 MIT

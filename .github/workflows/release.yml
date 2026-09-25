@@ -1,0 +1,243 @@
+name: Release
+
+# Changesets split-job release (M5 Task 7a; spec §17, §21, §22). This is the only workflow that
+# publishes. Nothing here can publish from a pull request, in changesets pre mode, with a prerelease
+# version, from a ref other than main, without the owner-set repository variable
+# TOOLMARK_PUBLISH_ENABLED == 'true', or without the owner's approval of the protected `npm-release`
+# environment. Pushing the 1.0.0 commit to main therefore skips `publish`; the owner starts it with
+# workflow_dispatch after setting the variable (docs/release/release-workflow.md).
+#
+# Publish path (ruling recorded in docs/release/release-workflow.md): `changeset publish` in a pnpm
+# workspace publishes through `pnpm publish`, which (pnpm 12) adds provenance only on an OIDC
+# trusted-publishing exchange and ignores NPM_CONFIG_PROVENANCE / publishConfig.provenance, so the
+# token-based bootstrap publish would ship without provenance. The publish job therefore runs
+# `npm publish <tgz> --provenance` (npm >= 11.5.1, OIDC + provenance) over the tarballs that
+# `changesets/action/pack` built, in the publish plan's order, then creates the git tags and GitHub
+# releases through the GitHub API.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+# Third-party and GitHub actions are pinned to full commit SHAs (version in the trailing comment);
+# scripts/check-workflows.mjs enforces the hardening rules.
+jobs:
+  # version | publish | none, from the changesets state (publish: the plan is uploaded as an artifact).
+  select-mode:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      mode: ${{ steps.mode.outputs.mode }}
+      publish-plan-artifact-id: ${{ steps.mode.outputs.publish-plan-artifact-id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0 (version from packageManager)
+      # No package-manager cache in any job that feeds `publish` (SEC-14): a cache entry written
+      # by another default-branch job could plant a trojaned store that `pnpm build` then ships.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.x
+          package-manager-cache: false
+      - run: pnpm install --frozen-lockfile
+      - id: mode
+        uses: changesets/action/select-mode@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
+
+  # Opens or updates the "Version Packages" PR for future releases (commits through the GitHub API).
+  version:
+    needs: select-mode
+    if: needs.select-mode.outputs.mode == 'version' && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0 (version from packageManager)
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.x
+          package-manager-cache: false
+      - run: pnpm install --frozen-lockfile
+      - uses: changesets/action/version@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
+
+  # Builds and packs the planned packages; the pack dir (tarballs + publish-plan.json) is uploaded
+  # as an artifact by the pack sub-action. No secrets and no write token in this job.
+  pack:
+    needs: select-mode
+    if: needs.select-mode.outputs.mode == 'publish'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    outputs:
+      pack-dir-artifact-id: ${{ steps.pack.outputs.pack-dir-artifact-id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0 (version from packageManager)
+      # No package-manager cache (SEC-14, see select-mode): these tarballs are what `publish` ships.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.x
+          package-manager-cache: false
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - id: pack
+        uses: changesets/action/pack@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
+        with:
+          publish-plan-artifact-id: ${{ needs.select-mode.outputs.publish-plan-artifact-id }}
+
+  # Owner-gated publish. GitHub-hosted runner (required for OIDC); `npm-release` is the protected
+  # environment whose only reviewer is the owner. No `pnpm install` here: this job holds id-token
+  # and the bootstrap token, so it runs no dependency code — only Node built-ins, npm and gh.
+  # Never from a private repository (SEC-18): required reviewers on `npm-release` are not enforced
+  # for private repos on the Free plan, so the owner's approval would be silently skipped.
+  publish:
+    needs: [select-mode, pack]
+    if: needs.select-mode.outputs.mode == 'publish' && vars.TOOLMARK_PUBLISH_ENABLED == 'true' && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && !github.event.repository.private
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: npm-release
+    permissions:
+      contents: write
+      id-token: write
+    env:
+      NPM_CONFIG_PROVENANCE: 'true'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Refuse pre mode
+        run: |
+          test ! -f .changeset/pre.json || { echo "pre mode: refusing to publish"; exit 1; }
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.x
+          package-manager-cache: false
+          registry-url: 'https://registry.npmjs.org'
+      - name: Refuse non-stable versions
+        run: node scripts/check-release-versions.mjs --stable
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.pack.outputs.pack-dir-artifact-id }}
+          path: dist-pack
+      - name: Internal ranges in the packed manifests
+        run: node scripts/check-release-versions.mjs --tarballs dist-pack
+      # npm publishes what each tarball's own package.json says, so the packed name/version must
+      # equal the plan entry's, with no install scripts and a plain packages/<file>.tgz path (SEC-16).
+      - name: Plan entries match their tarballs
+        run: node scripts/check-release-versions.mjs --plan dist-pack
+      # SEC-22: npm's own tar reader must agree with the plan too. `npm publish --dry-run --json`
+      # per tarball, offline (--force, loopback registry) and with no token or OIDC variables.
+      - name: npm reads the plan's name and version from each tarball
+        run: node scripts/check-release-versions.mjs --npm-dry-run dist-pack
+      # The publish loop is scripts/publish-tarballs.mjs (tested, and run with --dry-run by
+      # release-dry-run on every PR): npm >= 11.5.1 (trusted publishing), then the whole plan is
+      # re-checked (kind, @toolmark/ name, tag latest, packages/<file>.tgz path, workspace version,
+      # sha256 integrity) before anything is published; versions already on npm are skipped.
+      - name: Publish (npm, provenance)
+        env:
+          NPM_BOOTSTRAP_TOKEN: ${{ secrets.NPM_BOOTSTRAP_TOKEN }}
+        run: node scripts/publish-tarballs.mjs --released released.tsv dist-pack
+      - name: Git tags and GitHub releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # A tag that already exists must point at this run's commit (SEC-15): `gh release create`
+        # would otherwise attach the release to it and ignore --target. Checked before, and after
+        # (the tag must then exist) by scripts/require-tag-at-sha.sh through `git ls-remote`.
+        run: |
+          set -euo pipefail
+          remote="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git"
+          while IFS=$'\t' read -r name version dir; do
+            tag="$name@$version"
+            bash scripts/require-tag-at-sha.sh "$remote" "$tag" "$GITHUB_SHA" < /dev/null
+            if gh release view "$tag" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+              echo "release $tag exists"; continue
+            fi
+            awk -v h="## $version" '$0 == h {f=1; next} /^## / && f {exit} f' "$dir/CHANGELOG.md" > notes.md
+            gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+              --title "$tag" --notes-file notes.md
+            bash scripts/require-tag-at-sha.sh --must-exist "$remote" "$tag" "$GITHUB_SHA" < /dev/null
+          done < released.tsv
+
+  # PR and manual check of the whole publish path without publishing (spec §21): plan (synthetic
+  # when empty) → pack → the publish job's guards and checks and its publish loop in --dry-run →
+  # smoke, publint and attw checks → RC e2e on dist.
+  release-dry-run:
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0 (version from packageManager)
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.x
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Publish plan
+        run: pnpm changeset publish-plan --output "$RUNNER_TEMP/publish-plan.json"
+      # After a release the plan is empty on every ordinary PR (the versions are on npm): the
+      # script then prints a notice and writes a synthetic plan of every workspace package, so
+      # the pack and publish-path checks below still run (a non-empty plan is checked as is).
+      - name: Plan to check (synthetic when the publish plan is empty)
+        run: node scripts/release-dry-run-plan.mjs "$RUNNER_TEMP/publish-plan.json" "$RUNNER_TEMP/check-plan.json"
+      - name: Pack (changesets)
+        run: pnpm changeset pack --from-publish-plan "$RUNNER_TEMP/check-plan.json" --out-dir dist-pack
+      # The publish job's own checks, in its order, up to (not including) `npm publish`. Pre mode
+      # and prerelease versions only warn here (a prerelease cycle must not block every PR); the
+      # publish job refuses them.
+      - name: Pre mode and stable versions (publish guards)
+        run: |
+          test ! -f .changeset/pre.json || echo "::warning::pre mode: the publish job would refuse to publish"
+          rc=0; node scripts/check-release-versions.mjs --stable || rc=$?
+          [ "$rc" -eq 0 ] || [ "$rc" -eq 1 ] || exit "$rc"
+          [ "$rc" -eq 0 ] || echo "::warning::non-stable versions: the publish job would refuse to publish"
+      - name: Internal ranges in the packed manifests
+        run: node scripts/check-release-versions.mjs --tarballs dist-pack
+      - name: Plan entries match their tarballs
+        run: node scripts/check-release-versions.mjs --plan dist-pack
+      - name: npm reads the plan's name and version from each tarball
+        run: node scripts/check-release-versions.mjs --npm-dry-run dist-pack
+      - name: Publish loop (dry run, no npm publish)
+        run: node scripts/publish-tarballs.mjs --dry-run dist-pack
+      - name: Tarball smoke (pnpm pack + changesets pack)
+        run: |
+          pnpm -r --filter "./packages/*" pack --pack-destination "$PWD/dist-tarballs"
+          node scripts/tarball-smoke.mjs dist-tarballs dist-pack/packages
+      - name: publint and attw (each changesets tarball)
+        run: |
+          for f in dist-pack/packages/*.tgz; do
+            echo "== $f"
+            pnpm exec publint run "$f" --strict
+            pnpm exec attw "$f" --profile esm-only --exclude-entrypoints ./styles.css --format table-flipped --no-emoji
+          done
+      - run: pnpm exec playwright install --with-deps chromium
+      # RC e2e against the built packages (TOOLMARK_DIST=1 drops the @toolmark/source condition).
+      - name: Round budget, same tools and tours on dist (chromium)
+        env:
+          TOOLMARK_DIST: '1'
+          ROUND_BUDGET_REPORT: round-budget.json
+        run: pnpm -F @toolmark-examples/react-vite exec playwright test e2e/dist-resolution.spec.ts e2e/round-budget.spec.ts e2e/same-tools.spec.ts e2e/tour.spec.ts --project=chromium

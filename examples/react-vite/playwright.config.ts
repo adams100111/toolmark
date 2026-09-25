@@ -5,9 +5,9 @@ import { defineConfig, devices } from '@playwright/test'
 const port = Number(process.env.TOOLMARK_EXAMPLE_PORT ?? 5173)
 
 // Specs that run on every browser (spec §18: tours, multi-tab and navigation on Chromium, Firefox
-// and WebKit). Everything else — webmcp, mcp, reach, same-tools, lint-clean and round-budget —
+// and WebKit; dist-resolution proves which build the dist e2e runs load). Everything else — webmcp, mcp, reach, same-tools, lint-clean and round-budget —
 // runs on Chromium only (round-budget stays single-browser so its report has one row per task).
-const EVERY_BROWSER = /\/(tour|navigation|multi-client|form|wizard|dom)\.spec\.ts$/
+const EVERY_BROWSER = /\/(tour|navigation|multi-client|form|wizard|dom|dist-resolution)\.spec\.ts$/
 
 export default defineConfig({
   testDir: 'e2e',

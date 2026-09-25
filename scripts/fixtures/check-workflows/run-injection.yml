@@ -1,0 +1,34 @@
+name: Run injection
+
+on:
+  workflow_dispatch:
+    inputs:
+      name:
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: x-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  greet:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - id: meta
+        run: echo "keys=a" >> "$GITHUB_OUTPUT"
+      - run: echo "branch ${{ github.head_ref }}"
+      - run: |
+          echo "hello ${{ inputs.name }}"
+          echo "title ${{github.event.pull_request.title}}"
+      - name: step output
+        run: gh pr create --title "changed (${{ steps.meta.outputs.keys }})"
+  later:
+    needs: greet
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - run: echo "${{ needs.greet.outputs.value }}"

@@ -12,7 +12,13 @@ export interface PendingConfirmation {
   title?: string
   /** Who made the call. */
   caller: Caller
-  /** Validated input the tool will run with (unless the approval edits it). */
+  /**
+   * The validated input the tool will run with (unless the approval edits it), with every value at
+   * the tool's sensitive paths replaced by `'[redacted]'` (the whole input when its redaction
+   * fails). The run itself gets the unredacted input. An approval that edits `input` may send this
+   * copy back with its changes: a sensitive path still holding `'[redacted]'` gets its real value
+   * back before validation, and a sensitive path the approver changed keeps the new value.
+   */
   input: unknown
   /** User-facing summary. */
   summary: string
@@ -26,9 +32,14 @@ export interface PendingConfirmation {
 
 /** @internal Stored pending confirmation with its owner and expiry timer. */
 export interface StoredPending<Owner> {
+  /** The public copy (its `input` redacted, SEC-5). */
   readonly public: PendingConfirmation
+  /** The unredacted validated input the approved run gets. */
+  readonly input: unknown
   readonly owner: Owner
   timer: ReturnType<typeof setTimeout> | undefined
+  /** Expiry callback (the timer's, or a sweep that finds the item past `expiresAt`). */
+  readonly onExpire: (p: StoredPending<Owner>) => void
   /** Snapshot taken by the tool's confirm-snapshot hook, if it has one. */
   snapshot?: { value: unknown }
 }
@@ -51,17 +62,23 @@ export class PendingStore<Owner> {
 
   constructor(readonly limit = PENDING_LIMIT) {}
 
-  /** Stores `item` (input deep-copied); returns entries evicted to respect the limit. */
+  /**
+   * Stores `item` (its already-redacted public `input`) with the unredacted `input` the approved
+   * run gets (both deep-copied); returns entries evicted to respect the limit.
+   */
   add(
     item: PendingConfirmation,
+    input: unknown,
     owner: Owner,
     onExpire: (p: StoredPending<Owner>) => void,
     snapshot?: { value: unknown },
   ): StoredPending<Owner>[] {
     const stored: StoredPending<Owner> = {
       public: { ...item, input: cloneValue(item.input) },
+      input: cloneValue(input),
       owner,
       timer: undefined,
+      onExpire,
       ...(snapshot !== undefined ? { snapshot } : {}),
     }
     stored.timer = setTimeout(
@@ -103,7 +120,21 @@ export class PendingStore<Owner> {
     return out
   }
 
+  /**
+   * Expires every item past its `expiresAt` (SEC-3): timers are delayed in background or frozen
+   * tabs and across device sleep, so expiry is also checked against the clock on every read.
+   */
+  sweep(now = Date.now()): void {
+    for (const [id, stored] of [...this.#items]) {
+      if (now < stored.public.expiresAt) continue
+      this.#items.delete(id)
+      clearTimeout(stored.timer)
+      stored.onExpire(stored)
+    }
+  }
+
   list(): PendingConfirmation[] {
+    this.sweep()
     return [...this.#items.values()].map((s) => copyPending(s.public))
   }
 }

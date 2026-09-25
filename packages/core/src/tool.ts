@@ -81,6 +81,11 @@ export interface ToolContext {
   /**
    * Ask for confirmation from inside `run`. `human` → approved; inline-mode caller → awaits the
    * inline handler; otherwise `{ approved: false, reason: 'confirmation_unavailable' }`. Never throws.
+   * While it is open the run's `callTimeoutMs` deadline is paused (the wait is bounded by
+   * `confirmExpiryMs` instead); an approval with edited input restores the `'[redacted]'`
+   * placeholders of sensitive paths to their real values. A placeholder whose real value cannot
+   * be matched unambiguously (array rows deleted, inserted, reordered or edited, or a key
+   * restructured) is not restored: the outcome is then `{ approved: false, reason: 'invalid' }`.
    */
   confirm(req: { summary: string; changes?: FieldChange[] }): Promise<ConfirmOutcome>
   /** Store a restorer for `tm.undo(callId)`. */
@@ -109,7 +114,28 @@ export interface ToolDefinition<I = unknown, O = unknown> {
   input?: StandardSchemaV1<unknown, I>
   /** Output schema; validated in development only. */
   output?: StandardSchemaV1<unknown, O>
-  /** Per-tool JSON Schema override for the input (D14). */
+  /**
+   * Per-tool JSON Schema override for the input (D14). With `input`, `input` validates and this
+   * only replaces the advertised schema (it is never compiled).
+   *
+   * A tool with `jsonSchema` and no `input` is validated against it, compiled with
+   * `fromJsonSchema`. Registration fails with `schema_conversion_failed` (a throw in `dev`, the
+   * tool not registered otherwise) when the schema cannot be compiled: a non-object root or an
+   * invalid schema (a non-schema value in a schema position, such as a draft-07 tuple
+   * `items: [...]`); a `$ref` that is not a resolvable local `#/$defs/<name>`; a `pattern` that
+   * does not compile with the `u` flag; or an unsafe `pattern` (backreferences, nested
+   * quantifiers, overlapping repeated alternation).
+   *
+   * Only the `fromJsonSchema` subset is checked: `type`, `enum`, `const`, `properties`,
+   * `required`, `additionalProperties`, `items`, `minItems`, `maxItems`, `uniqueItems`,
+   * `minLength`, `maxLength`, `pattern`, `minimum`, `maximum`, `multipleOf`, `format` (`date`,
+   * `time`, `date-time`, `email`, `uri`), `anyOf`, `oneOf`, `allOf`, `$defs` and local `$ref`.
+   * Every other keyword (for example `exclusiveMinimum`, `not`, `if`/`then`/`else`,
+   * `patternProperties`) is accepted but ignored, so validation can be looser than the schema
+   * that is advertised; keep the real check on the server. See
+   * [Forms: `fromJsonSchema`](https://github.com/adams100111/toolmark/blob/main/docs/guides/forms.md#json-schema-only-forms-fromjsonschema)
+   * for the exact rules.
+   */
   jsonSchema?: JsonSchema
   /** Behaviour hints. */
   hints?: ToolHints

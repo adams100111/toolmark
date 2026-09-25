@@ -40,6 +40,9 @@ function pair(code: string) {
 
 Guide (flags, pairing flow, security model): [docs/guides/mcp.md](https://github.com/adams100111/toolmark/blob/main/docs/guides/mcp.md).
 
+Docs: [MCP guide](https://adams100111.github.io/toolmark/guides/mcp) ·
+[API reference](https://adams100111.github.io/toolmark/api/@toolmark/mcp/).
+
 ## License
 
 MIT

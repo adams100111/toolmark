@@ -1,0 +1,26 @@
+# Keeps the SHA-pinned actions and the npm tooling current (M5 Task 1). Dependabot rewrites a
+# SHA pin and its trailing `# vX.Y.Z` comment together. Workspace packages are never updated here:
+# their versions move only through changesets.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        patterns:
+          - '*'
+
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    versioning-strategy: increase
+    ignore:
+      - dependency-name: '@toolmark/*'
+    groups:
+      # Build, test, lint, docs and release tooling (TypeScript, Vitest, Playwright, ESLint, …).
+      dev-tooling:
+        dependency-type: development
+        update-types: [minor, patch]

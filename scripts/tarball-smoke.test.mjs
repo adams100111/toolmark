@@ -190,6 +190,52 @@ test('smoke_runs_bins_through_a_symlink (unguarded bin passes)', { timeout: 3000
   }
 })
 
+test('smoke_typechecks_bundler_and_nodenext', { timeout: 300000 }, async () => {
+  // Extensionless relative re-export in the packed types: resolves under `bundler` only.
+  const { root, out } = await packFixture({
+    extraExports: { './loose': { types: './loose.d.ts', import: './index.js' } },
+    extraFiles: {
+      'loose.d.ts': "export * from './impl'\n",
+      'impl.d.ts': 'export declare const x: 1\n',
+    },
+  })
+  try {
+    const run = runSmoke(out)
+    const output = `${run.stdout}\n${run.stderr}`
+    assert.equal(run.status, 1, output)
+    assert.match(output, /FAIL tsc 6\.0\.3 nodenext/)
+    assert.match(output, /FAIL tsc 7\.0\.2 nodenext/)
+    assert.match(output, /PASS tsc 6\.0\.3 bundler/)
+    assert.match(output, /PASS tsc 7\.0\.2 bundler/)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('smoke_accepts_two_dirs', { timeout: 600000 }, async () => {
+  const first = await packFixture()
+  const second = await packFixture({
+    extraExports: { './missing': { types: './missing.d.ts', import: './missing.js' } },
+  })
+  try {
+    const run = spawnSync(process.execPath, [SMOKE, first.out, second.out], {
+      encoding: 'utf8',
+      timeout: 600000,
+    })
+    const output = `${run.stdout}\n${run.stderr}`
+    assert.equal(run.status, 1, output)
+    assert.ok(output.includes(`info: tarballs ${first.out}`), output)
+    assert.ok(output.includes(`info: tarballs ${second.out}`), output)
+    // Only the second set is broken: the first set's checks all pass.
+    assert.match(output, /PASS exports toolmark-smoke-fixture\b/)
+    assert.match(output, /FAIL .*toolmark-smoke-fixture\/missing/)
+    assert.equal(output.match(/^tarball-smoke: /gm)?.length, 1, output)
+  } finally {
+    await rm(first.root, { recursive: true, force: true })
+    await rm(second.root, { recursive: true, force: true })
+  }
+})
+
 test('smoke_rejects_empty_directory', async () => {
   const root = await mkdtemp(join(tmpdir(), 'toolmark-smoke-empty-'))
   try {

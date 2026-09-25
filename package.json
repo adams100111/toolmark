@@ -16,18 +16,29 @@
     "docs:api:strict": "TYPEDOC_STRICT=1 typedoc --options typedoc.config.mjs",
     "docs:dev": "pnpm docs:api && vitepress dev docs",
     "docs:build": "pnpm docs:api && vitepress build docs",
-    "docs:preview": "vitepress preview docs"
+    "docs:preview": "vitepress preview docs",
+    "docs:check": "node scripts/check-docs.mjs",
+    "test:all": "pnpm lint && pnpm typecheck && pnpm test && pnpm build && pnpm quality && pnpm -r --filter \"./examples/*\" run e2e",
+    "size": "size-limit",
+    "quality:pack": "rm -rf .quality && pnpm -r --filter \"./packages/*\" pack --pack-destination \"$PWD/.quality\"",
+    "quality:tarballs": "for f in .quality/*.tgz; do echo \"== $f\"; publint run \"$f\" --strict && attw \"$f\" --profile esm-only --exclude-entrypoints ./styles.css --format table-flipped --no-emoji || exit 1; done",
+    "quality": "pnpm quality:pack && pnpm quality:tarballs && pnpm size && node scripts/check-zero-deps.mjs && node scripts/check-package-meta.mjs .quality && node scripts/check-no-app-code.mjs && node scripts/check-workflows.mjs"
   },
   "devDependencies": {
+    "@arethetypeswrong/cli": "catalog:",
+    "@changesets/changelog-github": "catalog:",
     "@changesets/cli": "catalog:",
     "@eslint/js": "catalog:",
     "@playwright/test": "catalog:",
+    "@size-limit/preset-small-lib": "catalog:",
     "@types/node": "catalog:",
     "@vitest/browser": "catalog:",
     "@vitest/browser-playwright": "catalog:",
     "eslint": "catalog:",
     "playwright": "catalog:",
     "prettier": "catalog:",
+    "publint": "catalog:",
+    "size-limit": "catalog:",
     "tsdown": "catalog:",
     "tsx": "catalog:",
     "typedoc": "catalog:",
@@ -36,6 +47,7 @@
     "typescript": "catalog:",
     "typescript-eslint": "catalog:",
     "vitepress": "catalog:",
-    "vitest": "catalog:"
+    "vitest": "catalog:",
+    "yaml": "catalog:"
   }
 }
