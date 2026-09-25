@@ -205,7 +205,7 @@ jobs:
           ./wpt make-hosts-file | sudo tee -a /etc/hosts > /dev/null
           ./wpt run --channel=dev --install-browser --install-webdriver --yes --headless \
             --log-mach=- --log-mach-level=info \
-            --binary-arg=--enable-blink-features=WebMCPTesting chrome webmcp
+            --binary-arg=--no-sandbox --binary-arg=--enable-blink-features=WebMCPTesting chrome webmcp
 
   audit:
     if: github.event_name != 'pull_request'
