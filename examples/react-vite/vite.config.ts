@@ -10,6 +10,14 @@ export default defineConfig({
   plugins: [react()],
   resolve: {
     conditions: ['@toolmark/source', ...defaultClientConditions],
+    // `@toolmark/tour/styles.css` exports only `dist/styles.css` (no `@toolmark/source` target):
+    // point it at the source stylesheet so the example needs no build (dev and `vite build`).
+    alias: [
+      {
+        find: /^@toolmark\/tour\/styles\.css$/,
+        replacement: fileURLToPath(new URL('../../packages/tour/src/styles.css', import.meta.url)),
+      },
+    ],
   },
   ssr: {
     resolve: {
