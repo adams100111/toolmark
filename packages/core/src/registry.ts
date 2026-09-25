@@ -57,7 +57,11 @@ export interface ConfirmRequest {
   title?: string
   /** Who asked. */
   caller: Caller
-  /** Validated input. */
+  /**
+   * Validated input, with every value at the tool's sensitive paths replaced by `'[redacted]'`
+   * (the whole input when its redaction fails). The tool runs with the unredacted input; an
+   * approval that edits `input` must supply sensitive values again.
+   */
   input: unknown
   /** The tool's hints. */
   hints: ToolHints

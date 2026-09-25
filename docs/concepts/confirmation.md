@@ -47,6 +47,12 @@ const tm = createToolmark({ confirm: queue.handler })
   Expiry is checked against the clock at approval time, not only by a timer: browsers delay timers
   in background tabs and across device sleep, so an approval that arrives after `expiresAt` (inline
   or deferred) is expired and the tool does not run.
+- **Sensitive values stay out of confirmation payloads.** `ConfirmRequest.input`,
+  `PendingConfirmation.input` (`tm.pendingConfirmations()`, `usePendingConfirmations`) and
+  `ctx.confirm` changes carry `'[redacted]'` at the tool's sensitive paths (`sensitivePaths()`,
+  mapped onto the input shape for form and wizard fills; the whole input when that list cannot be
+  read). The approved run still gets the real input. An approval that edits `input` replaces it
+  whole, so it must supply sensitive values again.
 - A deferred form or wizard submit approved after the form's values changed is refused `stale`
   ("Form changed since confirmation was requested").
 - **Registration check.** Registering a consequential or destructive tool fails

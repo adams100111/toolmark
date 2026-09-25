@@ -7,7 +7,7 @@
  */
 import type { Meter, Span, Tracer } from '@opentelemetry/api'
 import { SpanKind, SpanStatusCode, metrics, trace } from '@opentelemetry/api'
-import { isUnderSensitive } from '../forms/hooks.js'
+import { redactChanges, redactInput } from '../input-redaction.js'
 import { isPlainObject } from '../forms/paths.js'
 import { inputSensitivePaths, type Toolmark } from '../registry.js'
 import type { FieldChange, ToolResult } from '../result.js'
@@ -29,7 +29,6 @@ export interface OtelOptions {
 }
 
 const INSTRUMENTATION_NAME = '@toolmark/core'
-const REDACTED = '[redacted]'
 const MAX_PAYLOAD_CHARS = 4096
 /**
  * Fixed span-status message for every `error` result. `result.message` is never forwarded
@@ -38,11 +37,6 @@ const MAX_PAYLOAD_CHARS = 4096
  * site accidentally embeds one.
  */
 const GENERIC_ERROR_MESSAGE = 'Tool failed'
-
-/** Deepest input nesting the redaction walk follows; anything deeper is redacted whole. */
-const MAX_REDACT_DEPTH = 64
-/** Most input nodes the redaction walk visits; past that the whole input is redacted. */
-const MAX_REDACT_NODES = 10_000
 
 /** A span kept open between the `call` event and its matching `result`. */
 interface OpenSpan {
@@ -72,60 +66,6 @@ function truncatedJson(value: unknown): string | undefined {
   }
   if (json === undefined) return undefined
   return json.length > MAX_PAYLOAD_CHARS ? json.slice(0, MAX_PAYLOAD_CHARS) : json
-}
-
-/**
- * A copy of `input` in which every node at or under one of the sensitive input `paths` (`[]` =
- * any array index) is replaced by `'[redacted]'`. A node's path is its *effective* path, as form
- * fills read it: a dotted key (`{ "card.number": … }`) contributes each of its segments and an
- * array-op key `$append` contributes none (its items stand at array indices). The walk is bounded
- * ({@link MAX_REDACT_DEPTH}, {@link MAX_REDACT_NODES}) and fails closed: a too-deep node, or the
- * whole input once the node budget runs out, is redacted.
- */
-function redactInput(input: unknown, paths: readonly string[]): unknown {
-  if (paths.length === 0) return input
-  let nodes = 0
-  let overflow = false
-  const sensitive = (segs: readonly string[]): boolean => {
-    if (segs.length === 0) return false
-    const path = segs.join('.')
-    return paths.some((p) => isUnderSensitive(path, p))
-  }
-  const walk = (node: unknown, segs: string[], depth: number): unknown => {
-    if (overflow) return REDACTED
-    if (++nodes > MAX_REDACT_NODES) {
-      overflow = true
-      return REDACTED
-    }
-    if (sensitive(segs)) return REDACTED
-    if (typeof node !== 'object' || node === null) return node
-    if (depth >= MAX_REDACT_DEPTH) return REDACTED
-    if (Array.isArray(node)) {
-      return node.map((item, i) => walk(item, [...segs, String(i)], depth + 1))
-    }
-    const out: Record<string, unknown> = {}
-    for (const [key, value] of Object.entries(node)) {
-      const at = key === '$append' ? segs : [...segs, ...key.split('.')]
-      Object.defineProperty(out, key, {
-        value: walk(value, at, depth + 1),
-        enumerable: true,
-        configurable: true,
-        writable: true,
-      })
-    }
-    return out
-  }
-  const out = walk(input, [], 0)
-  return overflow ? REDACTED : out
-}
-
-/** Redacts `before`/`after` of every change at, under, or over one of `paths`. */
-function redactChanges(changes: FieldChange[], paths: readonly string[]): FieldChange[] {
-  return changes.map((c) =>
-    paths.some((p) => c.path === p || c.path.startsWith(`${p}.`) || p.startsWith(`${c.path}.`))
-      ? { path: c.path, before: REDACTED, after: REDACTED }
-      : c,
-  )
 }
 
 /**

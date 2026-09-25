@@ -4,7 +4,9 @@ import { snapshotHookOf } from './confirm-snapshot.js'
 import { ToolmarkError } from './errors.js'
 import { safeCall } from './events.js'
 import { resolveFileRef } from './files.js'
+import { REDACTED } from './forms/hooks.js'
 import { isPlainObject } from './forms/paths.js'
+import { inputSensitiveHookOf, redactChanges, redactInput } from './input-redaction.js'
 import { newId } from './ids.js'
 import { isAllowed, needsConfirmation } from './policy.js'
 import { SerialQueue } from './queue.js'
@@ -142,6 +144,43 @@ export function createCallRuntime(state: RegistryState): CallRuntime {
         : null
     }
 
+  /**
+   * SEC-5: the tool's sensitive paths in the shape of its input (the `INPUT_SENSITIVE_PATHS` hook,
+   * else `sensitivePaths()` as-is); `null` when they cannot be read (fail closed).
+   */
+  const inputPathsOf = (entry: Entry): string[] | null => {
+    const hook = inputSensitiveHookOf(entry.tool)
+    const read = hook ?? entry.tool.sensitivePaths?.bind(entry.tool)
+    if (!read) return []
+    let paths: unknown
+    try {
+      paths = read()
+    } catch (cause) {
+      state.report({
+        code: 'tool_threw',
+        message: `sensitive paths of "${entry.fullName}" threw`,
+        tool: entry.fullName,
+        cause,
+      })
+      return null
+    }
+    return Array.isArray(paths)
+      ? (paths as unknown[]).filter((p): p is string => typeof p === 'string')
+      : null
+  }
+  /** SEC-5: the copy of `input` a confirmation payload may carry. */
+  const publicInput = (entry: Entry, input: unknown): unknown => {
+    const paths = inputPathsOf(entry)
+    return paths === null ? REDACTED : redactInput(input, paths)
+  }
+  /** SEC-5: `ctx.confirm` changes with the tool's sensitive (value-shaped) paths redacted. */
+  const publicChanges = (entry: Entry, changes: FieldChange[]): FieldChange[] => {
+    const paths = state.tm.info(entry.fullName)?.sensitivePaths
+    if (paths === undefined)
+      return changes.map((c) => ({ path: c.path, before: REDACTED, after: REDACTED }))
+    return redactChanges(changes, paths)
+  }
+
   const expiredResult = (): ToolResult<never> =>
     refuse('confirmation_expired', 'The confirmation expired or was already used')
 
@@ -191,10 +230,10 @@ export function createCallRuntime(state: RegistryState): CallRuntime {
       tool: entry.fullName,
       ...(entry.tool.title !== undefined ? { title: entry.tool.title } : {}),
       caller,
-      input,
+      input: publicInput(entry, input),
       hints: { ...entry.tool.hints },
       summary: req.summary,
-      ...(req.changes !== undefined ? { changes: req.changes } : {}),
+      ...(req.changes !== undefined ? { changes: publicChanges(entry, req.changes) } : {}),
     }
     const requestAbort = new AbortController()
     confirmRequestSignals.set(request, requestAbort.signal)
@@ -515,11 +554,12 @@ export function createCallRuntime(state: RegistryState): CallRuntime {
             tool: entry.fullName,
             ...(entry.tool.title !== undefined ? { title: entry.tool.title } : {}),
             caller,
-            input: value,
+            input: publicInput(entry, value),
             summary,
             createdAt: now,
             expiresAt: now + expiryMs(),
           },
+          value,
           entry,
           () => emitConfirm(confirmId, entry, 'expired', expiredResult()),
           takeSnapshot(entry),
@@ -563,7 +603,7 @@ export function createCallRuntime(state: RegistryState): CallRuntime {
       emitConfirm(confirmId, entry, 'rejected', r)
       return r
     }
-    let value = stored.public.input
+    let value = stored.input
     if (outcome.input !== undefined) {
       const edited = await check(entry, outcome.input)
       if (!edited.ok) {

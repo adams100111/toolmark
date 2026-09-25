@@ -338,3 +338,99 @@ describe('SEC-4: runs without a caller signal have a deadline (callTimeoutMs)', 
     expect(await second).toEqual(ok('ran'))
   })
 })
+
+describe('SEC-5: confirmation payloads redact sensitive input', () => {
+  const secretTool = (runs: unknown[]) => ({
+    name: 'pay',
+    description: 'd',
+    hints: { consequential: true },
+    input: z.object({
+      amount: z.number(),
+      card: z.object({ number: z.string(), name: z.string() }),
+    }),
+    sensitivePaths: () => ['card.number'],
+    run: (
+      input: unknown,
+      ctx: { confirm: (r: { summary: string; changes?: never[] }) => unknown },
+    ) => {
+      void ctx
+      runs.push(input)
+      return ok(true)
+    },
+  })
+  const input = { amount: 5, card: { number: '4111111111111111', name: 'Ann' } }
+
+  it('sec_5_pending_confirmation_redacts_sensitive_input', async () => {
+    const tm = createTestRegistry()
+    const runs: unknown[] = []
+    tm.register(secretTool(runs))
+    const r = await tm.call('pay', input, { caller: 'inapp' })
+    if (r.status !== 'needs_confirmation') throw new Error('expected needs_confirmation')
+    const [pending] = tm.pendingConfirmations()
+    expect(pending?.input).toEqual({ amount: 5, card: { number: '[redacted]', name: 'Ann' } })
+    expect(JSON.stringify(tm.pendingConfirmations())).not.toContain('4111')
+    // The approved run still gets the real, validated input.
+    expect((await tm.confirmPending(r.confirmId, { approved: true })).status).toBe('ok')
+    expect(runs).toEqual([input])
+  })
+
+  it('sec_5_inline_confirm_request_redacts_sensitive_input', async () => {
+    const requests: unknown[] = []
+    const tm = createTestRegistry({
+      confirm: (req) => {
+        requests.push(req)
+        return Promise.resolve({ approved: true })
+      },
+    })
+    const runs: unknown[] = []
+    tm.register(secretTool(runs))
+    expect((await tm.call('pay', input, { caller: 'mcp' })).status).toBe('ok')
+    expect(requests).toHaveLength(1)
+    expect((requests[0] as { input: unknown }).input).toEqual({
+      amount: 5,
+      card: { number: '[redacted]', name: 'Ann' },
+    })
+    expect(runs).toEqual([input])
+  })
+
+  it('sec_5_ctx_confirm_changes_redact_sensitive_paths', async () => {
+    const requests: { changes?: unknown; input: unknown }[] = []
+    const tm = createTestRegistry({
+      confirm: (req) => {
+        requests.push(req)
+        return Promise.resolve({ approved: true })
+      },
+    })
+    tm.register({
+      name: 'save',
+      description: 'd',
+      input: z.object({ pin: z.string() }),
+      sensitivePaths: () => ['pin'],
+      run: async (_i, ctx) => {
+        await ctx.confirm({
+          summary: 'Save?',
+          changes: [{ path: 'pin', before: '1111', after: '2222' }],
+        })
+        return ok(true)
+      },
+    })
+    expect((await tm.call('save', { pin: '2222' }, { caller: 'mcp' })).status).toBe('ok')
+    expect(requests[0]?.changes).toEqual([
+      { path: 'pin', before: '[redacted]', after: '[redacted]' },
+    ])
+    expect(requests[0]?.input).toEqual({ pin: '[redacted]' })
+  })
+
+  it('sec_5_failing_redaction_hides_the_whole_input', async () => {
+    const tm = createTestRegistry({ dev: false })
+    tm.register({
+      ...secretTool([]),
+      sensitivePaths: () => {
+        throw new Error('boom')
+      },
+    })
+    const r = await tm.call('pay', input, { caller: 'inapp' })
+    expect(r.status).toBe('needs_confirmation')
+    expect(JSON.stringify(tm.pendingConfirmations())).not.toContain('4111')
+  })
+})
