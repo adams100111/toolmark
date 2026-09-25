@@ -83,7 +83,7 @@ pause() {
 # confirm "question" is a y/N gate; returns success on yes.
 confirm() {
   local reply=""
-  printf '  %s? %s [y/N] ' "$YELLOW" "$1"
+  printf '  %s?%s %s [y/N] ' "$YELLOW" "$RESET" "$1"
   read -r reply || true
   [[ "$reply" =~ ^[Yy] ]]
 }
