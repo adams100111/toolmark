@@ -421,16 +421,21 @@ describe('bridge', () => {
     const self: Record<string, unknown> = {}
     self.self = self
     tm.register(tool('cyc', undefined, { run: () => ok({ self }) }))
-    tm.register(tool('date', undefined, { run: () => ok({ at: new Date(0) }) }))
+    class Opaque {
+      secret = 1
+    }
+    tm.register(tool('cls', undefined, { run: () => ok({ at: new Opaque() }) }))
     tm.register(tool('nan', undefined, { run: () => ok(Number.NaN) }))
+    tm.register(tool('fn', undefined, { run: () => ok({ f: () => 1 }) }))
     const errors = errorsOf(tm)
     const t = fakeTransport()
     tm.use(bridge({ transport: t.transport }))
     t.deliver(call(tm, 'c1', 'cyc'))
-    t.deliver(call(tm, 'c2', 'date'))
+    t.deliver(call(tm, 'c2', 'cls'))
     t.deliver(call(tm, 'c3', 'nan'))
+    t.deliver(call(tm, 'c4', 'fn'))
     await settle()
-    for (const id of ['c1', 'c2', 'c3']) {
+    for (const id of ['c1', 'c2', 'c3', 'c4']) {
       expect(t.results(id)).toEqual([
         {
           protocol: 1,
@@ -445,7 +450,49 @@ describe('bridge', () => {
       'transport_failed',
       'transport_failed',
       'transport_failed',
+      'transport_failed',
     ])
+  })
+
+  it('result_with_date_or_to_json_serialized_with_json_semantics', async () => {
+    const tm = createTestRegistry()
+    const custom = { toJSON: () => ({ kind: 'custom' }) }
+    tm.register(
+      tool('date', undefined, {
+        run: () => ok({ at: new Date(0), nested: [new Date(1000)], custom, skip: undefined }),
+      }),
+    )
+    const errors = errorsOf(tm)
+    const t = fakeTransport()
+    tm.use(bridge({ transport: t.transport }))
+    t.deliver(call(tm, 'c1', 'date'))
+    await settle()
+    expect(t.results('c1')).toEqual([
+      {
+        protocol: 1,
+        type: 'result',
+        clientId: tm.clientId,
+        id: 'c1',
+        result: {
+          status: 'ok',
+          data: {
+            at: '1970-01-01T00:00:00.000Z',
+            nested: ['1970-01-01T00:00:01.000Z'],
+            custom: { kind: 'custom' },
+          },
+        },
+      },
+    ])
+    expect(errors).toEqual([])
+  })
+
+  it('caller_other_than_inapp_rejected_at_creation', () => {
+    const t = fakeTransport()
+    for (const caller of ['human', 'mcp', 'test', '', 42]) {
+      expect(() => bridge({ transport: t.transport, caller: caller as 'inapp' })).toThrow(TypeError)
+    }
+    expect(() => bridge({ transport: t.transport, caller: 'inapp' })).not.toThrow()
+    expect(() => bridge({ transport: t.transport })).not.toThrow()
   })
 
   it('result_sent_after_scope_disposed', async () => {
