@@ -423,6 +423,9 @@ function nodeAt(root: JsonSchema, path: string, merged: unknown): { node: unknow
     const shape = collect(node, 'object', root)
     if (shape !== undefined && shape !== 'open') {
       if (shape.addl === true || (isRecord(shape.addl) && Object.keys(shape.addl).length === 0)) {
+        // SEC-2: an open `additionalProperties` next to declared `properties` (plain JSON Schema,
+        // `z.looseObject`) does not declare other keys; only a record (no `properties`) does.
+        if (shape.props !== undefined) return excludedByBranch ? 'excluded' : 'undeclared'
         return { node: true }
       }
       if (isRecord(shape.addl)) {
@@ -638,13 +641,18 @@ function sanitize(
     } else if (isRecord(shape.addl) && Object.keys(shape.addl).length > 0) {
       out[key] = sanitize(obj[key], shape.addl, root, child, undeclared, depth + 1)
     } else if (
-      shape.addl === true ||
-      (isRecord(shape.addl) && Object.keys(shape.addl).length === 0) ||
-      (shape.addl === undefined && shape.props === undefined)
+      shape.props === undefined &&
+      (shape.addl === true || shape.addl === undefined || isRecord(shape.addl))
     ) {
+      // A record / free-form object (no `properties`): its keys are data.
       out[key] = obj[key]
+    } else if (shape.addl === true || isRecord(shape.addl)) {
+      // SEC-2: a key that a node with `properties` does not declare but explicitly leaves open
+      // (`additionalProperties: true` or `{}`, e.g. `z.looseObject`) is refused, never written.
+      undeclared.push(child)
     }
-    // `additionalProperties: false`, or absent on a node with `properties` → dropped.
+    // `additionalProperties: false`, or absent on a node with `properties` → dropped (never
+    // written; zod's default object strips such keys the same way).
   }
   return out
 }
@@ -1101,14 +1109,25 @@ export function createFormTools<V extends Record<string, unknown>>(
       : new Set<string>()
     const nodes = new Map<string, unknown>()
     const unknown: string[] = []
+    // SEC-2: the schema check runs for every touched path, including ones an open validator
+    // (`z.looseObject`, JSON Schema without `additionalProperties: false`) kept: those are
+    // "Undeclared field"; paths neither the validator nor the schema knows are "Unknown field".
+    const openUndeclared: string[] = []
     for (const p of touched) {
       const at = nodeAt(inputSchema, p, merged)
       if (typeof at === 'object') nodes.set(p, at.node)
-      if (parsedPaths.has(p)) continue
-      if (at === 'excluded' || (at === 'undeclared' && !declared.has(p))) unknown.push(p)
+      if (at === 'excluded' || (at === 'undeclared' && !declared.has(p))) {
+        if (parsedPaths.has(p)) openUndeclared.push(p)
+        else unknown.push(p)
+      }
     }
-    if (unknown.length > 0) {
-      return invalid(unknown.sort().map((path) => ({ path, message: 'Unknown field' })))
+    if (unknown.length > 0 || openUndeclared.length > 0) {
+      return invalid(
+        [
+          ...unknown.map((path) => ({ path, message: 'Unknown field' })),
+          ...openUndeclared.map((path) => ({ path, message: 'Undeclared field' })),
+        ].sort(byPath),
+      )
     }
 
     const before = new Map(touched.map((p) => [p, getPath(current, p)] as const))
@@ -1119,8 +1138,9 @@ export function createFormTools<V extends Record<string, unknown>>(
       const raw = flat[path]
       let v: unknown = raw === null ? null : undefined
       if (raw !== null && checked.ok) v = getPath(checked.value, path)
-      if (raw !== null && v === undefined) {
-        v = sanitize(raw, nodes.get(path), inputSchema, path, undeclared)
+      if (raw !== null) {
+        // SEC-2: the validated value is sanitized too (an open validator keeps undeclared keys).
+        v = sanitize(v === undefined ? raw : v, nodes.get(path), inputSchema, path, undeclared)
       }
       safe.set(path, v)
     }
@@ -1230,7 +1250,9 @@ export function createFormTools<V extends Record<string, unknown>>(
     ...title,
     ...(opts.origin !== undefined ? { origin: opts.origin } : {}),
     ...(opts.nativeName?.fill !== undefined ? { nativeName: opts.nativeName.fill } : {}),
-    ...(opts.hints?.fill !== undefined ? { hints: { ...opts.hints.fill } } : {}),
+    // SEC-6: a fill returns values the user typed or the page loaded (`changes`, issues), so it
+    // is always `untrustedContent`, whatever `hints.fill` says.
+    hints: { ...opts.hints?.fill, untrustedContent: true },
     description:
       `${opts.description} Fill form fields: pass a partial object in "values" (null clears a ` +
       `field). Fields the user edited are skipped unless "overwrite" is true.` +

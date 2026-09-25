@@ -26,17 +26,17 @@ handle.dispose()
 
 ## The tool definition
 
-| Field              | Purpose                                                                                                                                  |
-| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `name`             | Local name; the full name is the scope path + `.` + `name`. A public contract: renaming breaks agents.                                   |
-| `description`      | For the LLM: says **when** to use the tool (English recommended).                                                                        |
-| `title`, `summary` | User-facing and app-localized (confirmation cards, tours).                                                                               |
-| `input`, `output`  | Standard Schema v1 (zod, valibot, ArkType, … or `fromJsonSchema`). Input is validated before `run`; output only in development.          |
-| `jsonSchema`       | Per-tool JSON Schema override when the schema library cannot produce one.                                                                |
-| `hints`            | `readOnly`, `consequential`, `destructive`, `untrustedContent` — drive [policy](policy.md) and [confirmation](confirmation.md).          |
-| `anchors`, `state` | Tour hooks: where the tool lives on the page and its current values (see [Anchors and state](../guides/anchors.md)).                     |
-| `sensitivePaths`   | Input paths redacted from `state()`, telemetry and confirmation payloads.                                                                |
-| `run(input, ctx)`  | Does the work and returns a [result](results.md). `ctx` carries `signal`, `callId`, `caller`, `confirm()`, `files` and `registerUndo()`. |
+| Field              | Purpose                                                                                                                                             |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`             | Local name; the full name is the scope path + `.` + `name`. A public contract: renaming breaks agents.                                              |
+| `description`      | For the LLM: says **when** to use the tool (English recommended).                                                                                   |
+| `title`, `summary` | User-facing and app-localized (confirmation cards, tours).                                                                                          |
+| `input`, `output`  | Standard Schema v1 (zod, valibot, ArkType, … or `fromJsonSchema`). Input is validated before `run`; output only in development.                     |
+| `jsonSchema`       | Per-tool JSON Schema override when the schema library cannot produce one. Without `input`, input is validated against it (`fromJsonSchema` subset). |
+| `hints`            | `readOnly`, `consequential`, `destructive`, `untrustedContent` — drive [policy](policy.md) and [confirmation](confirmation.md).                     |
+| `anchors`, `state` | Tour hooks: where the tool lives on the page and its current values (see [Anchors and state](../guides/anchors.md)).                                |
+| `sensitivePaths`   | Input paths redacted from `state()`, telemetry and confirmation payloads.                                                                           |
+| `run(input, ctx)`  | Does the work and returns a [result](results.md). `ctx` carries `signal`, `callId`, `caller`, `confirm()`, `files` and `registerUndo()`.            |
 
 Names use `A–Z a–z 0–9 _ - .` (the MCP tool-name alphabet), at most 128 characters, with no empty
 segment. Every manifest entry also carries an `llmName` (`.` → `__`; names longer than 64

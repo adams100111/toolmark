@@ -4,7 +4,9 @@ import { snapshotHookOf } from './confirm-snapshot.js'
 import { ToolmarkError } from './errors.js'
 import { safeCall } from './events.js'
 import { resolveFileRef } from './files.js'
+import { REDACTED } from './forms/hooks.js'
 import { isPlainObject } from './forms/paths.js'
+import { inputSensitiveHookOf, redactChanges, redactInput } from './input-redaction.js'
 import { newId } from './ids.js'
 import { isAllowed, needsConfirmation } from './policy.js'
 import { SerialQueue } from './queue.js'
@@ -24,6 +26,9 @@ import { UndoStore } from './undo.js'
 
 const DEFAULT_CONFIRM_EXPIRY_MS = 600_000
 const DEFAULT_ABORT_GRACE_MS = 5_000
+const DEFAULT_CALL_TIMEOUT_MS = 120_000
+/** Largest delay `setTimeout` honours (longer ones fire immediately). */
+const MAX_TIMER_MS = 2_147_483_647
 const STATUSES = new Set(['ok', 'invalid', 'refused', 'needs_confirmation', 'cancelled', 'error'])
 
 type InlineOutcome =
@@ -63,6 +68,15 @@ export function createCallRuntime(state: RegistryState): CallRuntime {
   const undos = new UndoStore<Entry>()
   const expiryMs = (): number => state.options.confirmExpiryMs ?? DEFAULT_CONFIRM_EXPIRY_MS
   const graceMs = (): number => state.options.abortGraceMs ?? DEFAULT_ABORT_GRACE_MS
+  /** SEC-4: the deadline of a run without caller signal, or `undefined` when disabled. */
+  const callTimeoutMs = (): number | undefined => {
+    const ms = state.options.callTimeoutMs ?? DEFAULT_CALL_TIMEOUT_MS
+    return Number.isFinite(ms) && ms >= 0 ? Math.min(ms, MAX_TIMER_MS) : undefined
+  }
+  const timeoutReason = (): unknown =>
+    typeof DOMException === 'function'
+      ? new DOMException('The call exceeded callTimeoutMs', 'TimeoutError')
+      : new Error('The call exceeded callTimeoutMs')
 
   const queueFor = (scope: ScopeNode): SerialQueue => {
     let q = queues.get(scope)
@@ -130,6 +144,43 @@ export function createCallRuntime(state: RegistryState): CallRuntime {
         : null
     }
 
+  /**
+   * SEC-5: the tool's sensitive paths in the shape of its input (the `INPUT_SENSITIVE_PATHS` hook,
+   * else `sensitivePaths()` as-is); `null` when they cannot be read (fail closed).
+   */
+  const inputPathsOf = (entry: Entry): string[] | null => {
+    const hook = inputSensitiveHookOf(entry.tool)
+    const read = hook ?? entry.tool.sensitivePaths?.bind(entry.tool)
+    if (!read) return []
+    let paths: unknown
+    try {
+      paths = read()
+    } catch (cause) {
+      state.report({
+        code: 'tool_threw',
+        message: `sensitive paths of "${entry.fullName}" threw`,
+        tool: entry.fullName,
+        cause,
+      })
+      return null
+    }
+    return Array.isArray(paths)
+      ? (paths as unknown[]).filter((p): p is string => typeof p === 'string')
+      : null
+  }
+  /** SEC-5: the copy of `input` a confirmation payload may carry. */
+  const publicInput = (entry: Entry, input: unknown): unknown => {
+    const paths = inputPathsOf(entry)
+    return paths === null ? REDACTED : redactInput(input, paths)
+  }
+  /** SEC-5: `ctx.confirm` changes with the tool's sensitive (value-shaped) paths redacted. */
+  const publicChanges = (entry: Entry, changes: FieldChange[]): FieldChange[] => {
+    const paths = state.tm.info(entry.fullName)?.sensitivePaths
+    if (paths === undefined)
+      return changes.map((c) => ({ path: c.path, before: REDACTED, after: REDACTED }))
+    return redactChanges(changes, paths)
+  }
+
   const expiredResult = (): ToolResult<never> =>
     refuse('confirmation_expired', 'The confirmation expired or was already used')
 
@@ -150,7 +201,7 @@ export function createCallRuntime(state: RegistryState): CallRuntime {
         : { ok: false, result: invalid([{ path: '', message: 'This tool takes no input' }]) }
     }
     try {
-      const v = await validateInput(entry.tool.input, value)
+      const v = await validateInput(entry.validator, value)
       return v.ok ? v : { ok: false, result: invalid(v.issues) }
     } catch (cause) {
       state.report({
@@ -179,19 +230,23 @@ export function createCallRuntime(state: RegistryState): CallRuntime {
       tool: entry.fullName,
       ...(entry.tool.title !== undefined ? { title: entry.tool.title } : {}),
       caller,
-      input,
+      input: publicInput(entry, input),
       hints: { ...entry.tool.hints },
       summary: req.summary,
-      ...(req.changes !== undefined ? { changes: req.changes } : {}),
+      ...(req.changes !== undefined ? { changes: publicChanges(entry, req.changes) } : {}),
     }
     const requestAbort = new AbortController()
     confirmRequestSignals.set(request, requestAbort.signal)
+    const deadline = Date.now() + expiryMs()
     emitConfirm(confirmId, entry, 'pending')
     return new Promise<InlineOutcome>((resolve) => {
       let done = false
-      const finish = (outcome: InlineOutcome): void => {
+      const finish = (settled: InlineOutcome): void => {
         if (done) return
         done = true
+        // SEC-3: an approval that arrives after the deadline (the timer fired late) is expired.
+        const outcome: InlineOutcome =
+          settled.kind === 'approved' && Date.now() >= deadline ? { kind: 'expired' } : settled
         clearTimeout(timer)
         signal?.removeEventListener('abort', onAbort)
         requestAbort.abort()
@@ -291,6 +346,13 @@ export function createCallRuntime(state: RegistryState): CallRuntime {
     const onCallerAbort = (): void => controller.abort(callerSignal?.reason)
     if (callerSignal?.aborted) onCallerAbort()
     else callerSignal?.addEventListener('abort', onCallerAbort, { once: true })
+    // SEC-4: a run without a caller signal (signal-less `tm.call`, `confirmPending`) gets a
+    // deadline, so a hung tool is abandoned after the grace period and its scope queue released.
+    const timeout = callerSignal === undefined ? callTimeoutMs() : undefined
+    const deadline =
+      timeout === undefined
+        ? undefined
+        : setTimeout(() => controller.abort(timeoutReason()), timeout)
 
     const ctx: ToolContext = {
       signal: controller.signal,
@@ -340,6 +402,7 @@ export function createCallRuntime(state: RegistryState): CallRuntime {
       else controller.signal.addEventListener('abort', startGrace, { once: true })
 
       void work.then(async (result) => {
+        clearTimeout(deadline)
         callerSignal?.removeEventListener('abort', onCallerAbort)
         controller.signal.removeEventListener('abort', startGrace)
         if (settled) {
@@ -491,11 +554,12 @@ export function createCallRuntime(state: RegistryState): CallRuntime {
             tool: entry.fullName,
             ...(entry.tool.title !== undefined ? { title: entry.tool.title } : {}),
             caller,
-            input: value,
+            input: publicInput(entry, value),
             summary,
             createdAt: now,
             expiresAt: now + expiryMs(),
           },
+          value,
           entry,
           () => emitConfirm(confirmId, entry, 'expired', expiredResult()),
           takeSnapshot(entry),
@@ -528,12 +592,18 @@ export function createCallRuntime(state: RegistryState): CallRuntime {
     if (!stored) return expiredResult()
     for (const fn of [...state.pendingConsumed]) safeCall(fn, 'pending confirmation listener')
     const entry = stored.owner
+    // SEC-3: a late expiry timer (frozen tab, device sleep) must not let an expired item run.
+    if (Date.now() >= stored.public.expiresAt) {
+      const r = expiredResult()
+      emitConfirm(confirmId, entry, 'expired', r)
+      return r
+    }
     if (outcome.approved !== true) {
       const r = cancelled('operator')
       emitConfirm(confirmId, entry, 'rejected', r)
       return r
     }
-    let value = stored.public.input
+    let value = stored.input
     if (outcome.input !== undefined) {
       const edited = await check(entry, outcome.input)
       if (!edited.ok) {
@@ -580,8 +650,37 @@ export function createCallRuntime(state: RegistryState): CallRuntime {
       }
       return errorResult('Tool failed')
     }
+    // SEC-4: a restorer that never settles is abandoned after `callTimeoutMs` plus the grace
+    // period (restorers get no signal), which releases the scope queue.
+    const bounded = (): Promise<ToolResult<{ changes: FieldChange[] }>> => {
+      const timeout = callTimeoutMs()
+      if (timeout === undefined) return restore()
+      return new Promise((resolve) => {
+        let settled = false
+        const timer = setTimeout(
+          () => {
+            settled = true
+            resolve(cancelled('signal'))
+          },
+          Math.min(timeout + graceMs(), MAX_TIMER_MS),
+        )
+        void restore().then((r) => {
+          if (settled) {
+            state.report({
+              code: 'late_result',
+              message: `Undo of "${owner.fullName}" settled after it was abandoned; result dropped`,
+              tool: owner.fullName,
+            })
+            return
+          }
+          settled = true
+          clearTimeout(timer)
+          resolve(r)
+        })
+      })
+    }
     return new Promise((resolve) => {
-      const slot = queueFor(owner.scope).push(async () => resolve(await restore()))
+      const slot = queueFor(owner.scope).push(async () => resolve(await bounded()))
       if (!slot)
         resolve(refuse('busy', `Too many pending calls in the scope of "${owner.fullName}"`))
     })

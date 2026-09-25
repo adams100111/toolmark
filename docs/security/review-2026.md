@@ -477,20 +477,48 @@ review works from is [threat-model.md](threat-model.md).
 
 ## Findings
 
-| id     | severity  | item  | summary                                                                                                                    | evidence                                                                                                                       | resolution | commit | regression test |
-| ------ | --------- | ----- | -------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ---------- | ------ | --------------- |
-| SEC-1  | Important | 1     | A tool with `jsonSchema` but no `input` runs with unvalidated input                                                        | `packages/core/src/schema.ts:31`, `packages/core/src/call.ts:144-153`; probe `probe-jsonschema-only.mjs`                       | open       | —      | —               |
-| SEC-2  | Important | 4     | `fill` (forms and wizards) writes undeclared keys when the schema is open                                                  | `packages/core/src/forms/form-tools.ts:1099-1108`, `:647`; probe `probe-open.mjs`                                              | open       | —      | —               |
-| SEC-3  | Minor     | 8, 11 | Confirmation expiry is enforced only by timers; a late timer lets an expired confirmation run                              | `packages/core/src/confirm.ts:67-74`, `:86-92`; `packages/core/src/call.ts:208`, `:527`                                        | open       | —      | —               |
-| SEC-4  | Minor     | 8     | `confirmPending`, `undo` and `tm.call` without a signal have no deadline; a hung tool holds its scope queue forever        | `packages/core/src/call.ts:547-555`, `:583-587`; `packages/core/src/registry.ts:202`; `packages/core/src/queue.ts:37-54`       | open       | —      | —               |
-| SEC-5  | Minor     | 10    | Confirmation payloads carry the raw input, including values at `sensitivePaths()`                                          | `packages/core/src/call.ts:177-186`, `:488-499`; `packages/core/src/confirm.ts:16`; `packages/core/src/registry.ts:58`         | open       | —      | —               |
-| SEC-6  | Minor     | 3     | Code-registered form and wizard fills return user-entered values without `untrustedContent` (DOM fills have it)            | `packages/core/src/forms/form-tools.ts:1233`; compare `packages/core/src/dom/scan.ts:399`                                      | open       | —      | —               |
-| SEC-7  | Minor     | 3     | Laravel reference `PageCallTool` returns results of `untrustedContent` tools to the model unmarked                         | `examples/inertia-laravel/app/Toolmark/PageCallTool.php:58-67`; `docs/guides/laravel-reference.md:721`                         | open       | —      | —               |
-| SEC-8  | Minor     | 3     | Laravel reference appends the page-supplied `confirmed` result as a `role: 'system'` message                               | `examples/inertia-laravel/app/Toolmark/HandleToolmarkConfirmation.php:33-38`; `docs/guides/laravel-reference.md:838`           | open       | —      | —               |
-| SEC-9  | Minor     | 13    | `spec-watch.yml` `watch` job runs PR-controlled code on `pull_request` with write permissions and persisted credentials    | `.github/workflows/spec-watch.yml:13-17`, `:35-58`                                                                             | open       | —      | —               |
-| SEC-10 | Minor     | 12    | The TypeSafe judge sends DOM option values inside field descriptions, contradicting the documented "never … `enum`" egress | `packages/core/src/dom/synthesize.ts:118`; `packages/judge-typesafe/src/schema-params.ts:15-27`; `docs/guides/lint.md:150-153` | open       | —      | —               |
+| id     | severity  | item  | summary                                                                                                                    | evidence                                                                                                                       | resolution | commit    | regression test                                                     |
+| ------ | --------- | ----- | -------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ---------- | --------- | ------------------------------------------------------------------- |
+| SEC-1  | Important | 1     | A tool with `jsonSchema` but no `input` runs with unvalidated input                                                        | `packages/core/src/schema.ts:31`, `packages/core/src/call.ts:144-153`; probe `probe-jsonschema-only.mjs`                       | fixed      | `f7de152` | `sec_1_json_schema_only_tool_validates_input`                       |
+| SEC-2  | Important | 4     | `fill` (forms and wizards) writes undeclared keys when the schema is open                                                  | `packages/core/src/forms/form-tools.ts:1099-1108`, `:647`; probe `probe-open.mjs`                                              | fixed      | `899dc31` | `sec_2_fill_open_json_schema_rejects_undeclared_key`                |
+| SEC-3  | Minor     | 8, 11 | Confirmation expiry is enforced only by timers; a late timer lets an expired confirmation run                              | `packages/core/src/confirm.ts:67-74`, `:86-92`; `packages/core/src/call.ts:208`, `:527`                                        | fixed      | `f9906eb` | `sec_3_confirm_pending_after_expires_at_refused_even_if_timer_late` |
+| SEC-4  | Minor     | 8     | `confirmPending`, `undo` and `tm.call` without a signal have no deadline; a hung tool holds its scope queue forever        | `packages/core/src/call.ts:547-555`, `:583-587`; `packages/core/src/registry.ts:202`; `packages/core/src/queue.ts:37-54`       | fixed      | `a9545e7` | `sec_4_confirm_pending_hung_tool_releases_scope_after_deadline`     |
+| SEC-5  | Minor     | 10    | Confirmation payloads carry the raw input, including values at `sensitivePaths()`                                          | `packages/core/src/call.ts:177-186`, `:488-499`; `packages/core/src/confirm.ts:16`; `packages/core/src/registry.ts:58`         | fixed      | `26e2c22` | `sec_5_pending_confirmation_redacts_sensitive_input`                |
+| SEC-6  | Minor     | 3     | Code-registered form and wizard fills return user-entered values without `untrustedContent` (DOM fills have it)            | `packages/core/src/forms/form-tools.ts:1233`; compare `packages/core/src/dom/scan.ts:399`                                      | fixed      | `e246a7d` | `sec_6_form_fill_is_untrusted_content_by_default`                   |
+| SEC-7  | Minor     | 3     | Laravel reference `PageCallTool` returns results of `untrustedContent` tools to the model unmarked                         | `examples/inertia-laravel/app/Toolmark/PageCallTool.php:58-67`; `docs/guides/laravel-reference.md:721`                         | fixed      | `6da0a18` | `test_untrusted_tool_result_is_marked_for_the_model`                |
+| SEC-8  | Minor     | 3     | Laravel reference appends the page-supplied `confirmed` result as a `role: 'system'` message                               | `examples/inertia-laravel/app/Toolmark/HandleToolmarkConfirmation.php:33-38`; `docs/guides/laravel-reference.md:838`           | fixed      | `6da0a18` | `test_confirmed_outcome_is_not_a_system_message`                    |
+| SEC-9  | Minor     | 13    | `spec-watch.yml` `watch` job runs PR-controlled code on `pull_request` with write permissions and persisted credentials    | `.github/workflows/spec-watch.yml:13-17`, `:35-58`                                                                             | fixed      | `90e701a` | `sec_9_spec_watch_pr_jobs_are_read_only`                            |
+| SEC-10 | Minor     | 12    | The TypeSafe judge sends DOM option values inside field descriptions, contradicting the documented "never … `enum`" egress | `packages/core/src/dom/synthesize.ts:118`; `packages/judge-typesafe/src/schema-params.ts:15-27`; `docs/guides/lint.md:150-153` | fixed      | `605d92a` | `sec_10_collect_params_strips_dom_option_lists`                     |
 
 Counts: Critical 0, Important 2, Minor 8.
+
+**Resolutions (M5 Task 5).** Every finding is `fixed`; each row names the fix commit and its first
+regression test (all `sec_<n>_*` tests live in `packages/core/test/security-2026.test.ts`,
+`packages/judge-typesafe/test/judge.test.ts` and `scripts/spec-watch-workflow.test.mjs`; the
+Laravel ones in `examples/inertia-laravel/tests/Feature`).
+
+- SEC-1: a `jsonSchema`-only tool is validated with `fromJsonSchema`; a schema outside that subset
+  is `schema_conversion_failed` (development throw; in production the tool is not registered).
+- SEC-2: a key an object with `properties` does not declare is never written, whatever its
+  `additionalProperties` (absent, `true`, `{}`, `z.looseObject`); a key the validator kept is
+  `"Undeclared field"`, one nobody knows stays `"Unknown field"`. Records (no `properties`) and
+  typed `additionalProperties` schemas still accept entries. Documented in `docs/guides/forms.md`.
+- SEC-3: `confirmPending`, `pendingConfirmations()` and inline approvals compare `Date.now()` with
+  the deadline.
+- SEC-4: new `ToolmarkOptions.callTimeoutMs` (default 120000) for runs without a caller signal
+  (signal-less calls, `confirmPending` runs, undo restorers), then the abort grace.
+- SEC-5: `ConfirmRequest.input`, `PendingConfirmation.input` and `ctx.confirm` changes are
+  redacted; the run keeps the raw validated input.
+- SEC-6: form fills (`createFormTools`, so `useFormTool`, `rhfAdapter`, `inertiaAdapter`),
+  `<wizard>.fill` and `<wizard>.step.fill` are always `untrustedContent`.
+- SEC-7, SEC-8: `PageCallTool` wraps results of `untrustedContent` tools as
+  `{ untrustedContent, note, result }`; the `confirmed` outcome is a synthetic `page_confirmation`
+  tool use plus its (marked) tool result, never `system`. Guide and example stay byte-identical;
+  `docs/protocol-v1.md` §LLM exposure recommends the wrapping.
+- SEC-9: on `pull_request` only the read-only `validate` job runs; `watch`, `canary`, `wpt` and
+  `audit` are skipped there.
+- SEC-10: `collectParams` drops the trailing DOM `Options: …` list from descriptions; the judge
+  README and `docs/guides/lint.md` list exactly what is sent.
 
 ### SEC-1: a tool with only `jsonSchema` runs unvalidated input
 

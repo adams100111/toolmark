@@ -149,8 +149,10 @@ TYPESAFE_API_KEY=… pnpm exec toolmark lint --url http://localhost:5173/ --judg
   findings and makes no network call; lint still runs. Keep the key in CI secrets.
 - **Data sent to `api.typesafe.ai`:** the page's origin and path (for `--url` pages; the query
   string, hash and any `user:pass@` are stripped) or the manifest file's `page` name; tool names,
-  titles, descriptions; and the paths and descriptions of schema properties. Never values,
-  `default`, `enum`, `examples`, `const` or any other application data.
+  titles, descriptions; and the paths and descriptions of schema properties, with the
+  `Options: <value> = <label>; …` list that DOM-synthesized select and radio descriptions end with
+  removed. Nothing else: never values, option values or labels, `default`, `enum`, `examples`,
+  `const` or any other part of a schema.
 - **Time bound.** Each page's requests are bounded by `pageTimeoutMs` (default 120 s) and each
   request is retried at most once; a page that runs out of time gets one `judge/timeout` warning,
   so the judge never hangs a lint run.

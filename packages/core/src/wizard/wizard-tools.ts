@@ -850,6 +850,8 @@ export function createWizardTools(
           (hasFiles ? ' File fields take { "ref": "..." } or { "url": "..." }.' : ''),
         input: fillInput,
         jsonSchema: fillSchema,
+        // SEC-6: the fill returns values the user typed or the page loaded.
+        hints: { untrustedContent: true },
         run: fill,
       }),
       anchors: wizardAnchors,

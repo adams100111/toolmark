@@ -22,6 +22,11 @@ challenges.dispose() // removes challenges.* including challenges.create.*
 - **Queues.** Calls run serially per scope in arrival order; separate scopes run in parallel
   (D22). A tool that ignores its aborted signal is abandoned after `abortGraceMs` (default 5000)
   and its queue slot released.
+- **Deadline without a caller signal.** A run with no caller `signal` (a `tm.call` without one,
+  the run a `confirmPending` approval starts, an `undo` restorer) is aborted after
+  `callTimeoutMs` (default 120000) and then abandoned after the grace period with `cancelled`
+  `signal`, so a hung tool cannot hold its scope queue forever. A caller that passes a `signal`
+  owns the deadline instead.
 
 In React, `<ToolScope name="create" when={open}>` creates a scope for its subtree; hooks inside it
 register into it (see [React](../guides/react.md#toolscope)).

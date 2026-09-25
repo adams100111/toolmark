@@ -28,7 +28,9 @@ import {
   type ResolvedPolicy,
 } from './policy.js'
 import type { FieldChange, ToolResult } from './result.js'
+import { fromJsonSchema } from './json-schema/from-json-schema.js'
 import { resolveJsonSchema, type JsonSchemaConverter } from './schema.js'
+import type { StandardSchemaV1 } from './standard-schema.js'
 import { ScopeNode, type Scope, type ScopeOptions } from './scope.js'
 import type {
   Caller,
@@ -55,7 +57,11 @@ export interface ConfirmRequest {
   title?: string
   /** Who asked. */
   caller: Caller
-  /** Validated input. */
+  /**
+   * Validated input, with every value at the tool's sensitive paths replaced by `'[redacted]'`
+   * (the whole input when its redaction fails). The tool runs with the unredacted input; an
+   * approval that edits `input` must supply sensitive values again.
+   */
   input: unknown
   /** The tool's hints. */
   hints: ToolHints
@@ -92,6 +98,15 @@ export interface ToolmarkOptions {
   confirmExpiryMs?: number
   /** Grace period after abort before a call is abandoned, in ms (default 5000). */
   abortGraceMs?: number
+  /**
+   * Deadline in ms (default 120000) for every run that has no caller `signal`: a `tm.call` without
+   * `signal`, the run a {@link Toolmark.confirmPending} approval starts, and an
+   * {@link Toolmark.undo} restorer. When it passes, the run's `ctx.signal` aborts; a tool that
+   * still has not settled after `abortGraceMs` is abandoned with `cancelled` `signal`, which
+   * releases its scope queue (a later settle is dropped with a `late_result` event). Calls that
+   * pass a `signal` are bounded by it instead. `Infinity` disables the deadline.
+   */
+  callTimeoutMs?: number
   /** Visible-tool budget; exceeding it emits `tool_budget_exceeded` in `dev` (default 40). */
   budget?: number
   /**
@@ -199,7 +214,7 @@ export interface Toolmark {
   /**
    * Completes a `needs_confirmation` call (single use). Approval runs the tool as caller `human`
    * (with re-validated edited `input`, if given); rejection → `cancelled` `operator`.
-   * Known limit: the approved run has no caller signal, so it cannot be cancelled.
+   * The approved run has no caller signal; it is bounded by `callTimeoutMs` (default 120000).
    */
   confirmPending(confirmId: string, outcome: ConfirmOutcome): Promise<ToolResult<unknown>>
   /** Runs the undo restorer a call registered (once); otherwise `refused` `undo_unavailable`. */
@@ -218,6 +233,12 @@ export interface Toolmark {
 export interface Entry {
   readonly fullName: string
   readonly tool: ToolDefinition<unknown, unknown>
+  /**
+   * The input validator: `tool.input`, or — for a tool that declares only `jsonSchema` — a
+   * validator compiled from it with `fromJsonSchema` (SEC-1). `undefined` only for a tool with
+   * neither (it takes no input).
+   */
+  readonly validator: StandardSchemaV1<unknown, unknown> | undefined
   readonly scope: ScopeNode
   readonly cls: HintClass
   readonly source: ManifestSource
@@ -581,6 +602,27 @@ export function createToolmark(options: ToolmarkOptions = {}): Toolmark {
       inlineHidden = allowed.some((c) => inlineWithoutHandler(c))
     }
 
+    // SEC-1: a tool that declares only `jsonSchema` is validated against it, never run with
+    // unvalidated input. A schema outside the `fromJsonSchema` subset (or with an unsafe
+    // `pattern`) is `schema_conversion_failed`: a dev throw, or not registered in production.
+    let validator: StandardSchemaV1<unknown, unknown> | undefined = def.input
+    if (def.input === undefined && def.jsonSchema !== undefined) {
+      try {
+        validator = fromJsonSchema(def.jsonSchema)
+      } catch (cause) {
+        fail(
+          'schema_conversion_failed',
+          `Tool "${fullName}": its jsonSchema cannot be used to validate input (` +
+            `${cause instanceof Error ? cause.message : String(cause)}). A tool without a ` +
+            `Standard Schema input is validated against its jsonSchema, which must use the ` +
+            `fromJsonSchema subset.`,
+          fullName,
+          cause,
+        )
+        return inert(fullName)
+      }
+    }
+
     let inputSchema: JsonSchema
     const resolved = resolveJsonSchema(def, options.jsonSchema)
     if (resolved.ok) {
@@ -616,6 +658,7 @@ export function createToolmark(options: ToolmarkOptions = {}): Toolmark {
     const entry: Entry = {
       fullName,
       tool: def,
+      validator,
       info,
       scope,
       cls,
