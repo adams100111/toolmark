@@ -1,5 +1,21 @@
 # @toolmark/core
 
+## 1.0.0-next.4
+
+### Major Changes
+
+- First stable release.
+
+### Patch Changes
+
+- [`238d1ef`](https://github.com/adams100111/toolmark/commit/238d1ef3edd0068554fa228d86ddee0c0a55a509) Thanks [@adams100111](https://github.com/adams100111)! - Security review fixes (docs/security/review-2026.md): a tool that declares only `jsonSchema` is
+  validated against it (SEC-1); `fill` never writes a key an open schema does not declare
+  (`"Undeclared field"`, SEC-2); confirmation expiry is checked against the clock at approval
+  (SEC-3); the new `callTimeoutMs` option (default 120000) bounds runs without a caller signal —
+  signal-less calls, `confirmPending` runs and undo restorers (SEC-4); confirmation payloads redact
+  sensitive input (SEC-5); form and wizard fills are marked `untrustedContent` in the manifest
+  (SEC-6); the TypeSafe judge no longer sends DOM option lists (SEC-10).
+
 ## 0.1.0-next.3
 
 No changes in this release.
