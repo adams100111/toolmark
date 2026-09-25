@@ -1,3 +1,8 @@
+/**
+ * `@toolmark/core/bridge/post-message` — A bridge transport over `window.postMessage` (iframes, extensions).
+ * @packageDocumentation
+ * @module @toolmark/core/bridge/post-message
+ */
 import type { PageToAgentMessage } from '../protocol/messages.js'
 import type { BridgeTransport } from './transport.js'
 

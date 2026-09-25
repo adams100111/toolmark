@@ -2,6 +2,7 @@
  * `@toolmark/inertia` — Inertia.js adapter for Toolmark: `useForm` form tools, page-scoped
  * server-declared tools and navigation.
  * @packageDocumentation
+ * @module @toolmark/inertia
  */
 export type { InertiaFormLike } from './inertia-adapter.js'
 export { inertiaAdapter } from './inertia-adapter.js'

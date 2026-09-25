@@ -182,3 +182,8 @@ The page opens `ws://127.0.0.1:<port>` from the browser.
 
 Pages served from `http://localhost:<port>` (development) pair in every browser without a prompt;
 the example and the e2e suite run this way (Chromium).
+
+---
+
+Every error, refusal and event code, with the milestone that added it, is listed in
+[`reference/codes.md`](../reference/codes.md).

@@ -1,3 +1,8 @@
+/**
+ * `@toolmark/core/bridge/in-page` — An in-page channel: the page transport and the agent handle (`createInPageChannel`).
+ * @packageDocumentation
+ * @module @toolmark/core/bridge/in-page
+ */
 import { safeCall } from '../events.js'
 import type { AgentToPageMessage, PageToAgentMessage } from '../protocol/messages.js'
 import type { BridgeTransport } from './transport.js'

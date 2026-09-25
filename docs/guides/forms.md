@@ -4,7 +4,7 @@ This guide covers what M2 adds to form tools (spec §8.1, §8.3): array fill ope
 `options` lookups, the zero-dependency JSON Schema validator `fromJsonSchema`, and the registry
 additions other guides build on. Related guides: [wizards](wizards.md), [files](files.md),
 [DOM forms](dom.md), [Inertia](inertia.md). Every error and refusal code is listed in
-[`docs/reference/codes.md`](../reference/codes.md) (written in M4); the codes M2 adds are
+[`docs/reference/codes.md`](../reference/codes.md); the codes M2 adds are
 [listed below](#codes-added-in-m2).
 
 ## A form with an array and an options field

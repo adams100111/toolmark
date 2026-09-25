@@ -23,7 +23,7 @@ export const PAIRING_CLOSE_CODES = Object.freeze({
 export const TERMINAL_CLOSE_CODES: readonly number[] = Object.freeze([4400, 4401, 4408, 4409])
 
 /**
- * Time the page waits to receive `paired` (the server gives it {@link FIRST_FRAME_TIMEOUT_MS} to
+ * Time the page waits to receive `paired` (the server gives it `FIRST_FRAME_TIMEOUT_MS` to
  * send its `pair` / `resume` frame).
  */
 export const HANDSHAKE_TIMEOUT_MS = 10_000

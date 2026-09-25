@@ -3,6 +3,7 @@
  * protocol eras through the SDK's `serveStdio`), and the localhost pairing server that links the
  * page. The browser side is `@toolmark/mcp/client`.
  * @packageDocumentation
+ * @module @toolmark/mcp
  */
 export {
   createServerFactory,

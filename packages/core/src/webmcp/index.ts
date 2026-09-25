@@ -2,6 +2,7 @@
  * `@toolmark/core/webmcp` — the WebMCP consumer. **Experimental** (D28): WebMCP is an origin-trial
  * browser API, so this entry is outside the semver promise until the spec leaves origin trial.
  * @packageDocumentation
+ * @module @toolmark/core/webmcp
  */
 import type { ToolManifest } from '../manifest.js'
 import { emitEvent, type Toolmark } from '../registry.js'

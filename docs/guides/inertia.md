@@ -312,3 +312,8 @@ Misconfiguration in this package is always an `error` event (`invalid_props_tool
 `duplicate_name`), never a throw, because a throw inside Inertia's event dispatch would break
 navigation. Registry errors thrown in development while registering a props tool are re-emitted as
 events with their own code.
+
+---
+
+Every error, refusal and event code, with the milestone that added it, is listed in
+[`reference/codes.md`](../reference/codes.md).

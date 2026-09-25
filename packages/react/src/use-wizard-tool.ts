@@ -72,21 +72,21 @@ export interface UseWizardToolOptions {
   previous?(): void
   /**
    * Submits the wizard (consequential). In parent-state mode this is wrapped like {@link goTo}: the
-   * mounted current step's values are first merged into {@link data} (via {@link setData}), and
+   * mounted current step's values are first merged into {@link UseWizardToolOptions.data} (via {@link setData}), and
    * the merged parent data is passed as the argument.
    *
    * **Use the argument, not closed-over state.** `setData` typically schedules a React state update
    * that only becomes visible on the next render, while `submit` runs in the same tick — so a
    * `data` captured by this closure is the pre-merge snapshot and misses the current step's latest
    * edits. A zero-argument `submit` still works (the argument is simply ignored). In stepwise mode
-   * (no {@link data}) the argument is `{}`.
+   * (no {@link UseWizardToolOptions.data}) the argument is `{}`.
    */
   submit(data: Record<string, Record<string, unknown>>): Promise<ToolResult<unknown>>
   /**
    * User-facing submit confirmation summary. In parent-state mode it is called with a copy of
-   * {@link data} in which the current step is replaced by its live values (the mounted
+   * {@link UseWizardToolOptions.data} in which the current step is replaced by its live values (the mounted
    * {@link currentAdapter}'s values when present), so the confirmation reflects edits on the visible
-   * step that have not been synced into `data` yet. In stepwise mode (no {@link data}) this is
+   * step that have not been synced into `data` yet. In stepwise mode (no {@link UseWizardToolOptions.data}) this is
    * called with `{}` — the hook has no parent data to hand it in that mode.
    */
   submitSummary?: (data: Record<string, Record<string, unknown>>) => string

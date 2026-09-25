@@ -2,6 +2,7 @@
  * `@toolmark/mcp/client`: the browser side of desktop MCP pairing (spec §11.3). Never imports
  * `ws` or `node:*`.
  * @packageDocumentation
+ * @module @toolmark/mcp/client
  */
 import type { Toolmark } from '@toolmark/core'
 import {

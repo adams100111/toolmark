@@ -1,6 +1,7 @@
 /**
  * `@toolmark/core` — tool model, registry, policy, confirmation, form tools and protocol v1.
  * @packageDocumentation
+ * @module @toolmark/core
  */
 export type { StandardJSONSchemaV1, StandardSchemaV1, StandardTypedV1 } from './standard-schema.js'
 export type {

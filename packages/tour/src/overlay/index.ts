@@ -2,6 +2,7 @@
  * `@toolmark/tour/overlay` — the styled, themeable tour overlay (spec §11.5, D30). Vanilla DOM, so
  * it works in any app. Import `@toolmark/tour/styles.css` once for the default look.
  * @packageDocumentation
+ * @module @toolmark/tour/overlay
  */
 import type { Tour, TourState } from '../types.js'
 import { focusNoScroll, focusTargetOf, nextInTrap } from './focus.js'

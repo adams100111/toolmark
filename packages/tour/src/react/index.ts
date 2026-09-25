@@ -1,6 +1,7 @@
 /**
  * `@toolmark/tour/react` — React binding for headless tours (spec §11.5).
  * @packageDocumentation
+ * @module @toolmark/tour/react
  */
 import { useCallback, useSyncExternalStore } from 'react'
 import type { Tour, TourState } from '../types.js'
