@@ -1,19 +1,41 @@
 {
-    "$schema": "https://www.schemastore.org/package.json",
-    "private": true,
-    "type": "module",
-    "scripts": {
-        "build": "vite build",
-        "dev": "vite"
-    },
-    "devDependencies": {
-        "@tailwindcss/vite": "^4.0.0",
-        "concurrently": "^10.0.3",
-        "laravel-vite-plugin": "^3.1",
-        "tailwindcss": "^4.0.0",
-        "vite": "^8.0.0"
-    },
-    "optionalDependencies": {
-        "@laravel/multiplex": "^0.4.1"
-    }
+  "name": "@toolmark-examples/inertia-laravel",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@inertiajs/react": "catalog:",
+    "@toolmark/core": "workspace:*",
+    "@toolmark/inertia": "workspace:*",
+    "@toolmark/react": "workspace:*",
+    "@toolmark/tour": "workspace:*",
+    "laravel-echo": "catalog:",
+    "pusher-js": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "react-hook-form": "catalog:",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "catalog:",
+    "@laravel/vite-plugin-wayfinder": "catalog:",
+    "@playwright/test": "catalog:",
+    "@toolmark/lint": "workspace:*",
+    "@toolmark/testing": "workspace:*",
+    "@types/node": "catalog:",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "@vitejs/plugin-react": "catalog:",
+    "laravel-vite-plugin": "catalog:",
+    "typescript": "catalog:",
+    "vite": "catalog:"
+  }
 }
