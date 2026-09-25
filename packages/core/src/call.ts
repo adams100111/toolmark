@@ -6,7 +6,12 @@ import { safeCall } from './events.js'
 import { resolveFileRef } from './files.js'
 import { REDACTED } from './forms/hooks.js'
 import { isPlainObject } from './forms/paths.js'
-import { inputSensitiveHookOf, redactChanges, redactInput } from './input-redaction.js'
+import {
+  inputSensitiveHookOf,
+  redactChanges,
+  redactInput,
+  restoreRedacted,
+} from './input-redaction.js'
 import { newId } from './ids.js'
 import { isAllowed, needsConfirmation } from './policy.js'
 import { SerialQueue } from './queue.js'
@@ -173,6 +178,13 @@ export function createCallRuntime(state: RegistryState): CallRuntime {
     const paths = inputPathsOf(entry)
     return paths === null ? REDACTED : redactInput(input, paths)
   }
+  /**
+   * SEC-11: an approver's edited input with the `'[redacted]'` placeholders of the public input it
+   * was built from put back to the real values of `raw` (a sensitive path the approver changed
+   * keeps the new value), so an edit never replaces a secret by the placeholder.
+   */
+  const restoreEdit = (entry: Entry, raw: unknown, edited: unknown): unknown =>
+    restoreRedacted(edited, raw, inputPathsOf(entry) ?? [])
   /** SEC-5: `ctx.confirm` changes with the tool's sensitive (value-shaped) paths redacted. */
   const publicChanges = (entry: Entry, changes: FieldChange[]): FieldChange[] => {
     const paths = state.tm.info(entry.fullName)?.sensitivePaths
@@ -310,7 +322,7 @@ export function createCallRuntime(state: RegistryState): CallRuntime {
       switch (outcome.kind) {
         case 'approved':
           return outcome.input !== undefined
-            ? { approved: true, input: outcome.input }
+            ? { approved: true, input: restoreEdit(entry, input, outcome.input) }
             : { approved: true }
         case 'rejected':
           return outcome.reason !== undefined
@@ -576,7 +588,7 @@ export function createCallRuntime(state: RegistryState): CallRuntime {
       if (outcome.kind === 'signal') return finish(cancelled('signal'))
       if (outcome.kind !== 'approved') return finish(cancelled('operator'))
       if (outcome.input !== undefined) {
-        const edited = await check(entry, outcome.input)
+        const edited = await check(entry, restoreEdit(entry, value, outcome.input))
         if (!edited.ok) return finish(edited.result)
         value = edited.value
       }
@@ -605,7 +617,7 @@ export function createCallRuntime(state: RegistryState): CallRuntime {
     }
     let value = stored.input
     if (outcome.input !== undefined) {
-      const edited = await check(entry, outcome.input)
+      const edited = await check(entry, restoreEdit(entry, stored.input, outcome.input))
       if (!edited.ok) {
         emitConfirm(confirmId, entry, 'approved', edited.result)
         return edited.result

@@ -1,4 +1,5 @@
 import { isUnderSensitive, REDACTED } from './forms/hooks.js'
+import { isPlainObject } from './forms/paths.js'
 import type { FieldChange } from './result.js'
 
 /** Deepest input nesting the redaction walk follows; anything deeper is redacted whole. */
@@ -77,4 +78,73 @@ export function redactChanges(changes: FieldChange[], paths: readonly string[]):
       ? { path: c.path, before: REDACTED, after: REDACTED }
       : c,
   )
+}
+
+/**
+ * @internal SEC-11: the approver-edited `edited` input with every `'[redacted]'` placeholder that
+ * stands at a sensitive input path (one {@link redactInput} would redact) put back to the node at
+ * the same position in `raw`, the stored real input. A sensitive path the approver changed keeps
+ * its new value, and a placeholder outside the sensitive paths is kept as ordinary text. A root
+ * `'[redacted]'` (the whole input was hidden) restores `raw` whole. Positions are matched key by
+ * key, as {@link redactInput} walks them (dotted keys and `$append` included), so the result is
+ * the edit applied to the real input. The walk is bounded like {@link redactInput}; past the
+ * bounds the edit is returned unchanged (it is re-validated by the caller either way).
+ */
+export function restoreRedacted(edited: unknown, raw: unknown, paths: readonly string[]): unknown {
+  if (edited === REDACTED) return raw
+  if (paths.length === 0) return edited
+  let nodes = 0
+  const sensitive = (segs: readonly string[]): boolean => {
+    if (segs.length === 0) return false
+    const path = segs.join('.')
+    return paths.some((p) => isUnderSensitive(path, p))
+  }
+  const own = (node: unknown, key: string): { value: unknown } | undefined => {
+    if (typeof node !== 'object' || node === null) return undefined
+    return Object.prototype.hasOwnProperty.call(node, key)
+      ? { value: (node as Record<string, unknown>)[key] }
+      : undefined
+  }
+  const walk = (
+    node: unknown,
+    source: { value: unknown } | undefined,
+    segs: string[],
+    depth: number,
+  ): unknown => {
+    if (++nodes > MAX_REDACT_NODES) return node
+    if (
+      node === REDACTED &&
+      source !== undefined &&
+      (sensitive(segs) || depth >= MAX_REDACT_DEPTH)
+    ) {
+      return source.value
+    }
+    if (depth >= MAX_REDACT_DEPTH) return node
+    if (Array.isArray(node)) {
+      let changed = false
+      const out = node.map((item, i) => {
+        const next = walk(item, own(source?.value, String(i)), [...segs, String(i)], depth + 1)
+        if (next !== item) changed = true
+        return next
+      })
+      return changed ? out : node
+    }
+    // Only plain objects are rebuilt; anything else (a `File`, a class instance) is kept as is.
+    if (!isPlainObject(node)) return node
+    let changed = false
+    const out: Record<string, unknown> = {}
+    for (const [key, value] of Object.entries(node)) {
+      const at = key === '$append' ? segs : [...segs, ...key.split('.')]
+      const next = walk(value, own(source?.value, key), at, depth + 1)
+      if (next !== value) changed = true
+      Object.defineProperty(out, key, {
+        value: next,
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      })
+    }
+    return changed ? out : node
+  }
+  return walk(edited, { value: raw }, [], 0)
 }
