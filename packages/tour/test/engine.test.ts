@@ -238,6 +238,9 @@ describe('tour engine', () => {
     ): ToolDefinition =>
       tool(name, {
         jsonSchema,
+        // A pass-through validator: this test checks how the tour wraps input, not validation
+        // (a jsonSchema-only tool is validated against its schema, SEC-1).
+        input: { '~standard': { version: 1, vendor: 'test', validate: (value) => ({ value }) } },
         anchors: { element: () => anchor, resolve: () => anchor },
         run: (input, ctx) => {
           calls.push({ tool: name, input, caller: ctx.caller })

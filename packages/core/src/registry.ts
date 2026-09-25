@@ -28,7 +28,9 @@ import {
   type ResolvedPolicy,
 } from './policy.js'
 import type { FieldChange, ToolResult } from './result.js'
+import { fromJsonSchema } from './json-schema/from-json-schema.js'
 import { resolveJsonSchema, type JsonSchemaConverter } from './schema.js'
+import type { StandardSchemaV1 } from './standard-schema.js'
 import { ScopeNode, type Scope, type ScopeOptions } from './scope.js'
 import type {
   Caller,
@@ -218,6 +220,12 @@ export interface Toolmark {
 export interface Entry {
   readonly fullName: string
   readonly tool: ToolDefinition<unknown, unknown>
+  /**
+   * The input validator: `tool.input`, or — for a tool that declares only `jsonSchema` — a
+   * validator compiled from it with `fromJsonSchema` (SEC-1). `undefined` only for a tool with
+   * neither (it takes no input).
+   */
+  readonly validator: StandardSchemaV1<unknown, unknown> | undefined
   readonly scope: ScopeNode
   readonly cls: HintClass
   readonly source: ManifestSource
@@ -581,6 +589,27 @@ export function createToolmark(options: ToolmarkOptions = {}): Toolmark {
       inlineHidden = allowed.some((c) => inlineWithoutHandler(c))
     }
 
+    // SEC-1: a tool that declares only `jsonSchema` is validated against it, never run with
+    // unvalidated input. A schema outside the `fromJsonSchema` subset (or with an unsafe
+    // `pattern`) is `schema_conversion_failed`: a dev throw, or not registered in production.
+    let validator: StandardSchemaV1<unknown, unknown> | undefined = def.input
+    if (def.input === undefined && def.jsonSchema !== undefined) {
+      try {
+        validator = fromJsonSchema(def.jsonSchema)
+      } catch (cause) {
+        fail(
+          'schema_conversion_failed',
+          `Tool "${fullName}": its jsonSchema cannot be used to validate input (` +
+            `${cause instanceof Error ? cause.message : String(cause)}). A tool without a ` +
+            `Standard Schema input is validated against its jsonSchema, which must use the ` +
+            `fromJsonSchema subset.`,
+          fullName,
+          cause,
+        )
+        return inert(fullName)
+      }
+    }
+
     let inputSchema: JsonSchema
     const resolved = resolveJsonSchema(def, options.jsonSchema)
     if (resolved.ok) {
@@ -616,6 +645,7 @@ export function createToolmark(options: ToolmarkOptions = {}): Toolmark {
     const entry: Entry = {
       fullName,
       tool: def,
+      validator,
       info,
       scope,
       cls,

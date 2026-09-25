@@ -150,7 +150,7 @@ export function createCallRuntime(state: RegistryState): CallRuntime {
         : { ok: false, result: invalid([{ path: '', message: 'This tool takes no input' }]) }
     }
     try {
-      const v = await validateInput(entry.tool.input, value)
+      const v = await validateInput(entry.validator, value)
       return v.ok ? v : { ok: false, result: invalid(v.issues) }
     } catch (cause) {
       state.report({

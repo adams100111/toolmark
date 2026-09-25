@@ -109,7 +109,12 @@ export interface ToolDefinition<I = unknown, O = unknown> {
   input?: StandardSchemaV1<unknown, I>
   /** Output schema; validated in development only. */
   output?: StandardSchemaV1<unknown, O>
-  /** Per-tool JSON Schema override for the input (D14). */
+  /**
+   * Per-tool JSON Schema override for the input (D14). A tool with `jsonSchema` and no `input` is
+   * validated against it (compiled with `fromJsonSchema`, so it must use that subset; otherwise
+   * registration fails with `schema_conversion_failed`). With `input`, `input` validates and this
+   * only replaces the advertised schema.
+   */
   jsonSchema?: JsonSchema
   /** Behaviour hints. */
   hints?: ToolHints
