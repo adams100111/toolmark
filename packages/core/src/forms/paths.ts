@@ -23,8 +23,8 @@ export function nodeBudget(max = MAX_INPUT_NODES): NodeBudget {
   return { left: max }
 }
 
-/** Spends one node; `false` once the budget is exhausted. */
-function spend(budget: NodeBudget): boolean {
+/** @internal Spends one node of `budget`; `false` once it is exhausted. */
+export function spend(budget: NodeBudget): boolean {
   budget.left--
   return budget.left >= 0
 }

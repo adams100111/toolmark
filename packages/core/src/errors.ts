@@ -1,6 +1,6 @@
 /**
  * Error thrown by Toolmark for misconfiguration in development (and for the few APIs that reject
- * instead of emitting events, e.g. `invalid_path`, `files_not_configured`). `code` is a stable
+ * instead of emitting events, e.g. `invalid_path`, `file_rejected`). `code` is a stable
  * machine-readable string.
  */
 export class ToolmarkError extends Error {

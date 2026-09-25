@@ -1,3 +1,4 @@
+import type { FileRef } from './files.js'
 import type { FieldChange, ToolResult } from './result.js'
 import type { StandardSchemaV1 } from './standard-schema.js'
 
@@ -48,9 +49,6 @@ export interface ToolState<I> {
   step?: string
 }
 
-/** A reference to a file an agent wants to hand to a tool (D27). Implemented in M2. */
-export type FileRef = { ref: string } | { url: string }
-
 /** Outcome of a confirmation: approved (optionally with edited input) or rejected. */
 export type ConfirmOutcome =
   { approved: true; input?: unknown } | { approved: false; reason?: string }
@@ -70,7 +68,12 @@ export interface ToolContext {
   confirm(req: { summary: string; changes?: FieldChange[] }): Promise<ConfirmOutcome>
   /** Store a restorer for `tm.undo(callId)`. */
   registerUndo(restore: () => ToolResult<unknown> | Promise<ToolResult<unknown>>): void
-  /** File resolution (D27). In M1 it rejects with `ToolmarkError('files_not_configured')`. */
+  /**
+   * File resolution (D27, spec §8.4) under the registry's `files` options and limits. Rejects with
+   * `ToolmarkError('file_rejected')` (a `{ ref }` without `files.resolve`, a URL that is not
+   * allowed, a size/type violation, …); a tool that lets it propagate returns `refused`
+   * `file_rejected` with the message.
+   */
   files: { resolve(ref: FileRef): Promise<File> }
 }
 

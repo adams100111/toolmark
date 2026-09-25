@@ -1,6 +1,19 @@
+import { ToolmarkError } from '../errors.js'
+import {
+  effectiveSpec,
+  fileFieldSchema,
+  filesConfig,
+  fileSpecProblems,
+  jsonSafeFiles,
+  resolveFileRef,
+  type FileFieldSpec,
+  type FilesConfig,
+  type FileRef,
+} from '../files.js'
+import { fromJsonSchema } from '../json-schema/from-json-schema.js'
 import type { Registration, Toolmark } from '../registry.js'
 import { registryState } from '../registry.js'
-import { invalid, ok, type FieldChange, type ToolResult } from '../result.js'
+import { invalid, ok, refuse, type FieldChange, type ToolResult } from '../result.js'
 import { resolveJsonSchema, stripRequired, validateInput } from '../schema.js'
 import type { Scope } from '../scope.js'
 import type { StandardSchemaV1 } from '../standard-schema.js'
@@ -18,6 +31,8 @@ import {
   nodeBudget,
   setPath,
   snapshotValue,
+  spend,
+  type NodeBudget,
 } from './paths.js'
 import { annotateOptionField, optionsToolDefinition } from './options.js'
 import type { FieldInfo, FormAdapter, FormToolOptions } from './types.js'
@@ -169,14 +184,76 @@ function wrapArrayOps(
   return out
 }
 
+/** Splits a file/option key into segments, `[]` as its own segment (`a[].b` → `a`,`[]`,`b`). */
+function keySegments(path: string): string[] {
+  return path
+    .split('.')
+    .flatMap((seg) => (seg.endsWith('[]') && seg !== '[]' ? [seg.slice(0, -2), '[]'] : [seg]))
+}
+
+/** Follows a local `$ref` of the fill schema (after `$defs` hoisting). */
+function derefFill(node: Record<string, unknown>, root: JsonSchema): unknown {
+  if (typeof node.$ref !== 'string') return undefined
+  const m = /^#\/(\$defs|definitions)\/([^/]+)$/.exec(node.$ref)
+  const defs = m ? root[m[1]!] : undefined
+  return m && isRecord(defs) && Object.hasOwn(defs, m[2]!) ? defs[m[2]!] : undefined
+}
+
+/**
+ * Replaces the node(s) a file key reaches in the fill schema `values` node with `schema` (in
+ * place, M2 T3): through `properties`, `items` for `[]` (and the `$append` items of an array-op
+ * branch), unions, `allOf` and local `$ref`s. The whole property is replaced, so a file field never
+ * carries array-op branches.
+ */
+function replaceFileField(
+  values: JsonSchema,
+  root: JsonSchema,
+  path: string,
+  schema: JsonSchema,
+): void {
+  const visit = (node: unknown, rest: string[], depth: number): void => {
+    if (!isRecord(node) || depth > 64 || rest.length === 0) return
+    const target = derefFill(node, root)
+    if (target !== undefined) visit(target, rest, depth + 1)
+    for (const key of ['anyOf', 'oneOf', 'allOf'] as const) {
+      const list = node[key]
+      if (Array.isArray(list)) for (const b of list) visit(b, rest, depth + 1)
+    }
+    const [head, ...tail] = rest as [string, ...string[]]
+    const props = isRecord(node.properties) ? node.properties : undefined
+    if (head === '[]') {
+      const append = props && Object.hasOwn(props, '$append') ? props.$append : undefined
+      for (const holder of [node, isRecord(append) ? append : undefined]) {
+        if (!holder || holder.items === undefined) continue
+        if (tail.length === 0) holder.items = structuredClone(schema)
+        else visit(holder.items, tail, depth + 1)
+      }
+    } else if (props && Object.hasOwn(props, head)) {
+      if (tail.length === 0) {
+        Object.defineProperty(props, head, {
+          value: structuredClone(schema),
+          enumerable: true,
+          writable: true,
+          configurable: true,
+        })
+      } else {
+        visit(props[head], tail, depth + 1)
+      }
+    }
+  }
+  visit(values, keySegments(path), 0)
+}
+
 /**
  * The `fill` manifest schema (M1 rulings): input schema without `required`, then every array
- * property wrapped in the array-op `anyOf` (M2), `$defs` hoisted, then every option field's
- * `description` suffixed with the `<name>.options` hint (M2 T2).
+ * property wrapped in the array-op `anyOf` (M2), `$defs` hoisted, then every file path replaced by
+ * its `fileFieldSchema` (M2 T3) and every option field's `description` suffixed with the
+ * `<name>.options` hint (M2 T2).
  */
 function fillJsonSchema(
   inputSchema: JsonSchema,
   options?: { form: string; keys: string[] },
+  files?: { path: string; schema: JsonSchema }[],
 ): JsonSchema {
   const stripped = stripRequired(inputSchema)
   const values = wrapArrayOps(stripped, inputSchema, {
@@ -194,6 +271,7 @@ function fillJsonSchema(
     delete values[key]
   }
   delete values.$schema
+  for (const f of files ?? []) replaceFileField(values, schema, f.path, f.schema)
   if (options) {
     const suffix = ` (use ${options.form}.options to find valid values)`
     for (const key of options.keys) annotateOptionField(values, schema, key, suffix)
@@ -589,6 +667,171 @@ function sanitize(
   return out
 }
 
+/** A form file field: its key segments and effective limits. */
+interface FileField {
+  segs: string[]
+  spec: FileFieldSpec
+  validate: StandardSchemaV1<unknown, unknown>
+}
+
+/** A file value found in the agent's input, to be replaced by the resolved `File`(s). */
+interface FileSlot {
+  path: string
+  raw: unknown
+  field: FileField
+  container: Record<string, unknown> | unknown[]
+  key: string
+}
+
+const matchesKey = (pattern: string[], segs: string[]): boolean =>
+  pattern.length === segs.length &&
+  pattern.every((p, i) => (p === '[]' ? /^\d+$/.test(segs[i]!) : p === segs[i]))
+
+const define = (container: object, key: string, value: unknown): void => {
+  Object.defineProperty(container, key, {
+    value,
+    enumerable: true,
+    writable: true,
+    configurable: true,
+  })
+}
+
+/**
+ * Copies the agent's `values`, collecting every value at a file path (M2 T3). `$append` segments
+ * are transparent (items of an append op match `list[]` keys). A dotted key that runs through a
+ * file path is an issue ("Expected a file reference"). Cycles, over-deep values and subtrees past
+ * `budget` are copied raw (the later walks refuse them).
+ */
+function collectFileSlots(
+  values: Record<string, unknown>,
+  fields: FileField[],
+  budget: NodeBudget,
+): {
+  tree: Record<string, unknown>
+  slots: FileSlot[]
+  issues: { path: string; message: string }[]
+} {
+  const slots: FileSlot[] = []
+  const issues: { path: string; message: string }[] = []
+  const ancestors = new WeakSet<object>()
+  const fieldAt = (segs: string[]): FileField | undefined =>
+    fields.find((f) => matchesKey(f.segs, segs))
+  const walk = (
+    node: Record<string, unknown> | unknown[],
+    match: string[],
+    real: string[],
+    depth: number,
+  ): Record<string, unknown> | unknown[] => {
+    ancestors.add(node)
+    const isArray = Array.isArray(node)
+    const out: Record<string, unknown> | unknown[] = isArray ? new Array<unknown>(node.length) : {}
+    const keys: string[] = []
+    if (isArray) {
+      for (let i = 0; i < node.length; i++) if (i in node) keys.push(String(i))
+    } else {
+      keys.push(...Object.keys(node))
+    }
+    for (const key of keys) {
+      const value = (node as Record<string, unknown>)[key]
+      const keySegs = isArray ? [key] : key.split('.')
+      const realSegs = [...real, ...keySegs]
+      const matchSegs = !isArray && key === '$append' ? match : [...match, ...keySegs]
+      let next = value
+      let through = -1
+      for (let i = 1; i < keySegs.length && through < 0; i++) {
+        if (fieldAt([...match, ...keySegs.slice(0, i)])) through = i
+      }
+      if (through > 0) {
+        issues.push({
+          path: [...real, ...keySegs.slice(0, through)].join('.'),
+          message: 'Expected a file reference',
+        })
+      } else {
+        const field = fieldAt(matchSegs)
+        if (field) {
+          if (value !== null && value !== undefined) {
+            slots.push({ path: realSegs.join('.'), raw: value, field, container: out, key })
+          }
+        } else if (
+          (isPlainObject(value) || Array.isArray(value)) &&
+          depth < 64 &&
+          !ancestors.has(value) &&
+          (!Array.isArray(value) || value.length <= budget.left) &&
+          spend(budget)
+        ) {
+          next = walk(value, matchSegs, realSegs, depth + 1)
+        } else if (Array.isArray(value) && value.length > budget.left) {
+          budget.left = -1
+        }
+      }
+      define(out, key, next)
+    }
+    ancestors.delete(node)
+    return out
+  }
+  const tree = walk(values, [], [], 0) as Record<string, unknown>
+  return { tree, slots, issues }
+}
+
+/** Validates each file slot's shape against its field's `fileFieldSchema` (issues at the slot). */
+function fileShapeIssues(slots: FileSlot[]): { path: string; message: string }[] {
+  const issues: { path: string; message: string }[] = []
+  for (const slot of slots) {
+    const r = slot.field.validate['~standard'].validate(slot.raw)
+    if (r instanceof Promise || !r.issues) continue
+    for (const issue of r.issues) {
+      const rel = (issue.path ?? [])
+        .map((seg) => String(typeof seg === 'object' && seg !== null ? seg.key : seg))
+        .join('.')
+      issues.push({ path: rel === '' ? slot.path : `${slot.path}.${rel}`, message: issue.message })
+    }
+  }
+  return issues
+}
+
+/**
+ * Resolves every slot (sequentially, `multiple` → `File[]`) and writes the files into the copied
+ * tree. Returns the first `file_rejected` message, or `undefined` when all resolved.
+ */
+async function resolveFileSlots(
+  slots: FileSlot[],
+  files: FilesConfig,
+  signal: AbortSignal,
+): Promise<string | undefined> {
+  const resolved: { slot: FileSlot; value: File | File[] }[] = []
+  try {
+    for (const slot of slots) {
+      const spec = slot.field.spec
+      if (spec.multiple === true) {
+        const list: File[] = []
+        const refs = slot.raw as FileRef[]
+        for (let i = 0; i < refs.length; i++) {
+          list.push(
+            await resolveFileRef(refs[i]!, spec, files, signal, { path: `${slot.path}.${i}` }),
+          )
+        }
+        resolved.push({ slot, value: list })
+      } else {
+        const file = await resolveFileRef(slot.raw as FileRef, spec, files, signal, {
+          path: slot.path,
+        })
+        resolved.push({ slot, value: file })
+      }
+    }
+  } catch (e) {
+    return e instanceof ToolmarkError && e.code === 'file_rejected' ? e.message : 'File rejected'
+  }
+  for (const { slot, value } of resolved) define(slot.container, slot.key, value)
+  return undefined
+}
+
+/** A change with file values described JSON-safely (`{ file: { name, size, type } }`). */
+const safeChange = (c: FieldChange): FieldChange => ({
+  path: c.path,
+  before: jsonSafeFiles(c.before),
+  after: jsonSafeFiles(c.after),
+})
+
 const byPath = (a: { path: string }, b: { path: string }): number =>
   a.path < b.path ? -1 : a.path > b.path ? 1 : 0
 
@@ -609,6 +852,32 @@ export function createFormTools<V extends Record<string, unknown>>(
   const state = registryState(tm)
   const fillName = `${opts.name}.fill`
 
+  // Files (M2 T3): validate the specs first; a misconfigured form registers no tools.
+  const fileKeys = opts.files ? Object.keys(opts.files) : []
+  if (state?.browser) {
+    const problems = fileKeys.flatMap((key) => [
+      ...(keySegments(key).every((seg) => seg === '[]' || isSafePath(seg))
+        ? []
+        : [`files key "${key}" is not a valid field path`]),
+      ...fileSpecProblems(key, opts.files![key]),
+    ])
+    if (problems.length > 0) {
+      state.fail('files_misconfigured', `Form "${opts.name}": ${problems.join('; ')}`, fillName)
+      return { dispose() {} }
+    }
+  }
+  const filesCfg =
+    state?.files ??
+    filesConfig(
+      undefined,
+      () => undefined,
+      () => undefined,
+    )
+  const fileFields: FileField[] = fileKeys.map((key) => {
+    const spec = effectiveSpec(opts.files![key]!, filesCfg)
+    return { segs: keySegments(key), spec, validate: fromJsonSchema(fileFieldSchema(spec)) }
+  })
+
   let inputSchema: JsonSchema = {}
   const resolved = resolveJsonSchema(
     {
@@ -619,6 +888,7 @@ export function createFormTools<V extends Record<string, unknown>>(
       run: () => ok(null),
     },
     state?.options.jsonSchema,
+    fileKeys.length > 0 ? { libraryOptions: { unrepresentable: 'any' } } : undefined,
   )
   if (resolved.ok) {
     inputSchema = resolved.schema
@@ -664,11 +934,24 @@ export function createFormTools<V extends Record<string, unknown>>(
   async function fill(
     input: FillInput,
     registerUndo: (restore: () => ToolResult<unknown>) => void,
+    signal: AbortSignal,
   ) {
-    const current = adapter.getValues()
     // Every walk over the agent's input shares one node budget (DAG inputs from in-page callers).
     const budget = nodeBudget()
     const tooComplex = () => invalid([{ path: '', message: 'Input too complex' }])
+    // Files (M2 T3): (1) shape-check every file value, (2) resolve all (any failure refuses the
+    // fill, nothing set), (3) continue with the resolved `File`s merged into the input.
+    let values = input.values
+    if (fileFields.length > 0) {
+      const collected = collectFileSlots(values, fileFields, budget)
+      if (budget.left < 0) return tooComplex()
+      const shapeIssues = [...collected.issues, ...fileShapeIssues(collected.slots)]
+      if (shapeIssues.length > 0) return invalid(shapeIssues.sort(byPath))
+      const failure = await resolveFileSlots(collected.slots, filesCfg, signal)
+      if (failure !== undefined) return refuse('file_rejected', failure)
+      values = collected.tree
+    }
+    const current = adapter.getValues()
     // Array ops (M2): an object where the schema declares only an array, or a `$`-keyed object
     // unless the schema declares an object (record / open object) and no array there, so
     // `$`-keyed record data stays plain data (I3) while `{ $append }` on a scalar is still an op
@@ -682,7 +965,7 @@ export function createFormTools<V extends Record<string, unknown>>(
       ops,
       duplicates: opDuplicates,
     } = extractArrayOps(
-      input.values,
+      values,
       (path) => {
         const node = nodeFor(path)
         return node !== undefined && arrayOnlyShape(node, inputSchema) !== undefined
@@ -838,14 +1121,16 @@ export function createFormTools<V extends Record<string, unknown>>(
           undoChanges.push({ path, before: getPath(now, path), after: getPath(restored, path) })
         }
         return ok({
-          changes: redact(undoChanges, sensitivePaths(opts, adapter.fields())).sort(byPath),
+          changes: redact(undoChanges.map(safeChange), sensitivePaths(opts, adapter.fields())).sort(
+            byPath,
+          ),
           skipped: undoSkipped.sort(),
         })
       })
     }
 
     return ok({
-      changes: redact(changes, sensitivePaths(opts, adapter.fields())).sort(byPath),
+      changes: redact(changes.map(safeChange), sensitivePaths(opts, adapter.fields())).sort(byPath),
       skipped: skipped.sort(),
     })
   }
@@ -858,13 +1143,15 @@ export function createFormTools<V extends Record<string, unknown>>(
       ...title,
       description:
         `${opts.description} Fill form fields: pass a partial object in "values" (null clears a ` +
-        `field). Fields the user edited are skipped unless "overwrite" is true.`,
+        `field). Fields the user edited are skipped unless "overwrite" is true.` +
+        (fileFields.length > 0 ? ' File fields take { "ref": "..." } or { "url": "..." }.' : ''),
       input: fillInputSchema,
       jsonSchema: fillJsonSchema(
         inputSchema,
         optionKeys.length > 0 ? { form: opts.name, keys: optionKeys } : undefined,
+        fileKeys.map((path, i) => ({ path, schema: fileFieldSchema(fileFields[i]!.spec) })),
       ),
-      run: (input, ctx) => fill(input, (restore) => ctx.registerUndo(restore)),
+      run: (input, ctx) => fill(input, (restore) => ctx.registerUndo(restore), ctx.signal),
     },
     opts.scope ? { scope: opts.scope } : undefined,
   )

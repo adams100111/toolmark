@@ -7,7 +7,6 @@ export type {
   AnchorSpec,
   Caller,
   ConfirmOutcome,
-  FileRef,
   JsonSchema,
   ToolContext,
   ToolDefinition,
@@ -16,6 +15,8 @@ export type {
   ToolState,
 } from './tool.js'
 export { defineTool } from './tool.js'
+export type { FileFieldSpec, FileRef, FilesOptions } from './files.js'
+export { fileFieldSchema } from './files.js'
 export { isValidToolName, toLlmName } from './names.js'
 export type { FieldChange, ToolIssue, ToolResult } from './result.js'
 export { cancelled, invalid, ok, refuse } from './result.js'
