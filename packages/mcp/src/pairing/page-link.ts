@@ -13,6 +13,9 @@ import { isPlainObject, utf8Length } from '../server/tool-mapping.js'
 
 /** Result text of calls pending on a page that reloaded (a new `clientId` was adopted). */
 export const RELOAD_TEXT = 'The page reloaded before the result arrived; the outcome is unknown.'
+/** Result text of calls pending on a page that another page replaced (a new pairing code was used). */
+export const SUPERSEDED_TEXT =
+  'Another page took over the MCP connection before the result arrived.'
 /** Result text of calls pending on a page that stayed away past the unpaired grace. */
 export const DISCONNECTED_TEXT =
   'The page disconnected before the result arrived; the outcome is unknown.'
@@ -43,8 +46,12 @@ export interface LinkSocket {
 
 /** @internal The link plus the hooks the pairing server drives. */
 export interface PageLinkController extends PageLink {
-  /** A socket completed pairing; the next `manifest` on it fixes the `clientId`. */
-  attach(socket: LinkSocket): void
+  /**
+   * A socket completed pairing; the next `manifest` on it fixes the `clientId`. `how` is the
+   * handshake it used: a `pair` (fresh code) that brings a new `clientId` is another page taking
+   * over; a `resume` (session token) that does is the same tab reloaded (default).
+   */
+  attach(socket: LinkSocket, how?: 'pair' | 'resume'): void
   /** A socket closed; the unpaired grace starts when it was the paired one. */
   detach(socket: LinkSocket): void
   /** A text frame arrived on a paired socket. */
@@ -67,7 +74,8 @@ const quote = (s: string): string =>
  * @internal Creates the CLI's {@link PageLink}: the bridge-protocol agent side of the paired page
  * (spec §11.3, §12). Page frames are validated with `validateMessage(…, 'toAgent')` and bound to
  * the adopted `clientId`; calls carry a deadline and are cancelled on the page on deadline or
- * abort; a reload (new `clientId`) or a page gone past the grace fails pending calls.
+ * abort; a reload (new `clientId`) or a page gone past the grace fails pending calls. Inbound
+ * `changed` frames are ignored: the paired page announces every revision with a full `manifest`.
  */
 export function createPageLink(o: {
   callTimeoutMs: number
@@ -87,6 +95,7 @@ export function createPageLink(o: {
    */
   const deferredCancels = new Map<string, string>()
   let socket: LinkSocket | null = null
+  let attachedBy: 'pair' | 'resume' = 'resume'
   let awaitingManifest = true
   let clientId: string | null = null
   let paired = false
@@ -219,7 +228,7 @@ export function createPageLink(o: {
 
   const adopt = (id: string): void => {
     if (clientId !== null && clientId !== id) {
-      failPending(RELOAD_TEXT)
+      failPending(attachedBy === 'pair' ? SUPERSEDED_TEXT : RELOAD_TEXT)
       describeCache.clear()
     }
     clientId = id
@@ -324,9 +333,10 @@ export function createPageLink(o: {
       }
     },
 
-    attach(s) {
+    attach(s, how = 'resume') {
       if (disposed) return
       socket = s
+      attachedBy = how
       awaitingManifest = true
       if (graceTimer !== undefined) clearTimeout(graceTimer)
       graceTimer = undefined
@@ -368,7 +378,9 @@ export function createPageLink(o: {
           applyManifest(m.rev, m.tools)
           return
         case 'changed':
-          rev = m.rev
+          // Ignored (M7): `mcpPairing` always sends full manifests (`onChange: 'manifest'`), so a
+          // bare `changed` is not ours to trust — adopting its `rev` without the tool list would
+          // pin later calls to a revision whose tools this link never saw.
           return
         case 'result': {
           const p = pending.get(m.id)

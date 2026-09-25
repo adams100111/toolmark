@@ -61,7 +61,9 @@ own values; `tm.state` passes them through.
 ## Sensitive paths
 
 `tm.info(tool).sensitivePaths` lists the paths a tool treats as sensitive (`[]` by default). The same
-list drives `state()`, `fill` `changes`, confirmation payloads and OTel payload redaction. For form
+list drives `state()`, `fill` `changes`, confirmation payloads and OTel payload redaction. The paths
+are paths of the tool's values (`password`, a wizard's `<step>.password`); OTel maps them onto the
+call input (`values.password`, `steps.<step>.password`) when it redacts `toolmark.input`. For form
 and wizard tools it is the union of:
 
 - the declared list (`FormToolOptions.sensitive`, `WizardStep.sensitive`);
@@ -89,8 +91,10 @@ tm.events.on('interaction', (e) => {
 })
 ```
 
-Only user-originated, trusted events are reported, never values: agent fills, agent submits,
-agent button clicks and synthetic DOM events emit nothing. A field edit or focus is
+Only user-originated events are reported, never values: agent fills, agent submits and agent
+button clicks emit nothing. DOM `focus` / `submit` events (and DOM `input` events of the DOM
+adapters) must be trusted (`isTrusted`); `rhfAdapter` reports `input` from React's `onChange`, which
+may be synthetic. A field edit or focus is
 `{ tool: '<name>.fill', param: path }`; a form submit is `{ tool: '<name>.submit' }` (a wizard step
 submit is `{ tool: '<name>.fill', param: '<step>' }`).
 

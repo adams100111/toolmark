@@ -151,11 +151,11 @@ export async function createPairingServer(o: PairingServerOptions): Promise<Pair
     ws.close(PAIRING_CLOSE_CODES.unauthorized)
   }
 
-  const paired = (ws: WebSocket): void => {
+  const paired = (ws: WebSocket, how: 'pair' | 'resume'): void => {
     const previous = session
     session = ws
     ws.send(JSON.stringify({ type: 'paired', token }))
-    link.attach(ws)
+    link.attach(ws, how)
     if (previous && previous !== ws) previous.close(PAIRING_CLOSE_CODES.superseded)
   }
 
@@ -209,7 +209,7 @@ export async function createPairingServer(o: PairingServerOptions): Promise<Pair
         return
       }
       phase = 'paired'
-      paired(ws)
+      paired(ws, hello.type)
     })
 
     ws.on('close', () => {

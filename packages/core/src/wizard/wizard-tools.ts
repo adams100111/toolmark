@@ -1,4 +1,5 @@
 import { CONFIRM_SNAPSHOT, type ConfirmSnapshotHook } from '../confirm-snapshot.js'
+import { INPUT_SENSITIVE_PATHS } from '../input-redaction.js'
 import type { FileFieldSpec } from '../files.js'
 import { createFormTools } from '../forms/form-tools.js'
 import { optionsToolDefinition } from '../forms/options.js'
@@ -836,6 +837,14 @@ export function createWizardTools(
       }),
       anchors: wizardAnchors,
       ...wizardHooks,
+      // The fill's input is `{ steps: { <step>: values }, overwrite? }` (C1; `[]` patterns are
+      // expanded against the input by the consumer).
+      ...{
+        [INPUT_SENSITIVE_PATHS]: (): string[] =>
+          runtimes.flatMap((rt) =>
+            stepSensitive(rt).map((p) => `steps.${prefixed(rt.step.name, p)}`),
+          ),
+      },
     },
     asTool({
       name: `${opts.name}.goTo`,

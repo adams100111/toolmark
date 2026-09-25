@@ -92,6 +92,8 @@ the example reads `?mcpPort=` and defaults to `17840`.
 5. **Reload:** the page resumes with its token, without a new code. If it comes back within
    `2000` ms with the same tools, the MCP client sees no list change. Calls that were pending when the
    page reloaded fail with `The page reloaded before the result arrived; the outcome is unknown.`
+   When another page pairs with a new code instead, they fail with
+   `Another page took over the MCP connection before the result arrived.`
 
 Codes are 8 characters of Crockford base32, shown `XXXX-XXXX`. Input is normalized (case, `-`,
 spaces, `I`/`L` → `1`, `O` → `0`). A code is single use, expires after 5 minutes and rotates after
@@ -108,7 +110,9 @@ spaces, `I`/`L` → `1`, `O` → `0`). A code is single use, expires after 5 min
   256-bit token (the latest one only) is valid for the lifetime of the CLI process. Neither is logged
   except the code on the stderr pairing line.
 - **Supersede.** A newer pairing (or resume) closes the previous page's socket with `4409`; that page
-  stops and does not reconnect.
+  stops and does not reconnect. On `4409` and the other terminal closes (`4400`, `4401`, `4408`) the
+  page detaches its bridge: calls still running for the CLI are aborted and their inline
+  confirmations withdrawn, so a later approval on the old page never runs the tool.
 - **Handshake limits.** One pairing handshake at a time (others get `4429`); after a wrong code or
   token (`4401`) new handshakes are refused with `4429` for 250 ms; the first frame must arrive
   within 3000 ms and be at most 1 KiB.
