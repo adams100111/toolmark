@@ -5,7 +5,7 @@
 '@toolmark/mcp': minor
 ---
 
-Second preview (M3, reach): the same tool declarations now reach browser agents through the
+Third preview (M3, reach): the same tool declarations now reach browser agents through the
 experimental WebMCP consumer (`@toolmark/core/webmcp`, app-supplied polyfill loader), desktop MCP
 clients through the new `@toolmark/mcp` package (the dual-era `toolmark-mcp` stdio server with
 localhost pairing, and `mcpPairing` in `@toolmark/mcp/client`), and OpenTelemetry
