@@ -1,8 +1,15 @@
-import { useState, type JSX } from 'react'
+import { StrictMode, useState, type JSX, type ReactNode } from 'react'
 import { act, cleanup, render } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
 import { z } from 'zod'
-import { createToolmark, ok, type FormAdapter, type WizardStep } from '@toolmark/core'
+import {
+  createToolmark,
+  ok,
+  ToolmarkError,
+  type FormAdapter,
+  type ToolResult,
+  type WizardStep,
+} from '@toolmark/core'
 import { ToolmarkProvider, useWizardTool } from '../src/index.js'
 
 afterEach(cleanup)
@@ -181,38 +188,55 @@ describe('useWizardTool', () => {
     expect(afterSwitch.status).toBe('ok')
   })
 
-  it('wizard_hook_missing_stepwise_callbacks_misconfigured', () => {
-    // This suite's browser environment has no `import.meta.env.DEV`/`MODE` and no global
-    // `process` (see the report's Ruling on `isDevEnvironment`), so the hook's dev/prod heuristic
-    // resolves to "production" here: the reachable, tested path is the `error` event, mirroring
-    // core's own `wizard_misconfigured` prod behaviour (never thrown, `render` never throws).
-    const tm = createToolmark({ dev: true })
+  function MisconfiguredHarness(): null {
+    useWizardTool({
+      name: 'wiz',
+      description: 'A wizard',
+      steps: [{ name: 'a', input: z.object({ a: z.string() }) }],
+      current: 'a',
+      goTo: () => {},
+      submit: () => Promise.resolve(ok({})),
+      // no data/setData and no next/previous/currentAdapter: stepwise mode is misconfigured.
+    })
+    return null
+  }
+
+  it('wizard_hook_missing_stepwise_callbacks_misconfigured_prod_event', () => {
+    // Driven by the registry's own `dev` flag (not a bundler heuristic): `dev: false` → `error` event.
+    const tm = createToolmark({ dev: false })
     const errors: { code: string; message: string }[] = []
     tm.events.on('error', (e) => errors.push(e))
-    const steps: WizardStep[] = [{ name: 'a', input: z.object({ a: z.string() }) }]
-
-    function Harness(): null {
-      useWizardTool({
-        name: 'wiz',
-        description: 'A wizard',
-        steps,
-        current: 'a',
-        goTo: () => {},
-        submit: () => Promise.resolve(ok({})),
-        // no data/setData and no next/previous/currentAdapter: stepwise mode is misconfigured.
-      })
-      return null
-    }
 
     expect(() =>
       render(
         <ToolmarkProvider toolmark={tm}>
-          <Harness />
+          <MisconfiguredHarness />
         </ToolmarkProvider>,
       ),
     ).not.toThrow()
 
     expect(errors.map((e) => e.code)).toContain('wizard_misconfigured')
+    expect(tm.manifest().tools).toEqual([])
+  })
+
+  it('wizard_hook_missing_stepwise_callbacks_misconfigured_dev_throws', () => {
+    const tm = createToolmark({ dev: true })
+    const errors: { code: string }[] = []
+    tm.events.on('error', (e) => errors.push(e))
+
+    let thrown: unknown
+    try {
+      render(
+        <ToolmarkProvider toolmark={tm}>
+          <MisconfiguredHarness />
+        </ToolmarkProvider>,
+      )
+    } catch (e) {
+      thrown = e
+    }
+    expect(thrown).toBeInstanceOf(ToolmarkError)
+    expect((thrown as ToolmarkError).code).toBe('wizard_misconfigured')
+    expect(errors).toEqual([])
     expect(tm.manifest().tools).toEqual([])
   })
 
@@ -259,5 +283,97 @@ describe('useWizardTool', () => {
         .tools.map((t) => t.name)
         .sort(),
     ).toEqual(['wiz.fill', 'wiz.goTo', 'wiz.submit'])
+  })
+
+  async function submitSeesSyncedStep(wrap: (n: ReactNode) => ReactNode): Promise<void> {
+    const tm = createToolmark({ dev: true })
+    const steps: WizardStep[] = [
+      { name: 'basicInfo', input: z.object({ title: z.string() }) },
+      { name: 'details', input: z.object({ age: z.number() }) },
+    ]
+    const seen: {
+      arg?: Record<string, Record<string, unknown>>
+      closure?: Record<string, Record<string, unknown>>
+    } = {}
+
+    function Harness(): null {
+      const [data, setData] = useState<Record<string, Record<string, unknown>>>({
+        basicInfo: { title: '' },
+        details: { age: 1 },
+      })
+      useWizardTool({
+        name: 'wiz',
+        description: 'A wizard',
+        steps,
+        data,
+        setData,
+        current: 'basicInfo',
+        goTo: () => {},
+        // The mounted step form holds an edit not yet in `data`.
+        currentAdapter: noAdapter({ title: 'Typed' }),
+        submit: (merged): Promise<ToolResult<unknown>> => {
+          seen.arg = merged
+          seen.closure = data
+          return Promise.resolve(ok({}))
+        },
+      })
+      return null
+    }
+
+    render(<ToolmarkProvider toolmark={tm}>{wrap(<Harness />)}</ToolmarkProvider>)
+
+    await act(async () => {
+      const r = await tm.call('wiz.submit', {}, { caller: 'test' })
+      const final =
+        r.status === 'needs_confirmation'
+          ? await tm.confirmPending(r.confirmId, { approved: true })
+          : r
+      expect(final.status).toBe('ok')
+    })
+
+    // The argument carries the synced current step; the closed-over state is the pre-merge snapshot.
+    expect(seen.arg).toEqual({ basicInfo: { title: 'Typed' }, details: { age: 1 } })
+    expect(seen.closure?.basicInfo).toEqual({ title: '' })
+  }
+
+  it('wizard_hook_submit_receives_synced_parent_data', async () => {
+    await submitSeesSyncedStep((n) => n)
+  })
+
+  it('wizard_hook_submit_receives_synced_parent_data_strict_mode', async () => {
+    await submitSeesSyncedStep((n) => <StrictMode>{n}</StrictMode>)
+  })
+
+  it('wizard_hook_zero_arg_submit_still_works', async () => {
+    const tm = createToolmark({ dev: true })
+    let called = 0
+    function Harness(): null {
+      const [data, setData] = useState<Record<string, Record<string, unknown>>>({ a: { a: 'x' } })
+      useWizardTool({
+        name: 'wiz',
+        description: 'A wizard',
+        steps: [{ name: 'a', input: z.object({ a: z.string() }) }],
+        data,
+        setData,
+        current: 'a',
+        goTo: () => {},
+        submit: () => {
+          called += 1
+          return Promise.resolve(ok({}))
+        },
+      })
+      return null
+    }
+    render(
+      <ToolmarkProvider toolmark={tm}>
+        <Harness />
+      </ToolmarkProvider>,
+    )
+    await act(async () => {
+      const r = await tm.call('wiz.submit', {}, { caller: 'test' })
+      if (r.status === 'needs_confirmation')
+        await tm.confirmPending(r.confirmId, { approved: true })
+    })
+    expect(called).toBe(1)
   })
 })
