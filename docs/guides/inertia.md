@@ -293,7 +293,9 @@ Outcome mapping of `submit()`:
 - `finish` with `cancelled` or `interrupted` → `cancelled` `signal`;
 - **a bare `finish` → `ok({})`.** This differs from the per-visit mapping above, where a bare
   `onFinish` is an `error`: here success is only observable through the global `finish`;
-- no mounted ref → `error` `"Form is not mounted"`; `dispose()` settles in-flight submits
+- no mounted ref → `error` `"Form is not mounted"`; no `start` within 1000 ms of the submit (an
+  `onBefore` returned `false`, or the submit was swallowed) → `error`
+  `"Submit did not start a visit"`, listeners removed; `dispose()` settles in-flight submits
   `cancelled` `signal` and removes their listeners.
 
 **Correlation.** The first `start` after `submit()` records `"<method> <visit.url.href>"`; a
