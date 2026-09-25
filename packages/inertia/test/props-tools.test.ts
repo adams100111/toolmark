@@ -67,7 +67,7 @@ describe('propsTools', () => {
     ])
     const names = tm.manifest().tools.map((t) => t.name)
     expect(names).toEqual(['orders.approve', 'orders.show'])
-    expect(tm.info('orders.approve')).toEqual({ origin: 'server' })
+    expect(tm.info('orders.approve')).toEqual({ origin: 'server', sensitivePaths: [] })
     const full = tm.describe('orders.approve')
     expect(full?.title).toBe('Approve order')
     expect(full?.inputSchema).toEqual(schema)
@@ -230,7 +230,7 @@ describe('propsTools', () => {
           { router: fakeRouter() },
         )
       }).not.toThrow()
-      expect(tm.info('orders.approve')).toEqual({ origin: 'code' })
+      expect(tm.info('orders.approve')).toEqual({ origin: 'code', sensitivePaths: [] })
       expect(tm.manifest().tools.map((t) => t.name)).toEqual(['dup', 'dup_x', 'orders.approve'])
       // (dev also reports `missing_confirm_handler` for the consequential tools: no inline handler)
       const codes = errors.map((e) => e.code).filter((c) => c !== 'missing_confirm_handler')
