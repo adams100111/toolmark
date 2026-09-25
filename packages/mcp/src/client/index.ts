@@ -4,7 +4,12 @@
  * @packageDocumentation
  */
 import type { Toolmark } from '@toolmark/core'
-import { bridge, websocketTransport, type WebSocketTransportStatus } from '@toolmark/core/bridge'
+import {
+  bridge,
+  websocketTransport,
+  type BridgeTransport,
+  type WebSocketTransportStatus,
+} from '@toolmark/core/bridge'
 import {
   DEFAULT_PAIRING_PORT,
   HANDSHAKE_TIMEOUT_MS,
@@ -66,9 +71,10 @@ function writeToken(key: string, token: string | null): void {
  * `sessionStorage` under `toolmark:mcp:<port>`), waits for `paired`, then serves the registry as a
  * bridge with caller `mcp` (inline confirmation). Close codes `4400`, `4401`, `4408` and `4409`
  * stop reconnecting and detach the bridge: calls still running for the CLI are aborted and their
- * inline confirmations withdrawn. Other closes (including `1001`, the CLI shutting down) reconnect
- * with backoff and resume, keeping running calls (a restarted CLI rejects the old token with
- * `4401`, which then ends them).
+ * inline confirmations withdrawn. On `1001` (the CLI shutting down) the bridge is detached the same
+ * way and a fresh one attached: the session token is kept and the page keeps reconnecting and
+ * resumes when the CLI is back. Other closes reconnect with backoff and resume, keeping running
+ * calls.
  * @param o - The code, port and status callback.
  * @returns A consumer for `tm.use`. Without a code and without a stored token it is inert (no
  * socket; the disposer does nothing).
@@ -110,6 +116,33 @@ export function mcpPairing(o: McpPairingOptions = {}): (tm: Toolmark) => () => v
       detach = undefined
       d?.()
     }
+    /**
+     * Attaches a bridge over a view of the shared transport: the view's `close` only unsubscribes,
+     * so detaching one bridge never stops the socket (the final disposer closes it).
+     */
+    const attach = (): void => {
+      let open = true
+      const offs = new Set<() => void>()
+      const view: BridgeTransport = {
+        send: (m) => (open ? transport.send(m) : undefined),
+        onMessage: (h) => {
+          const off = transport.onMessage((raw) => {
+            if (open) h(raw)
+          })
+          offs.add(off)
+          return () => {
+            offs.delete(off)
+            off()
+          }
+        },
+        close: () => {
+          open = false
+          for (const off of [...offs]) off()
+          offs.clear()
+        },
+      }
+      detach = tm.use(bridge({ transport: view, caller: 'mcp' }))
+    }
 
     const onStatus = (s: WebSocketTransportStatus): void => {
       if (disposed) return
@@ -132,6 +165,13 @@ export function mcpPairing(o: McpPairingOptions = {}): (tm: Toolmark) => () => v
             }
             report('rejected')
           } else {
+            if (closeCode === PAIRING_CLOSE_CODES.goingAway && detach !== undefined) {
+              // The CLI is going away (I2): its pending calls failed there, so abort them here and
+              // withdraw their inline confirmations; a later approval must never run the tool.
+              // Keep the token and reconnect with a fresh bridge.
+              release()
+              attach()
+            }
             report(s.firstConnectFailed ? 'unreachable' : 'disconnected')
           }
           return
@@ -189,11 +229,12 @@ export function mcpPairing(o: McpPairingOptions = {}): (tm: Toolmark) => () => v
       },
     })
 
-    detach = tm.use(bridge({ transport, caller: 'mcp' }))
+    attach()
     return () => {
       if (disposed) return
       disposed = true
       release()
+      transport.close?.()
     }
   }
 }

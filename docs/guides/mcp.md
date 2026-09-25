@@ -112,7 +112,8 @@ spaces, `I`/`L` → `1`, `O` → `0`). A code is single use, expires after 5 min
 - **Supersede.** A newer pairing (or resume) closes the previous page's socket with `4409`; that page
   stops and does not reconnect. On `4409` and the other terminal closes (`4400`, `4401`, `4408`) the
   page detaches its bridge: calls still running for the CLI are aborted and their inline
-  confirmations withdrawn, so a later approval on the old page never runs the tool.
+  confirmations withdrawn, so a later approval on the old page never runs the tool. `1001` (the CLI
+  shutting down) withdraws them the same way but keeps the token and reconnects.
 - **Handshake limits.** One pairing handshake at a time (others get `4429`); after a wrong code or
   token (`4401`) new handshakes are refused with `4429` for 250 ms; the first frame must arrive
   within 3000 ms and be at most 1 KiB.
@@ -140,8 +141,12 @@ spaces, `I`/`L` → `1`, `O` → `0`). A code is single use, expires after 5 min
 | `4408` | No pairing frame within 3000 ms                                     | stops (rejected) |
 | `4409` | Superseded by a newer pairing                                       | stops            |
 | `4429` | Another handshake in progress, or 250 ms after a `4401`             | reconnects       |
-| `1001` | The CLI is shutting down                                            | reconnects       |
+| `1001` | The CLI is shutting down                                            | reconnects (\*)  |
 | `1009` | Frame larger than 4 MiB                                             | reconnects       |
+
+(\*) On `1001` the page also detaches its bridge and attaches a fresh one: calls still running for
+the departed CLI are aborted and their inline confirmations withdrawn, but the session token is
+kept and the page resumes with it when the CLI is back.
 
 ## Deadlines and cancellation
 

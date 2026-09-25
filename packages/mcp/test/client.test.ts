@@ -157,6 +157,79 @@ describe('mcpPairing', () => {
     await expect(pending).resolves.toEqual({ status: 'error', message: SUPERSEDED_TEXT })
   })
 
+  it('cli_shutdown_withdraws_inflight_confirmation_and_resumes', async () => {
+    const { server, link, err, port } = await start()
+    const queue = createConfirmQueue()
+    const tm = createTestToolmark({ confirm: queue.handler })
+    const run = vi.fn(() => ok('deleted'))
+    tm.register({
+      name: 'crm.delete',
+      description: 'Deletes a contact.',
+      hints: { consequential: true },
+      run,
+    })
+    const statuses: McpPairingStatus[] = []
+    cleanups.push(tm.use(mcpPairing({ code: err.code(), port, onStatus: (s) => statuses.push(s) })))
+    await until(() => link.state() === 'paired')
+    const token = storage.map.get(`toolmark:mcp:${port}`)
+    expect(token).toMatch(/^[A-Za-z0-9_-]{43}$/)
+
+    const pending = link.call('crm.delete', {}, { signal: new AbortController().signal })
+    await until(() => queue.getPending() !== null)
+
+    // The CLI shuts down: its pairing server closes the page socket with 1001.
+    await server.close()
+    await pending
+    await until(() => statuses.includes('disconnected'))
+    expect(queue.getPending()).toBeNull()
+    queue.approve()
+    await new Promise((r) => setTimeout(r, 50))
+    expect(run).not.toHaveBeenCalled()
+    expect(tm.calls.at(-1)?.result.status).toBe('cancelled')
+    // The session survives the shutdown.
+    expect(storage.map.get(`toolmark:mcp:${port}`)).toBe(token)
+
+    // The CLI comes back on the same port: the page resumes with its token and serves calls.
+    const wss = new WebSocketServer({ host: '127.0.0.1', port })
+    cleanups.push(
+      () =>
+        new Promise<void>((r) => {
+          for (const c of wss.clients) c.terminate()
+          wss.close(() => r())
+        }),
+    )
+    const frames: { type: string; token?: string; id?: string; result?: unknown }[] = []
+    let socket!: import('ws').WebSocket
+    wss.on('connection', (ws) => {
+      socket = ws
+      ws.on('message', (data) => {
+        const f = JSON.parse((data as Buffer).toString('utf8')) as (typeof frames)[number]
+        frames.push(f)
+        if (f.type === 'resume') ws.send(JSON.stringify({ type: 'paired', token: f.token }))
+      })
+    })
+    await until(() => frames.some((f) => f.type === 'manifest'), 5000)
+    expect(frames[0]).toEqual({ type: 'resume', token })
+    expect(statuses.at(-1)).toBe('paired')
+    expect(statuses).not.toContain('rejected')
+    // A call on the resumed session confirms inline and runs once approved.
+    socket.send(
+      JSON.stringify({
+        protocol: 1,
+        type: 'call',
+        clientId: tm.clientId,
+        id: 'c1',
+        tool: 'crm.delete',
+        input: {},
+      }),
+    )
+    await until(() => queue.getPending() !== null)
+    queue.approve()
+    await until(() => frames.some((f) => f.type === 'result' && f.id === 'c1'))
+    expect(frames.find((f) => f.id === 'c1')?.result).toEqual({ status: 'ok', data: 'deleted' })
+    expect(run).toHaveBeenCalledTimes(1)
+  })
+
   it('rejected_code_stops_and_reports', async () => {
     const { link, port } = await start()
     const p = page({ code: 'ZZZZ-ZZZZ', port })
