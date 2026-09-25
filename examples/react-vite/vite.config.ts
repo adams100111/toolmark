@@ -4,12 +4,16 @@ import { defaultClientConditions, defaultServerConditions, defineConfig } from '
 
 const root = fileURLToPath(new URL('.', import.meta.url))
 
-// `@toolmark/source` first: the example resolves the workspace packages straight to `src/*.ts`,
-// no build required (overview "Source-first resolution").
+// `TOOLMARK_DIST=1` (release-candidate evidence, spec §21): resolve the workspace packages through
+// their built `import` targets (dist/) instead of `src/*.ts`, so the e2e exercises the RC build.
+const source = process.env.TOOLMARK_DIST === '1' ? [] : ['@toolmark/source']
+
+// `@toolmark/source` first (unless `TOOLMARK_DIST=1`): the example resolves the workspace packages
+// straight to `src/*.ts`, no build required (overview "Source-first resolution").
 export default defineConfig({
   plugins: [react()],
   resolve: {
-    conditions: ['@toolmark/source', ...defaultClientConditions],
+    conditions: [...source, ...defaultClientConditions],
     // `@toolmark/tour/styles.css` exports only `dist/styles.css` (no `@toolmark/source` target):
     // point it at the source stylesheet so the example needs no build (dev and `vite build`).
     alias: [
@@ -21,7 +25,7 @@ export default defineConfig({
   },
   ssr: {
     resolve: {
-      conditions: ['@toolmark/source', ...defaultServerConditions],
+      conditions: [...source, ...defaultServerConditions],
     },
   },
   build: {

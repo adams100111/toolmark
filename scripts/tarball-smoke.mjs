@@ -2,7 +2,11 @@
 // Tarball smoke test (M1 Task 16): installs every packed tarball in `<dir>` into a fresh project
 // outside the workspace and checks what a consumer would see.
 //
-//   node scripts/tarball-smoke.mjs <dir> [--keep]
+//   node scripts/tarball-smoke.mjs <dir> [<dir2>] [--keep]
+//
+// With two directories (release-dry-run: the `pnpm pack` tarballs and the changesets-packed ones),
+// each set is installed into its own temp project and checked in full; one summary line covers
+// both.
 //
 // (a) every `exports` target exists (wildcards expanded against the packed files); every JS entry
 //     is dynamically imported by `node` (entries listed in BROWSER_ONLY are only resolved with
@@ -213,12 +217,22 @@ function tscCommand(project, pkgDir) {
 async function main() {
   const args = process.argv.slice(2)
   const keep = args.includes('--keep') || process.env.TOOLMARK_SMOKE_KEEP === '1'
-  const dirArg = args.find((a) => !a.startsWith('--'))
-  if (!dirArg) {
-    console.log('usage: node scripts/tarball-smoke.mjs <dir> [--keep]')
+  const dirArgs = args.filter((a) => !a.startsWith('--'))
+  if (dirArgs.length === 0 || dirArgs.length > 2) {
+    console.log('usage: node scripts/tarball-smoke.mjs <dir> [<dir2>] [--keep]')
     return 1
   }
-  const dir = resolve(dirArg)
+  // Each directory gets its own temp project (the two sets carry the same package names); one
+  // summary covers both.
+  let code = 0
+  for (const dirArg of dirArgs) {
+    if ((await checkDir(resolve(dirArg), keep)) !== 0) code = 1
+  }
+  return results.every((r) => r.ok) ? code : 1
+}
+
+async function checkDir(dir, keep) {
+  console.log(`info: tarballs ${dir}`)
   const tarballs = existsSync(dir)
     ? (await readdir(dir))
         .filter((f) => f.endsWith('.tgz'))
