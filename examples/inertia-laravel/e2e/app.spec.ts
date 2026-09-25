@@ -348,16 +348,24 @@ test('lint_clean', async () => {
   const lintDir = path.dirname(require.resolve('@toolmark/lint/package.json'))
   const pages = ['/challenges', '/challenges/create', '/wizard', '/feedback']
   const args = [
-    path.join(lintDir, 'dist', 'cli.js'),
+    path.join(lintDir, 'dist', 'bin.js'),
     'lint',
     ...pages.flatMap((p) => ['--url', BASE_URL + p]),
     '--storage-state',
     STORAGE_STATE,
   ]
-  const exitCode = await new Promise<number>((resolve, reject) => {
-    const child = spawn(process.execPath, args, { cwd: ROOT, stdio: 'inherit' })
-    child.once('exit', (code) => resolve(code ?? 1))
-    child.once('error', reject)
-  })
-  expect(exitCode).toBe(0)
+  const result = await new Promise<{ code: number; stdout: string; stderr: string }>(
+    (resolve, reject) => {
+      const child = spawn(process.execPath, args, { cwd: ROOT, stdio: 'pipe' })
+      let stdout = ''
+      let stderr = ''
+      child.stdout.on('data', (d: Buffer) => (stdout += d.toString()))
+      child.stderr.on('data', (d: Buffer) => (stderr += d.toString()))
+      child.once('close', (code) => resolve({ code: code ?? 1, stdout, stderr }))
+      child.once('error', reject)
+    },
+  )
+  expect(result.code, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`).toBe(0)
+  // The summary line, not only exit 0: a CLI that silently does nothing must not pass.
+  expect(result.stdout).toMatch(/^0 error\(s\), \d+ warning\(s\)$/m)
 })

@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -12,14 +12,15 @@ const execFileAsync = promisify(execFile)
 
 const FIXTURES = fileURLToPath(new URL('./fixtures/', import.meta.url))
 const PACKAGE_ROOT = fileURLToPath(new URL('..', import.meta.url))
-const CLI_JS = join(PACKAGE_ROOT, 'dist', 'cli.js')
+const CLI_JS = join(PACKAGE_ROOT, 'dist', 'bin.js')
 
 /** Spawns the built `dist/cli.js` (regression coverage for the real `toolmark` bin entrypoint). */
 async function runBuiltCli(
   args: readonly string[],
+  binPath: string = CLI_JS,
 ): Promise<{ code: number; stdout: string; stderr: string }> {
   try {
-    const { stdout, stderr } = await execFileAsync(process.execPath, [CLI_JS, ...args])
+    const { stdout, stderr } = await execFileAsync(process.execPath, [binPath, ...args])
     return { code: 0, stdout, stderr }
   } catch (e) {
     const err = e as { code?: number; stdout?: string; stderr?: string }
@@ -99,6 +100,25 @@ describe('runCli', () => {
     const code = await runCli(['--manifest', `${FIXTURES}manifest-invalid-tool.json`], io)
     expect(code).toBe(EXIT_USAGE_OR_RUNTIME_FAILURE)
     expect(stderr()).toContain(`invalid manifest file: ${FIXTURES}manifest-invalid-tool.json`)
+  })
+
+  it('no --manifest and no --url exits 2 with usage', async () => {
+    const { io, stderr, stdout } = fakeIo()
+    const code = await runCli([], io)
+    expect(code).toBe(EXIT_USAGE_OR_RUNTIME_FAILURE)
+    expect(stderr()).toContain('toolmark lint [options]')
+    expect(stdout()).toBe('')
+    const lintOnly = fakeIo()
+    expect(await runCli(['lint', '--format', 'json'], lintOnly.io)).toBe(
+      EXIT_USAGE_OR_RUNTIME_FAILURE,
+    )
+  })
+
+  it('--help describes --budget as the tool-budget threshold (default 40)', async () => {
+    const { io, stdout } = fakeIo()
+    await runCli(['--help'], io)
+    expect(stdout()).toMatch(/--budget <n>\s+Tool-budget threshold/)
+    expect(stdout()).toContain('default: 40')
   })
 
   it('cli_exit_codes (unknown flag exits 2)', async () => {
@@ -246,9 +266,29 @@ describe('lint subcommand (spawned dist/cli.js)', () => {
   })
 })
 
+describe('bin through a symlink (npm/npx .bin)', () => {
+  it('c1_symlinked_bin_runs_main (bad manifest exits 2, not a silent 0)', async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), 'toolmark-lint-bin-'))
+    const link = join(tmpDir, 'toolmark')
+    await symlink(CLI_JS, link)
+    const { code, stderr } = await runBuiltCli(['lint', '--manifest', '/nonexistent.json'], link)
+    expect(code).toBe(EXIT_USAGE_OR_RUNTIME_FAILURE)
+    expect(stderr).toContain('invalid manifest file: /nonexistent.json')
+  })
+
+  it('c1_symlinked_bin_runs_main (--help prints usage)', async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), 'toolmark-lint-bin-'))
+    const link = join(tmpDir, 'toolmark')
+    await symlink(CLI_JS, link)
+    const { code, stdout } = await runBuiltCli(['--help'], link)
+    expect(code).toBe(EXIT_OK)
+    expect(stdout).toContain('toolmark lint [options]')
+  })
+})
+
 describe('bin_has_shebang', () => {
-  it('the built cli.js keeps its shebang', async () => {
-    const contents = await readFile(join(PACKAGE_ROOT, 'dist', 'cli.js'), 'utf8')
+  it('the built bin.js keeps its shebang', async () => {
+    const contents = await readFile(CLI_JS, 'utf8')
     expect(contents.split('\n')[0]).toBe('#!/usr/bin/env node')
   })
 })

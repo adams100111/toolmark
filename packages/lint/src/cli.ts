@@ -1,6 +1,4 @@
-#!/usr/bin/env node
 import { parseArgs } from 'node:util'
-import { pathToFileURL } from 'node:url'
 import { collectFromUrl, LintUsageError } from './collect.js'
 import { formatFindings } from './format.js'
 import { loadJudge } from './judge.js'
@@ -24,7 +22,8 @@ function usage(): string {
     '  --url <url>              Lint tools collected from a live page (repeatable)\n' +
     '  --storage-state <file>   Playwright storage state for --url\n' +
     '  --judge <spec>           Load a judge module (repeatable)\n' +
-    '  --budget <n>             Positive integer judge budget\n' +
+    '  --budget <n>             Tool-budget threshold: max tools per page before the\n' +
+    '                           tool-budget rule warns (positive integer, default: 40)\n' +
     '  --format <pretty|json>   Output format (default: pretty)\n' +
     '  --help                   Show this help\n'
   )
@@ -83,6 +82,11 @@ export async function runCli(
     return EXIT_USAGE_OR_RUNTIME_FAILURE
   }
 
+  if ((values.manifest ?? []).length === 0 && (values.url ?? []).length === 0) {
+    io.stderr(`${usage()}\nNothing to lint: pass --manifest <file> and/or --url <url>\n`)
+    return EXIT_USAGE_OR_RUNTIME_FAILURE
+  }
+
   let budget: number | undefined
   if (values.budget !== undefined) {
     const n = Number(values.budget)
@@ -138,7 +142,12 @@ export async function runCli(
   return findings.some((f) => f.severity === 'error') ? EXIT_ERRORS_FOUND : EXIT_OK
 }
 
-async function main(): Promise<void> {
+/**
+ * The `toolmark` bin's entry: runs {@link runCli} on `process.argv` and sets `process.exitCode`.
+ * Called unconditionally by `bin.ts` (the published bin target), so it works through npm/npx
+ * `.bin` symlinks; this module itself never runs anything on import.
+ */
+export async function main(): Promise<void> {
   try {
     process.exitCode = await runCli(process.argv.slice(2))
   } catch (e) {
@@ -146,9 +155,3 @@ async function main(): Promise<void> {
     process.exitCode = EXIT_USAGE_OR_RUNTIME_FAILURE
   }
 }
-
-// Only run when executed directly (`toolmark lint` / `node dist/cli.js`), never on import (so
-// tests can import `runCli` without triggering a live run against the test process's own argv).
-const isMainModule =
-  process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href
-if (isMainModule) void main()
