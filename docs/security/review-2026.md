@@ -775,20 +775,23 @@ All are resolved on the M5 release branch. Their regression tests are in
 The release pipeline review (checklist items 13 and 14, over `release.yml`,
 `check-release-versions.mjs`, `check-workflows.mjs`, `docs/release/release-workflow.md` and their
 interaction with `ci.yml`, `docs-deploy.yml` and `spec-watch.yml`) approved the pipeline with
-fixes: one Important and seven Minor findings, all resolved on the M5 release branch. Regression
-tests are in `scripts/check-workflows.test.mjs`, `scripts/check-release-versions.test.mjs` and
-`scripts/release-workflow.test.mjs`.
+fixes: one Important and seven Minor findings, all resolved on the M5 release branch. Its
+re-review approved those fixes and raised two more Minor findings (SEC-22, SEC-23), also resolved.
+Regression tests are in `scripts/check-workflows.test.mjs`, `scripts/check-release-versions.test.mjs`,
+`scripts/require-tag-at-sha.test.mjs` and `scripts/release-workflow.test.mjs`.
 
-| id     | severity  | item | summary                                                                                                                                               | resolution | commit    | regression test                                                 |
-| ------ | --------- | ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- | --------- | --------------------------------------------------------------- |
-| SEC-14 | Important | 13   | The release build restored a pnpm-store cache that a default-branch job running unpinned third-party code (spec-watch `wpt` at `master`) could poison | fixed      | `28ba345` | `sec_14_jobs_feeding_publish_restore_no_cache`                  |
-| SEC-15 | Minor     | 13   | `gh release create` trusted a pre-existing `<name>@<version>` tag, which could point at a different commit                                            | fixed      | `28ba345` | `sec_15_release_step_refuses_a_tag_at_another_commit`           |
-| SEC-16 | Minor     | 13   | `publish` did not check a tarball's own manifest against its plan entry, and plan paths were unconstrained                                            | fixed      | `aaa7022` | `check_release_versions_plan_rejects_manifest_version_mismatch` |
-| SEC-17 | Minor     | 13   | The release doc omitted the `npm-release` deployment-branch policy (`main` only), the real branch control, from its gate list                         | fixed      | `e4e30e1` | `sec_17_doc_lists_main_only_deployment_branches_as_a_gate`      |
-| SEC-18 | Minor     | 13   | The publish job did not refuse private-repo runs, where required reviewers are not enforced on the Free plan                                          | fixed      | `28ba345` | `sec_18_publish_refuses_private_repositories`                   |
-| SEC-19 | Minor     | 13   | `check-workflows` did not flag `workflow_run`, `${{ }}` of untrusted or step-output contexts in `run:`, or caches in privileged jobs                  | fixed      | `acf5efb` | `check_workflows_rejects_cache_in_privileged_jobs`              |
-| SEC-20 | Minor     | 13   | spec-watch interpolated `steps.spec-watch.outputs.changed-keys` into a `run:` script in a job with a write token                                      | fixed      | `28ba345` | `check_workflows_passes_repository_workflows`                   |
-| SEC-21 | Minor     | 13   | The setup-php pin comment named `v2.37.2`, a tag that does not exist (the tag is `2.37.2`)                                                            | fixed      | `28ba345` | `check_workflows_accepts_version_comment_without_v`             |
+| id     | severity  | item | summary                                                                                                                                               | resolution | commit    | regression test                                                        |
+| ------ | --------- | ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- | --------- | ---------------------------------------------------------------------- |
+| SEC-14 | Important | 13   | The release build restored a pnpm-store cache that a default-branch job running unpinned third-party code (spec-watch `wpt` at `master`) could poison | fixed      | `28ba345` | `sec_14_jobs_feeding_publish_restore_no_cache`                         |
+| SEC-15 | Minor     | 13   | `gh release create` trusted a pre-existing `<name>@<version>` tag, which could point at a different commit                                            | fixed      | `72dffc8` | `sec_15_release_step_runs_the_tag_guard_before_and_after_each_release` |
+| SEC-16 | Minor     | 13   | `publish` did not check a tarball's own manifest against its plan entry, and plan paths were unconstrained                                            | fixed      | `aaa7022` | `check_release_versions_plan_rejects_manifest_version_mismatch`        |
+| SEC-17 | Minor     | 13   | The release doc omitted the `npm-release` deployment-branch policy (`main` only), the real branch control, from its gate list                         | fixed      | `e4e30e1` | `sec_17_doc_lists_main_only_deployment_branches_as_a_gate`             |
+| SEC-18 | Minor     | 13   | The publish job did not refuse private-repo runs, where required reviewers are not enforced on the Free plan                                          | fixed      | `28ba345` | `sec_18_publish_refuses_private_repositories`                          |
+| SEC-19 | Minor     | 13   | `check-workflows` did not flag `workflow_run`, `${{ }}` of untrusted or step-output contexts in `run:`, or caches in privileged jobs                  | fixed      | `acf5efb` | `check_workflows_rejects_cache_in_privileged_jobs`                     |
+| SEC-20 | Minor     | 13   | spec-watch interpolated `steps.spec-watch.outputs.changed-keys` into a `run:` script in a job with a write token                                      | fixed      | `28ba345` | `check_workflows_passes_repository_workflows`                          |
+| SEC-21 | Minor     | 13   | The setup-php pin comment named `v2.37.2`, a tag that does not exist (the tag is `2.37.2`)                                                            | fixed      | `28ba345` | `check_workflows_accepts_version_comment_without_v`                    |
+| SEC-22 | Minor     | 13   | `--plan` read the packed manifest with a tar parser that could disagree with npm's (first duplicate wins, PAX/GNU names ignored)                      | fixed      | `fe25318` | `check_release_versions_plan_rejects_duplicate_manifests`              |
+| SEC-23 | Minor     | 13   | The `check-workflows` cache rule missed `pnpm/action-setup`'s `cache:` input                                                                          | fixed      | `74d51c4` | `check_workflows_rejects_cache_in_privileged_jobs`                     |
 
 - SEC-14: `select-mode` and `pack` (the jobs that feed `publish`) and docs-deploy `build` (feeds
   `deploy`) set `package-manager-cache: false`; spec-watch `watch`, `canary` and `audit` (write
@@ -797,10 +800,13 @@ tests are in `scripts/check-workflows.test.mjs`, `scripts/check-release-versions
   only, no secret and no cache. `check-workflows` now enforces the cache rule
   (`check_workflows_rejects_cache_in_privileged_jobs`) and SHA-pinned foreign checkouts
   (`check_workflows_rejects_unpinned_foreign_checkout`).
-- SEC-15: before and after each `gh release create`, the step resolves the tag through
-  `git/ref/tags/<tag>` (annotated tags dereferenced through `git/tags/<sha>`) and fails unless an
-  existing tag points at `$GITHUB_SHA`; any API error other than 404 fails closed. A tag ruleset
-  restricting `@toolmark/*` tag creation remains an owner option after the repository goes public.
+- SEC-15: before and after each `gh release create`, `scripts/require-tag-at-sha.sh` reads the
+  tag with `git ls-remote` (annotated tags peeled through the `^{}` entry, exact ref-name match)
+  and fails unless an existing tag points at `$GITHUB_SHA`; after the release the tag must exist,
+  and a remote that cannot be read fails closed. The script is tested by running it against
+  temporary git repositories (`scripts/require-tag-at-sha.test.mjs`); `sec_15_*` pins where the
+  workflow calls it. A tag ruleset restricting `@toolmark/*` tag creation remains an owner option
+  after the repository goes public.
 - SEC-16: `check-release-versions --plan dist-pack` runs before `npm publish`: each entry is a
   `publish` of `@toolmark/<name>` with `tarball.path` matching `^packages/[a-z0-9-]+-[0-9A-Za-z.-]+\.tgz$`
   and no traversal, a matching `sha256` integrity, a packed `name`/`version` equal to the plan's,
@@ -822,3 +828,14 @@ tests are in `scripts/check-workflows.test.mjs`, `scripts/check-release-versions
 - SEC-20: the value reaches the script as `CHANGED_KEYS` through the step's `env:`.
 - SEC-21: the comment reads `# 2.37.2`; `check-workflows` already accepted a version comment
   without `v`, and a fixture now pins that.
+- SEC-22: `packedManifest` refuses a second entry that normalises to `package/package.json`
+  (npm's node-tar keeps the last), any typeflag other than a file or directory (PAX `x`/`g`, GNU
+  `L`/`K`, links, devices), entries outside `package/` after normalisation, bad header checksums,
+  and it keeps reading past a lone null block as node-tar does. The publish job then runs
+  `check-release-versions --npm-dry-run`, which asks npm (`npm publish <tgz> --dry-run --json`,
+  offline via `--force` and a loopback registry, with only `PATH` and a scratch `HOME`) for each
+  tarball's name and version and compares them with the plan. Also covered by
+  `…_plan_rejects_pax_and_gnu_headers`, `…_rejects_entries_outside_package`,
+  `…_rejects_entries_after_a_null_block`, `…_npm_dry_run_*` and `sec_22_*`.
+- SEC-23: any step with a truthy `cache:` input (whatever the action, quoted or not) and every
+  `actions/cache/*` sub-action now fail in privileged jobs and the jobs they need.
