@@ -66,7 +66,8 @@ describe('SEC-11: an edited approval keeps redacted secrets', () => {
     expect(runs).toEqual([{ ...input, note: 'y' }])
   })
 
-  it('sec_11_placeholder_outside_a_sensitive_path_is_kept', async () => {
+  // Superseded by SEC-28: a placeholder the approver adds outside a sensitive path is refused.
+  it('sec_11_placeholder_outside_a_sensitive_path_is_refused', async () => {
     const tm = createTestRegistry()
     const runs: unknown[] = []
     tm.register(secretTool(runs))
@@ -74,8 +75,11 @@ describe('SEC-11: an edited approval keeps redacted secrets', () => {
     if (r.status !== 'needs_confirmation') throw new Error('expected needs_confirmation')
     const [pending] = tm.pendingConfirmations()
     const edited = { ...(pending?.input as object), note: '[redacted]' }
-    await tm.confirmPending(r.confirmId, { approved: true, input: edited })
-    expect(runs).toEqual([{ ...input, note: '[redacted]' }])
+    expect(await tm.confirmPending(r.confirmId, { approved: true, input: edited })).toEqual({
+      status: 'invalid',
+      issues: [{ path: 'note', message: 'Re-enter sensitive field' }],
+    })
+    expect(runs).toEqual([])
   })
 })
 

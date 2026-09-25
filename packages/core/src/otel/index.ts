@@ -163,7 +163,8 @@ export function otel(o?: OtelOptions): (tm: Toolmark) => () => void {
       open.set(e.callId, {
         span: startCallSpan(e.tool, e.caller, e.callId),
         inputJson: recordPayloads ? inputJsonOf(e.tool, e.input) : undefined,
-        sensitive: recordPayloads ? (valueSensitivePaths(tm, e.tool) ?? []) : [],
+        // SEC-29: keep the fail-closed `null` (redact every change) when they cannot be read.
+        sensitive: recordPayloads ? (valueSensitivePaths(tm, e.tool) ?? null) : [],
       })
     })
 
@@ -180,9 +181,10 @@ export function otel(o?: OtelOptions): (tm: Toolmark) => () => void {
       }
 
       if (recordPayloads) {
-        // Fail closed: a tool gone by now falls back to the paths read at call time.
+        // Fail closed: a tool gone by now falls back to the paths read at call time, and a result
+        // with neither (no matching `call`) redacts every change.
         const live = valueSensitivePaths(tm, e.tool)
-        const sensitivePaths = live !== undefined ? live : (opened?.sensitive ?? [])
+        const sensitivePaths = live !== undefined ? live : (opened?.sensitive ?? null)
         if (opened?.inputJson !== undefined) span.setAttribute('toolmark.input', opened.inputJson)
         const resultJson = truncatedJson(redactResult(e.result, sensitivePaths))
         if (resultJson !== undefined) span.setAttribute('toolmark.result', resultJson)

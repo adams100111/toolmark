@@ -155,7 +155,7 @@ jobs:
       - name: Publish (npm, provenance)
         env:
           NPM_BOOTSTRAP_TOKEN: ${{ secrets.NPM_BOOTSTRAP_TOKEN }}
-        run: node scripts/publish-tarballs.mjs dist-pack --released released.tsv
+        run: node scripts/publish-tarballs.mjs --released released.tsv dist-pack
       - name: Git tags and GitHub releases
         env:
           GH_TOKEN: ${{ github.token }}
@@ -222,7 +222,7 @@ jobs:
       - name: npm reads the plan's name and version from each tarball
         run: node scripts/check-release-versions.mjs --npm-dry-run dist-pack
       - name: Publish loop (dry run, no npm publish)
-        run: node scripts/publish-tarballs.mjs --dry-run dist-pack --released released.tsv
+        run: node scripts/publish-tarballs.mjs --dry-run dist-pack
       - name: Tarball smoke (pnpm pack + changesets pack)
         run: |
           pnpm -r --filter "./packages/*" pack --pack-destination "$PWD/dist-tarballs"
