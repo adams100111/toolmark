@@ -1,0 +1,17 @@
+{
+  "page": "checkout",
+  "tools": [
+    {
+      "name": "checkout.submit",
+      "llmName": "checkout_submit",
+      "description": "Submits the checkout form after validating shipping and payment details.",
+      "hints": { "consequential": true },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "note": { "type": "string", "description": "An optional note for the order." }
+        }
+      }
+    }
+  ]
+}
