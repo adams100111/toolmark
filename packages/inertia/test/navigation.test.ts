@@ -2,7 +2,7 @@ import { createToolmark } from '@toolmark/core'
 import { describe, expect, it, vi } from 'vitest'
 import { navigationTool } from '../src/navigation.js'
 import { inertiaPages } from '../src/pages.js'
-import type { RouterLike } from '../src/router-like.js'
+import { resolveSameOriginUrl, type RouterLike } from '../src/router-like.js'
 
 const routes = {
   'orders.index': () => ({ url: '/orders', method: 'get' }),
@@ -45,7 +45,7 @@ describe('navigationTool', () => {
       { caller: 'inapp' },
     )
     expect(r).toMatchObject({ status: 'ok', data: { url: '/orders/7' } })
-    expect(visit).toHaveBeenCalledWith('/orders/7', { method: 'get' })
+    expect(visit).toHaveBeenCalledWith(`${location.origin}/orders/7`, { method: 'get' })
 
     const unknown = await tm.call('navigate', { route: 'nope' }, { caller: 'inapp' })
     expect(unknown.status).toBe('invalid')
@@ -108,7 +108,7 @@ describe('navigationTool', () => {
               {
                 name: 'orders.approve',
                 description: 'Approve the order',
-                inputSchema: { type: 'object' },
+                inputSchema: { type: 'object', additionalProperties: false },
                 visit: { url: '/orders/7/approve', method: 'post' },
               },
             ],
@@ -125,10 +125,72 @@ describe('navigationTool', () => {
     expect(tm.info('orders.approve')).toBeDefined()
 
     await vi.waitFor(() => expect(order).toContain('navigate'))
-    expect(order).toEqual(['visit /orders', 'result ok', 'navigate'])
+    expect(order).toEqual([`visit ${location.origin}/orders`, 'result ok', 'navigate'])
     const old = await tm.call('orders.approve', {}, { caller: 'human' })
     expect(old).toMatchObject({ status: 'refused', code: 'unknown_tool' })
     // The navigation tool lives at the root scope and survives the page swap.
     expect(tm.info('navigate')).toBeDefined()
+  })
+
+  it('navigation_rejects_prototype_keys_in_params', async () => {
+    const { tm, visit } = setup()
+    for (const [params, path] of [
+      [JSON.parse('{"__proto__": {"polluted": true}}') as unknown, 'params.__proto__'],
+      [{ constructor: 'x' }, 'params.constructor'],
+      [{ id: 1, nested: { prototype: {} } }, 'params.nested.prototype'],
+    ] as const) {
+      const r = await tm.call('navigate', { route: 'orders.show', params }, { caller: 'inapp' })
+      expect(r).toMatchObject({ status: 'invalid', issues: [{ path }] })
+    }
+    expect(visit).not.toHaveBeenCalled()
+  })
+
+  it('navigation_visits_canonical_url', async () => {
+    const tm = createToolmark()
+    const visit = vi.fn<(url: string, opts: { method: 'get' }) => void>()
+    tm.register(
+      navigationTool({ routes: { rel: () => ({ url: 'a/../b?x=1', method: 'get' }) }, visit }),
+    )
+    const r = await tm.call('navigate', { route: 'rel' }, { caller: 'inapp' })
+    expect(r.status).toBe('ok')
+    expect(visit).toHaveBeenCalledWith(new URL('b?x=1', location.href).href, { method: 'get' })
+  })
+
+  it('navigation_empty_routes_every_call_invalid', async () => {
+    const tm = createToolmark()
+    const visit = vi.fn<(url: string, opts: { method: 'get' }) => void>()
+    // fromJsonSchema accepts `enum: []`; no route name can then validate.
+    tm.register(navigationTool({ routes: {}, visit }))
+    const props = (tm.describe('navigate')?.inputSchema as { properties: { route: { enum: [] } } })
+      .properties
+    expect(props.route.enum).toEqual([])
+    const r = await tm.call('navigate', { route: 'anything' }, { caller: 'inapp' })
+    expect(r.status).toBe('invalid')
+    expect(visit).not.toHaveBeenCalled()
+  })
+})
+
+describe('resolveSameOriginUrl', () => {
+  const host = location.host
+  const sameScheme = location.protocol === 'https:'
+  it.each([
+    ['//evil.example/x', null],
+    ['/\\evil.example/x', null],
+    ['\\\\evil.example/x', null],
+    ['https:/\\evil.example/x', null],
+    [`https://${host}@evil.example/x`, null],
+    [`${location.protocol}//evil@${host}/x`, null],
+    [`${location.protocol}//u:p@${host}/x`, null],
+    [' javascript:alert(1)', null],
+    ['\tjava\nscript:alert(1)', null],
+    ['data:text/html,x', null],
+    // A scheme-relative `https:evil.com` is a path on the same origin only under an https base.
+    ['https:evil.com', sameScheme ? `${location.origin}/evil.com` : null],
+    ['/orders/7', `${location.origin}/orders/7`],
+    ['orders/7', new URL('orders/7', location.href).href],
+    ['../orders?x=1#h', new URL('../orders?x=1#h', location.href).href],
+    [`${location.origin}/a`, `${location.origin}/a`],
+  ])('%j -> %j', (input, expected) => {
+    expect(resolveSameOriginUrl(input)).toBe(expected)
   })
 })

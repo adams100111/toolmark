@@ -78,22 +78,24 @@ export interface RouterLike {
 }
 
 /**
- * @internal Whether `url` resolves to this page's own origin over `http:`/`https:`. Server- or
- * route-supplied URLs pointing anywhere else are refused so Inertia's request (and its XSRF
- * header) never leaves the app's origin.
+ * @internal Resolves `url` against this page's location and returns the canonical absolute `href`
+ * when it is on this page's own origin over `http:`/`https:` with no credentials, else `null`.
+ * Server- or route-supplied URLs pointing anywhere else are refused so Inertia's request (and its
+ * XSRF header) never leaves the app's origin. Callers must use the returned `href` (not the input)
+ * so a relative URL cannot be retargeted by a later in-app navigation.
  */
-export function isSameOriginUrl(url: string): boolean {
-  if (typeof location === 'undefined') return false
+export function resolveSameOriginUrl(url: string): string | null {
+  if (typeof location === 'undefined') return null
   let resolved: URL
   try {
     resolved = new URL(url, location.href)
   } catch {
-    return false
+    return null
   }
-  return (
+  const ok =
     (resolved.protocol === 'https:' || resolved.protocol === 'http:') &&
     resolved.origin === location.origin &&
     resolved.username === '' &&
     resolved.password === ''
-  )
+  return ok ? resolved.href : null
 }

@@ -1,5 +1,5 @@
-import { fromJsonSchema, ok, refuse, type ToolDefinition } from '@toolmark/core'
-import { isSameOriginUrl } from './router-like.js'
+import { fromJsonSchema, invalid, ok, refuse, type ToolDefinition } from '@toolmark/core'
+import { resolveSameOriginUrl } from './router-like.js'
 
 /**
  * A named route builder (Wayfinder- or Ziggy-style): returns the URL and HTTP method for the
@@ -11,7 +11,11 @@ export type RouteFn = (params?: Record<string, unknown>) => { url: string; metho
 export interface NavigationInput {
   /** Route name (one of the configured route keys). */
   route: string
-  /** Route parameters passed to the {@link RouteFn}. */
+  /**
+   * Route parameters passed to the {@link RouteFn}. Keys `__proto__`, `constructor` and
+   * `prototype` (at any depth) are rejected as `invalid`. Parameters the route does not consume may
+   * become query-string values of the (same-origin) URL, as Wayfinder/Ziggy do.
+   */
   params?: Record<string, unknown>
 }
 
@@ -29,6 +33,22 @@ export interface NavigationToolOptions {
 
 const DEFAULT_NAME = 'navigate'
 const DEFAULT_DESCRIPTION = 'Navigate to a page in this app. Use route names from the enum.'
+const FORBIDDEN_PARAM_KEYS: readonly string[] = ['__proto__', 'constructor', 'prototype']
+
+/** Dotted path of the first prototype-polluting key anywhere in `value`, if any. */
+function forbiddenKeyPath(value: unknown, path: string[]): string | undefined {
+  if (typeof value !== 'object' || value === null) return undefined
+  const keys = Array.isArray(value) ? value.map((_, i) => String(i)) : Object.keys(value)
+  for (const key of keys) {
+    if (!Array.isArray(value) && FORBIDDEN_PARAM_KEYS.includes(key)) {
+      return [...path, key].join('.')
+    }
+    const hit = forbiddenKeyPath((value as Record<string, unknown>)[key], [...path, key])
+    if (hit !== undefined) return hit
+  }
+  return undefined
+}
+
 const NON_GET_MESSAGE = 'Only GET routes can be navigated; declare a server tool for mutations'
 
 /**
@@ -39,7 +59,8 @@ const NON_GET_MESSAGE = 'Only GET routes can be navigated; declare a server tool
  * (case-insensitive) → `refused` `navigation_failed` ("Only GET routes can be navigated; declare a
  * server tool for mutations"); a throwing route, a malformed route result or a URL outside this
  * page's origin → `refused` `navigation_failed`. No hints. Register it at the root scope (never
- * inside the `inertiaPages` page scope), so it survives navigation.
+ * inside the `inertiaPages` page scope), so it survives navigation. The visit receives the canonical
+ * absolute URL; empty `routes` yields an empty `route` enum, so every call is `invalid`; `params` with a `__proto__`/`constructor`/`prototype` key are `invalid`.
  * @param o - Routes, the visit function and optional name/description.
  * @returns A tool definition for `tm.register`.
  */
@@ -61,6 +82,10 @@ export function navigationTool(
     description: o.description ?? DEFAULT_DESCRIPTION,
     input,
     run({ route, params }) {
+      const forbidden = forbiddenKeyPath(params, ['params'])
+      if (forbidden !== undefined) {
+        return invalid([{ path: forbidden, message: 'Forbidden parameter name' }])
+      }
       const fn = Object.hasOwn(routes, route) ? routes[route] : undefined
       if (typeof fn !== 'function') {
         return refuse('navigation_failed', `Unknown route "${route}"`)
@@ -77,11 +102,12 @@ export function navigationTool(
         return refuse('navigation_failed', `Route "${route}" did not return a URL and method`)
       }
       if (method.toLowerCase() !== 'get') return refuse('navigation_failed', NON_GET_MESSAGE)
-      if (!isSameOriginUrl(url)) {
+      const href = resolveSameOriginUrl(url)
+      if (href === null) {
         return refuse('navigation_failed', 'Only same-origin routes can be navigated')
       }
       try {
-        o.visit(url, { method: 'get' })
+        o.visit(href, { method: 'get' })
       } catch {
         return refuse('navigation_failed', `Navigation to "${route}" could not be started`)
       }
