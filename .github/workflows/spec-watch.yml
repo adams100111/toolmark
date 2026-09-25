@@ -199,6 +199,10 @@ jobs:
       # No Chrome Canary on Linux: run wpt's `chrome` product on the Dev channel.
       - name: wpt run chrome (dev) webmcp
         run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y libcairo2-dev pkg-config python3-dev
+          ./wpt make-hosts-file | sudo tee -a /etc/hosts > /dev/null
           ./wpt run --channel=dev --install-browser --install-webdriver --yes \
             --binary-arg=--enable-blink-features=WebMCPTesting chrome webmcp
 
