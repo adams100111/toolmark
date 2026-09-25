@@ -1,13 +1,31 @@
+import { execFile } from 'node:child_process'
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { promisify } from 'node:util'
 import { afterEach, describe, expect, it } from 'vitest'
 import { EXIT_ERRORS_FOUND, EXIT_OK, EXIT_USAGE_OR_RUNTIME_FAILURE, runCli } from '../src/cli.js'
 import { loadJudge } from '../src/judge.js'
 
+const execFileAsync = promisify(execFile)
+
 const FIXTURES = fileURLToPath(new URL('./fixtures/', import.meta.url))
 const PACKAGE_ROOT = fileURLToPath(new URL('..', import.meta.url))
+const CLI_JS = join(PACKAGE_ROOT, 'dist', 'cli.js')
+
+/** Spawns the built `dist/cli.js` (regression coverage for the real `toolmark` bin entrypoint). */
+async function runBuiltCli(
+  args: readonly string[],
+): Promise<{ code: number; stdout: string; stderr: string }> {
+  try {
+    const { stdout, stderr } = await execFileAsync(process.execPath, [CLI_JS, ...args])
+    return { code: 0, stdout, stderr }
+  } catch (e) {
+    const err = e as { code?: number; stdout?: string; stderr?: string }
+    return { code: err.code ?? 1, stdout: err.stdout ?? '', stderr: err.stderr ?? '' }
+  }
+}
 
 function fakeIo(): {
   stdout: () => string
@@ -185,6 +203,46 @@ describe('loadJudge', () => {
     await expect(loadJudge('no-such-judge-package', tmpDir)).rejects.toThrow(
       'judge module not found: no-such-judge-package',
     )
+  })
+})
+
+describe('lint subcommand (spawned dist/cli.js)', () => {
+  it('toolmark lint --manifest <valid fixture> exits 0', async () => {
+    const { code, stdout } = await runBuiltCli([
+      'lint',
+      '--manifest',
+      `${FIXTURES}manifest-shape.json`,
+    ])
+    expect(code).toBe(EXIT_OK)
+    expect(stdout).toContain('0 error(s)')
+  })
+
+  it('bare toolmark --manifest <valid fixture> (no subcommand) still exits 0', async () => {
+    const { code, stdout } = await runBuiltCli(['--manifest', `${FIXTURES}manifest-shape.json`])
+    expect(code).toBe(EXIT_OK)
+    expect(stdout).toContain('0 error(s)')
+  })
+
+  it('an unknown subcommand exits 2 with usage text listing "lint"', async () => {
+    const { code, stderr } = await runBuiltCli([
+      'bogus',
+      '--manifest',
+      `${FIXTURES}manifest-shape.json`,
+    ])
+    expect(code).toBe(EXIT_USAGE_OR_RUNTIME_FAILURE)
+    expect(stderr).toContain('lint')
+  })
+
+  it('--help shows "toolmark lint [options]"', async () => {
+    const { code, stdout } = await runBuiltCli(['--help'])
+    expect(code).toBe(EXIT_OK)
+    expect(stdout).toContain('toolmark lint [options]')
+  })
+
+  it('toolmark lint --help also shows "toolmark lint [options]"', async () => {
+    const { code, stdout } = await runBuiltCli(['lint', '--help'])
+    expect(code).toBe(EXIT_OK)
+    expect(stdout).toContain('toolmark lint [options]')
   })
 })
 
