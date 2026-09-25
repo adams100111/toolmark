@@ -42,9 +42,13 @@ import {
   emitInteraction,
   fieldElement,
   firstFormOwner,
+  isUnderSensitive,
+  publishSensitive,
   redactValues,
   safeFields,
-  sensitivePathsOf,
+  sensitiveBelow,
+  sensitiveMemoryOf,
+  stickySensitive,
   subscribeInteractions,
 } from './hooks.js'
 import type { FormAdapter, FormToolOptions } from './types.js'
@@ -293,21 +297,22 @@ function isUnder(path: string, base: string): boolean {
   return path === base || path.startsWith(`${base}.`)
 }
 
-/** Replaces every sensitive sub-path inside `value` (rooted at `path`) with `'[redacted]'`. */
+/**
+ * Replaces every sensitive sub-path inside `value` (rooted at `path`) with `'[redacted]'`; `[]` in
+ * a sensitive path matches any array index.
+ */
 function redactInside(value: unknown, path: string, sensitive: string[]): unknown {
-  let out = value
-  for (const s of sensitive) {
-    if (!s.startsWith(`${path}.`) || typeof out !== 'object' || out === null) continue
-    const rel = s.slice(path.length + 1)
-    if (isSafePath(rel) && getPath(out, rel) !== undefined) out = setPath(out, rel, REDACTED)
-  }
-  return out
+  if (typeof value !== 'object' || value === null) return value
+  const below = sensitive
+    .map((s) => sensitiveBelow(path, s))
+    .filter((s): s is string => s !== undefined)
+  return below.length > 0 ? redactValues(value, below) : value
 }
 
 /** Redacts sensitive paths and sensitive values nested under changed ancestors (I1). */
 function redact(changes: FieldChange[], sensitive: string[]): FieldChange[] {
   return changes.map((c) =>
-    sensitive.some((s) => isUnder(c.path, s))
+    sensitive.some((s) => isUnderSensitive(c.path, s))
       ? { path: c.path, before: REDACTED, after: REDACTED }
       : {
           path: c.path,
@@ -924,6 +929,12 @@ export function createFormTools<V extends Record<string, unknown>>(
     dirty.some((d) => isSafePath(d) && (isUnder(d, path) || isUnder(path, d))) &&
     differsFromAgent(values, path)
 
+  /** The sensitive rule of this form, sticky for the adapter's lifetime (spec §14). */
+  const sensitiveOf = stickySensitive(
+    opts.sensitive,
+    typeof adapter === 'object' && adapter !== null ? sensitiveMemoryOf(adapter) : undefined,
+  )
+
   async function fill(
     input: FillInput,
     registerUndo: (restore: () => ToolResult<unknown>) => void,
@@ -1114,38 +1125,44 @@ export function createFormTools<V extends Record<string, unknown>>(
           undoChanges.push({ path, before: getPath(now, path), after: getPath(restored, path) })
         }
         return ok({
-          changes: redact(
-            undoChanges.map(safeChange),
-            sensitivePathsOf(opts.sensitive, adapter.fields()),
-          ).sort(byPath),
+          changes: redact(undoChanges.map(safeChange), sensitiveOf(adapter.fields())).sort(byPath),
           skipped: undoSkipped.sort(),
         })
       })
     }
 
     return ok({
-      changes: redact(
-        changes.map(safeChange),
-        sensitivePathsOf(opts.sensitive, adapter.fields()),
-      ).sort(byPath),
+      changes: redact(changes.map(safeChange), sensitiveOf(adapter.fields())).sort(byPath),
       skipped: skipped.sort(),
     })
   }
 
   // Tour hooks (spec §13, §14; M3 T2). Redaction is owned here: `state()` redacts every path of
   // the sensitive rule, and `sensitivePaths()` publishes the same list through `tm.info`.
-  const currentSensitive = (): string[] => sensitivePathsOf(opts.sensitive, safeFields(adapter))
+  const currentSensitive = (): string[] => sensitiveOf(safeFields(adapter))
   const readIssues = createIssueReader(() => opts.input)
   const readState = (): ToolState<V> => {
     const values = adapter.getValues()
     return { values: redactValues(values, currentSensitive()), issues: readIssues(values) }
+  }
+  /** `[]` patterns as declared plus their current concrete paths (for exact-path consumers). */
+  const publishedSensitive = (): string[] => {
+    const list = currentSensitive()
+    if (!list.some((p) => p.includes('[]'))) return list
+    let values: unknown
+    try {
+      values = adapter.getValues()
+    } catch {
+      return list
+    }
+    return publishSensitive(list, values)
   }
   const formAnchor = (): Element | null => firstFormOwner(safeFields(adapter))
   const fillAnchors: AnchorSpec = {
     element: formAnchor,
     resolve: (path) => fieldElement(safeFields(adapter), path),
   }
-  const hooks = { state: readState, sensitivePaths: currentSensitive }
+  const hooks = { state: readState, sensitivePaths: publishedSensitive }
 
   const optionKeys = opts.options ? Object.keys(opts.options) : []
   const title = opts.title !== undefined ? { title: opts.title } : {}

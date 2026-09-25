@@ -2,6 +2,7 @@ import { CONFIRM_SNAPSHOT, type ConfirmSnapshotHook } from '../confirm-snapshot.
 import { deepEqual, snapshotValue } from '../forms/paths.js'
 import { ok, refuse } from '../result.js'
 import type { ToolDefinition, ToolHints } from '../tool.js'
+import { asAgentActivation } from './activation.js'
 import { cap, discover, getAttr, nestValues, readField } from './elements.js'
 
 /** @internal Longest `data-tool-confirm` summary kept (longer text is truncated with `…`). */
@@ -123,7 +124,8 @@ export function buttonToolDefinition(
     summary,
     run() {
       if (!clickable(button)) return refuse('not_allowed', 'Button is disabled or hidden')
-      HTMLElement.prototype.click.call(button)
+      // The activation's trusted `submit` / `input` events are the agent's (M3 T2 fix round 1).
+      asAgentActivation(() => HTMLElement.prototype.click.call(button))
       return ok({ clicked: true as const })
     },
     [CONFIRM_SNAPSHOT]: snapshotHook,

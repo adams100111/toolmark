@@ -8,9 +8,10 @@ import {
   emitInteraction,
   fieldElement,
   firstFormOwner,
+  publishSensitive,
   redactValues,
   safeFields,
-  sensitivePathsOf,
+  stickySensitive,
   subscribeInteractions,
 } from '../forms/hooks.js'
 import type { FormAdapter, FormToolOptions, OptionsProvider } from '../forms/types.js'
@@ -59,7 +60,14 @@ export interface WizardStep {
   options?: Record<string, OptionsProvider>
   /**
    * Dot paths (within the step) whose values are always redacted (spec §14), including in the
-   * wizard's `state()`; published as `<step>.<path>` in `tm.info(name).sensitivePaths`.
+   * wizard's `state()`; published as `<step>.<path>` in `tm.info(name).sensitivePaths`. `[]`
+   * stands for any array index (`cards[].cvc`).
+   *
+   * Element-based sensitivity (password / `cc-*` inputs) is only known while the step's form is
+   * mounted; the wizard remembers it for the rest of its lifetime. A step whose data exists
+   * before its form is ever mounted (prefilled `getData()`, an agent `fill` of a later step) must
+   * declare its sensitive paths here, or its values are shown in `state()` until the step is
+   * first mounted.
    */
   sensitive?: string[]
 }
@@ -470,8 +478,9 @@ function interactionTracker(
  * Tour hooks (spec §13): `<name>.fill` and `<name>.submit` expose `state()` → `{ values, issues,
  * step }` (`values` keyed by step — the current step from its mounted form, the others from
  * `getData()` — with sensitive paths redacted; `issues` of the current step as `<step>.<path>`;
- * `step` = `getCurrent()`) and `sensitivePaths()` (`<step>.<path>`: each step's `sensitive` plus the
- * current step form's sensitive fields). `<name>.fill` anchors `resolve('<step>.<path>')` to the
+ * `step` = `getCurrent()`) and `sensitivePaths()` (`<step>.<path>`: each step's `sensitive` plus every
+ * field seen sensitive while its step form was mounted, sticky after the step unmounts; declare
+ * `sensitive` for steps whose data exists before they are ever mounted). `<name>.fill` anchors `resolve('<step>.<path>')` to the
  * field's element only while `<step>` is current (else `null`); both anchor to the current step's
  * form. Interaction events of the current step's form are emitted as `<name>.fill` with
  * `param: '<step>.<path>'` (`submit` → `param: '<step>'`); the wizard follows the current form
@@ -716,12 +725,29 @@ export function createWizardTools(
   // Tour hooks (spec §13, §14; M3 T2). Redaction is owned here: `state()` redacts every path of
   // the sensitive rule (each step's `sensitive`, plus the current step form's sensitive fields),
   // published as `<step>.<path>` through `sensitivePaths()` / `tm.info`.
+  const safeValues = (step: string): unknown => {
+    try {
+      return currentValues(step)
+    } catch {
+      return {}
+    }
+  }
   const mountedForm = (step: string): FormAdapter | undefined =>
     opts.getCurrent() === step ? opts.currentAdapter?.() : undefined
+  // Sticky per step: a path seen sensitive (declared, `FieldInfo.sensitive` or a password /
+  // `cc-*` element) while its step form was mounted stays sensitive after the form unmounts, when
+  // the step's values come from `getData()` and no element is left to check.
+  const stickyByStep = new Map(runtimes.map((rt) => [rt, stickySensitive(rt.step.sensitive)]))
   const stepSensitive = (rt: StepRuntime): string[] =>
-    sensitivePathsOf(rt.step.sensitive, safeFields(mountedForm(rt.step.name)))
+    stickyByStep.get(rt)!(safeFields(mountedForm(rt.step.name)))
   const wizardSensitive = (): string[] =>
-    runtimes.flatMap((rt) => stepSensitive(rt).map((p) => prefixed(rt.step.name, p)))
+    runtimes.flatMap((rt) => {
+      const list = stepSensitive(rt)
+      const published = list.some((p) => p.includes('[]'))
+        ? publishSensitive(list, safeValues(rt.step.name))
+        : list
+      return published.map((p) => prefixed(rt.step.name, p))
+    })
   const issueReaders = new Map(runtimes.map((rt) => [rt, createIssueReader(() => rt.step.input)]))
   const tracker = interactionTracker(
     tm,
