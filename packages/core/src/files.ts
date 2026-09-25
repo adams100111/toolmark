@@ -4,15 +4,18 @@ import type { JsonSchema } from './tool.js'
 /**
  * A reference to a file an agent hands to a tool (spec §8.4, D27): `{ ref }` is resolved by the
  * app's `files.resolve` hook (e.g. an attachment uploaded in chat); `{ url }` is fetched only from
- * allow-listed origins (off by default).
+ * allow-listed origins (off by default). `ref` must be a non-empty string of at most
+ * {@link MAX_FILE_REF_LENGTH} characters and `url` at most {@link MAX_FILE_URL_LENGTH}; anything
+ * else is refused before the resolver or `fetch` runs.
  */
 export type FileRef = { ref: string } | { url: string }
 
 /**
  * Registry-wide file settings (`createToolmark({ files })`, spec §8.4). Misconfiguration (an
- * `allowOrigins` entry that is not exactly an origin, `'*'`, a non-positive `maxBytes` or
- * `timeoutMs`) is `files_misconfigured`: thrown in development; in production an `error` event is
- * emitted and URL fetching stays disabled.
+ * `allowOrigins` entry that is not exactly an origin, contains `*`, or is `http:` on a host other
+ * than `localhost` / `127.0.0.1` / `[::1]`; a non-positive `maxBytes` or `timeoutMs`) is
+ * `files_misconfigured`: thrown in development; in production an `error` event is emitted and URL
+ * fetching stays disabled.
  */
 export interface FilesOptions {
   /**
@@ -22,8 +25,9 @@ export interface FilesOptions {
   resolve?: (ref: string, ctx: { signal: AbortSignal }) => Promise<File>
   /**
    * Exact origins (`https://cdn.example.com`) `{ url }` references may be fetched from. Empty or
-   * absent (the default) disables URL fetching. Only `https:` URLs (or `http:` on `localhost` /
-   * `127.0.0.1`) without userinfo are fetched, with credentials omitted, redirects refused, no
+   * absent (the default) disables URL fetching. No wildcards; `http:` origins only for `localhost`,
+   * `127.0.0.1` and `[::1]`. Only `https:` URLs (or `http:` on those loopback hosts) without
+   * userinfo are fetched, with credentials omitted, redirects refused, no
    * referrer and no cache.
    */
   allowOrigins?: string[]
@@ -44,6 +48,12 @@ export interface FileFieldSpec {
   maxBytes?: number
   /** The field holds a list of files (`File[]`, given as an array of references). */
   multiple?: boolean
+  /**
+   * Most references a `multiple` field accepts in one fill (a positive integer ≤ 100, default
+   * {@link DEFAULT_MAX_FILES}); advertised as `maxItems`. More is `invalid` ("Too many files")
+   * before anything is resolved or fetched.
+   */
+  maxFiles?: number
 }
 
 /** Default size limit (10 MiB, M2 constraints). */
@@ -51,7 +61,25 @@ export const DEFAULT_FILE_MAX_BYTES = 10485760
 /** Default URL fetch timeout (M2 constraints). */
 export const DEFAULT_FILE_TIMEOUT_MS = 30000
 
+/** Default {@link FileFieldSpec.maxFiles} of a `multiple` file field. */
+export const DEFAULT_MAX_FILES = 10
+/** Largest allowed {@link FileFieldSpec.maxFiles}. */
+const MAX_MAX_FILES = 100
+/** Most characters (code points) of a `{ ref }` value. */
+export const MAX_FILE_REF_LENGTH = 2048
+/** Most characters (code points) of a `{ url }` value. */
+export const MAX_FILE_URL_LENGTH = 8192
+
 const MAX_NAME_LENGTH = 255
+
+/** Non-empty and at most `max` code points (cheap UTF-16 bound first, no huge spreads). */
+function withinLength(s: string, max: number): boolean {
+  if (s.length === 0 || s.length > 2 * max) return false
+  if (s.length <= max) return true
+  let n = 0
+  for (const _ of s) if (++n > max) return false
+  return true
+}
 
 function describeLimits(spec: FileFieldSpec): string {
   const accept = spec.accept && spec.accept.length > 0 ? spec.accept.join(', ') : 'any type'
@@ -60,20 +88,27 @@ function describeLimits(spec: FileFieldSpec): string {
 
 /**
  * The JSON Schema a form's `fill` manifest uses for a file field (spec §8.4): an object with
- * exactly one of `ref` / `url`, described with the accepted types and size limit; an array of
- * those when `spec.multiple`.
+ * exactly one of `ref` (1–{@link MAX_FILE_REF_LENGTH} characters) / `url` (1–
+ * {@link MAX_FILE_URL_LENGTH}), described with the accepted types and size limit; when
+ * `spec.multiple`, an array of those with `maxItems` = `spec.maxFiles` (default
+ * {@link DEFAULT_MAX_FILES}).
  * @param spec - The field's effective limits (`maxBytes` defaults to 10485760 in the description).
  * @returns A fresh JSON Schema object.
  */
 export function fileFieldSchema(spec: FileFieldSpec): JsonSchema {
   const one: JsonSchema = {
     type: 'object',
-    properties: { ref: { type: 'string' }, url: { type: 'string', format: 'uri' } },
+    properties: {
+      ref: { type: 'string', minLength: 1, maxLength: MAX_FILE_REF_LENGTH },
+      url: { type: 'string', format: 'uri', minLength: 1, maxLength: MAX_FILE_URL_LENGTH },
+    },
     oneOf: [{ required: ['ref'] }, { required: ['url'] }],
     additionalProperties: false,
     description: describeLimits(spec),
   }
-  return spec.multiple === true ? { type: 'array', items: one } : one
+  return spec.multiple === true
+    ? { type: 'array', items: one, maxItems: spec.maxFiles ?? DEFAULT_MAX_FILES }
+    : one
 }
 
 /** @internal Registry-validated file settings (see {@link filesConfig}). */
@@ -88,6 +123,9 @@ export interface FilesConfig {
 }
 
 const isPositive = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v) && v > 0
+
+const isLoopbackHost = (hostname: string): boolean =>
+  hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]'
 
 /**
  * @internal Validates `createToolmark({ files })`. Every problem is passed to `fail` (the registry
@@ -111,10 +149,15 @@ export function filesConfig(
       } catch {
         origin = undefined
       }
-      if (origin === undefined || origin === 'null' || origin !== entry) {
+      if (origin === undefined || origin === 'null' || origin !== entry || entry.includes('*')) {
         problems.push(
           `files.allowOrigins entry ${JSON.stringify(entry)} is not an exact origin ` +
             `(scheme://host[:port], no "*", path or trailing slash)`,
+        )
+      } else if (origin.startsWith('http:') && !isLoopbackHost(new URL(origin).hostname)) {
+        problems.push(
+          `files.allowOrigins entry ${JSON.stringify(entry)} uses http: on a non-loopback host ` +
+            `(only localhost, 127.0.0.1 and [::1] may use http:)`,
         )
       } else {
         origins.push(origin)
@@ -157,6 +200,16 @@ export function fileSpecProblems(path: string, spec: unknown): string[] {
   if (s.multiple !== undefined && typeof s.multiple !== 'boolean') {
     out.push(`files["${path}"].multiple must be a boolean`)
   }
+  if (
+    s.maxFiles !== undefined &&
+    !(
+      Number.isInteger(s.maxFiles) &&
+      (s.maxFiles as number) > 0 &&
+      (s.maxFiles as number) <= MAX_MAX_FILES
+    )
+  ) {
+    out.push(`files["${path}"].maxFiles must be a positive integer of at most ${MAX_MAX_FILES}`)
+  }
   return out
 }
 
@@ -167,6 +220,7 @@ export function effectiveSpec(spec: FileFieldSpec, files: FilesConfig): FileFiel
   }
   if (spec.accept !== undefined) out.accept = [...spec.accept]
   if (spec.multiple !== undefined) out.multiple = spec.multiple
+  if (spec.maxFiles !== undefined) out.maxFiles = spec.maxFiles
   return out
 }
 
@@ -211,13 +265,57 @@ export function jsonSafeFiles(value: unknown, depth = 0): unknown {
   return changed ? out : value
 }
 
-/** @internal Whether `v` has the {@link FileRef} shape (exactly one string `ref` or `url`). */
+/**
+ * @internal Whether `v` has the {@link FileRef} shape: exactly one key, `ref` (a string of 1–
+ * {@link MAX_FILE_REF_LENGTH} characters) or `url` (1–{@link MAX_FILE_URL_LENGTH}).
+ */
 export function isFileRef(v: unknown): v is FileRef {
   if (typeof v !== 'object' || v === null || Array.isArray(v)) return false
   const keys = Object.keys(v)
   if (keys.length !== 1) return false
   const key = keys[0]
-  return (key === 'ref' || key === 'url') && typeof (v as Record<string, unknown>)[key] === 'string'
+  const value = (v as Record<string, unknown>)[key!]
+  if (typeof value !== 'string') return false
+  if (key === 'ref') return withinLength(value, MAX_FILE_REF_LENGTH)
+  if (key === 'url') return withinLength(value, MAX_FILE_URL_LENGTH)
+  return false
+}
+
+/**
+ * @internal Cheap pre-validation of a form file value (before the schema validator and before any
+ * resolution): a `multiple` field over its `maxFiles` → "Too many files"; a `ref` / `url` string
+ * that is empty or too long → an issue at that reference. Returns `[]` when these limits hold.
+ */
+export function fileLimitIssues(
+  raw: unknown,
+  spec: FileFieldSpec,
+  path: string,
+): { path: string; message: string }[] {
+  if (spec.multiple === true) {
+    if (!Array.isArray(raw)) return []
+    const max = spec.maxFiles ?? DEFAULT_MAX_FILES
+    if (raw.length > max) return [{ path, message: `Too many files (at most ${max})` }]
+    return raw.flatMap((item, i) => refLengthIssues(item, `${path}.${i}`))
+  }
+  return refLengthIssues(raw, path)
+}
+
+function refLengthIssues(v: unknown, path: string): { path: string; message: string }[] {
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) return []
+  const out: { path: string; message: string }[] = []
+  for (const [key, max] of [
+    ['ref', MAX_FILE_REF_LENGTH],
+    ['url', MAX_FILE_URL_LENGTH],
+  ] as const) {
+    const value = Object.hasOwn(v, key) ? (v as Record<string, unknown>)[key] : undefined
+    if (typeof value === 'string' && !withinLength(value, max)) {
+      out.push({
+        path: `${path}.${key}`,
+        message: value.length === 0 ? 'Must not be empty' : `Must be at most ${max} characters`,
+      })
+    }
+  }
+  return out
 }
 
 function rejected(path: string | undefined, reason: string): ToolmarkError {
@@ -345,8 +443,7 @@ async function fetchUrl(
   } catch {
     throw rejected(path, 'invalid file URL')
   }
-  const localHttp =
-    url.protocol === 'http:' && (url.hostname === 'localhost' || url.hostname === '127.0.0.1')
+  const localHttp = url.protocol === 'http:' && isLoopbackHost(url.hostname)
   if (url.protocol !== 'https:' && !localHttp) throw rejected(path, 'file URLs must use https')
   if (url.username !== '' || url.password !== '') {
     throw rejected(path, 'file URLs must not contain credentials')

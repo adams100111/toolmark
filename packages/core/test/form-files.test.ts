@@ -293,3 +293,112 @@ function stubAdapter() {
     fields: (): FieldInfo[] => [],
   }
 }
+
+describe('form files: fix round 1 (limits)', () => {
+  it('multiple_field_over_default_max_files_invalid_before_resolution', async () => {
+    const fetch = vi.fn(() => Promise.resolve(new Response('x')))
+    vi.stubGlobal('fetch', fetch)
+    try {
+      const { adapter, fill, resolve } = setup({})
+      const before = adapter.values
+      const refs = Array.from({ length: 11 }, () => ({ ref: 'a' }))
+      const r = await fill({ title: 'T', docs: refs })
+      expect(r).toEqual({
+        status: 'invalid',
+        issues: [{ path: 'docs', message: expect.stringContaining('Too many files') as string }],
+      })
+      expect(resolve).not.toHaveBeenCalled()
+      expect(fetch).not.toHaveBeenCalled()
+      expect(adapter.values).toBe(before)
+      // 2000 refs: still refused up front, nothing resolved.
+      const many = await fill({ docs: Array.from({ length: 2000 }, () => ({ ref: 'a' })) })
+      expect(many.status).toBe('invalid')
+      expect(resolve).not.toHaveBeenCalled()
+      // Exactly the default (10) is fine.
+      const ten = await fill({ title: 'T', docs: refs.slice(0, 10) })
+      expect(ten.status).toBe('ok')
+      expect(resolve).toHaveBeenCalledTimes(10)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('multiple_field_max_files_honoured_and_advertised', async () => {
+    const { fill, resolve, tm } = setup({ files: { docs: { multiple: true, maxFiles: 3 } } })
+    const values = (tm.describe('f.fill')!.inputSchema.properties as Record<string, JsonSchema>)
+      .values as { properties: Record<string, JsonSchema> }
+    expect(values.properties.docs).toMatchObject({ type: 'array', maxItems: 3 })
+    const r = await fill({ docs: [{ ref: 'a' }, { ref: 'a' }, { ref: 'b' }, { ref: 'b' }] })
+    expect(r.status).toBe('invalid')
+    expect(resolve).not.toHaveBeenCalled()
+    expect(
+      (await fill({ title: 'T', docs: [{ ref: 'a' }, { ref: 'b' }, { ref: 'a' }] })).status,
+    ).toBe('ok')
+  })
+
+  it('file_field_schema_advertises_limits', () => {
+    const one = fileFieldSchema({}) as { properties: Record<string, JsonSchema> }
+    expect(one.properties.ref).toEqual({ type: 'string', minLength: 1, maxLength: 2048 })
+    expect(one.properties.url).toMatchObject({ type: 'string', minLength: 1, maxLength: 8192 })
+    expect(fileFieldSchema({ multiple: true })).toMatchObject({ type: 'array', maxItems: 10 })
+    expect(fileFieldSchema({ multiple: true, maxFiles: 5 })).toMatchObject({ maxItems: 5 })
+  })
+
+  it('ref_and_url_length_limits_invalid_before_resolution', async () => {
+    const { adapter, fill, resolve } = setup({})
+    const before = adapter.values
+    for (const [values, path] of [
+      [{ doc: { ref: 'x'.repeat(5_000_000) } }, 'doc'],
+      [{ doc: { ref: 'x'.repeat(2049) } }, 'doc'],
+      [{ doc: { ref: '' } }, 'doc'],
+      [{ doc: { url: '' } }, 'doc'],
+      [{ doc: { url: `https://x.test/${'a'.repeat(8192)}` } }, 'doc'],
+      [{ docs: [{ ref: 'a' }, { ref: '' }] }, 'docs.1'],
+    ] as const) {
+      const r = await fill(values)
+      expect(r.status, JSON.stringify(values).slice(0, 80)).toBe('invalid')
+      const paths = r.status === 'invalid' ? r.issues.map((i) => i.path) : []
+      expect(
+        paths.length > 0 && paths.every((p) => p === path || p.startsWith(`${path}.`)),
+        JSON.stringify(paths),
+      ).toBe(true)
+    }
+    expect(resolve).not.toHaveBeenCalled()
+    expect(adapter.values).toBe(before)
+    // Exactly at the limit is accepted by the shape step (the resolver then decides).
+    const atLimit = await fill({ title: 'T', doc: { ref: 'x'.repeat(2048) } })
+    expect(atLimit.status).toBe('refused')
+    expect(resolve).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('form files: fix round 1 (misconfiguration)', () => {
+  it('max_files_misconfigured', () => {
+    for (const spec of [
+      { multiple: true, maxFiles: 0 },
+      { multiple: true, maxFiles: -1 },
+      { multiple: true, maxFiles: 1.5 },
+      { multiple: true, maxFiles: 101 },
+      { multiple: true, maxFiles: Infinity },
+      { multiple: true, maxFiles: '3' },
+    ] as FileFieldSpec[]) {
+      const tm = createTestRegistry()
+      expect(() =>
+        createFormTools(tm, stubAdapter(), {
+          name: 'f',
+          description: 'F.',
+          input: z.object({ docs: z.array(z.instanceof(File)).optional() }),
+          files: { docs: spec },
+        }),
+      ).toThrow(expect.objectContaining({ code: 'files_misconfigured' }) as Error)
+    }
+    const tm = createTestRegistry()
+    createFormTools(tm, stubAdapter(), {
+      name: 'f',
+      description: 'F.',
+      input: z.object({ docs: z.array(z.instanceof(File)).optional() }),
+      files: { docs: { multiple: true, maxFiles: 100 } },
+    })
+    expect(tm.manifest().tools.length).toBeGreaterThan(0)
+  })
+})
