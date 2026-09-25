@@ -117,9 +117,13 @@ function serializedBytes(v: unknown): number {
   }
 }
 
+/** A JSON Schema value: an object, or the boolean schemas `true` / `false`. */
+const isSchemaValue = (v: unknown): boolean => typeof v === 'boolean' || isPlainObject(v)
+
 /**
  * Normalizes a manifest input schema to an MCP object-root schema. `{}`, a non-object root, an
- * object root whose `properties` (or any property value) / `required` are malformed, or a schema
+ * object root whose `properties` (or any property value that is not an object or boolean
+ * schema) / `required` are malformed, or a schema
  * nested deeper than {@link MAX_INPUT_SCHEMA_DEPTH} or larger than {@link MAX_INPUT_SCHEMA_BYTES}
  * becomes `{ type: 'object' }` (one bad schema must never break `tools/list` for every tool).
  */
@@ -127,7 +131,7 @@ function toInputSchema(schema: unknown): McpInputSchema {
   if (!isPlainObject(schema) || schema.type !== 'object') return { type: 'object' }
   if (
     'properties' in schema &&
-    !(isPlainObject(schema.properties) && Object.values(schema.properties).every(isPlainObject))
+    !(isPlainObject(schema.properties) && Object.values(schema.properties).every(isSchemaValue))
   ) {
     return { type: 'object' }
   }

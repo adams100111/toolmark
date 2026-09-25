@@ -6,7 +6,12 @@ import type { PageLink } from '../server/server.js'
 import { expiresInMinutes } from '../server/pairing-tool.js'
 import { isPlainObject } from '../server/tool-mapping.js'
 import { createPairingCodes, type PairingCodes } from './code.js'
-import { HANDSHAKE_TIMEOUT_MS, PAIRING_CLOSE_CODES } from './constants.js'
+import {
+  FIRST_FRAME_TIMEOUT_MS,
+  MAX_HANDSHAKE_FRAME_BYTES,
+  PAIRING_CLOSE_CODES,
+  UNAUTHORIZED_COOLDOWN_MS,
+} from './constants.js'
 import { createPageLink } from './page-link.js'
 import { generateToken, tokenMatches } from './token.js'
 import { isAllowedUpgrade } from './upgrade.js'
@@ -30,9 +35,9 @@ export interface PairingServerOptions {
   callTimeoutMs?: number
   /** Diagnostics sink: the listen line, every pairing code, and dropped-frame notes. */
   stderr: Writable
-  /** Clock for code expiry (default `Date.now`). */
+  /** Clock for code expiry and the post-`4401` refusal window (default `Date.now`). */
   now?: () => number
-  /** @internal Handshake timeout in ms (default `10000`; tests shorten it). */
+  /** @internal First-frame (handshake) timeout in ms (default `3000`; tests shorten it). */
   handshakeTimeoutMs?: number
 }
 
@@ -47,6 +52,11 @@ export interface PairingServer {
 }
 
 type Phase = 'handshake' | 'paired' | 'closed'
+
+function frameBytes(data: RawData): number {
+  if (Array.isArray(data)) return data.reduce((n, b) => n + b.length, 0)
+  return data.byteLength
+}
 
 function frameText(data: RawData): string {
   if (Buffer.isBuffer(data)) return data.toString('utf8')
@@ -81,9 +91,10 @@ function reject403(socket: Duplex): void {
 /**
  * Starts the pairing server (spec §11.3, §14, §23 "MCP pairing (R3)"): HTTP on `127.0.0.1` only
  * (non-upgrade requests get `404`), upgrades gated by {@link isAllowedUpgrade} (`403` otherwise),
- * one handshake at a time (`4429`), a `pair` / `resume` first frame within `10000` ms (`4408`,
- * `4400`), single-use codes (`4401` on a miss; five misses rotate the code), one valid session
- * token at a time, and supersede (`4409`). Prints the listen line and every new pairing code to
+ * one handshake at a time (`4429`), a `pair` / `resume` first frame of at most `1024` bytes
+ * within `3000` ms (`4408`, `4400`), single-use codes (`4401` on a miss; five misses rotate the
+ * code), no new handshake for `250` ms after any `4401` (`4429`), one valid session token at a
+ * time, and supersede (`4409`). Prints the listen line and every new pairing code to
  * `stderr`.
  * @param o - Port, allowed origins, call deadline, stderr sink and clock.
  * @returns The link, the bound port and `close()`.
@@ -104,7 +115,7 @@ export async function createPairingServer(o: PairingServerOptions): Promise<Pair
   if (!Number.isInteger(callTimeoutMs) || callTimeoutMs <= 0 || callTimeoutMs > MAX_TIMEOUT_MS) {
     throw new TypeError('callTimeoutMs must be a positive integer')
   }
-  const handshakeTimeoutMs = o.handshakeTimeoutMs ?? HANDSHAKE_TIMEOUT_MS
+  const handshakeTimeoutMs = o.handshakeTimeoutMs ?? FIRST_FRAME_TIMEOUT_MS
   const allowOrigins = [...o.allowOrigins]
   const now = o.now ?? Date.now
   const write = (line: string): void => {
@@ -132,6 +143,13 @@ export async function createPairingServer(o: PairingServerOptions): Promise<Pair
   let handshaking: WebSocket | null = null
   let token: string | null = null
   let session: WebSocket | null = null
+  /** Handshakes are refused (`4429`) until this time (set after every `4401`). */
+  let refuseUntil = -Infinity
+
+  const unauthorized = (ws: WebSocket): void => {
+    refuseUntil = now() + UNAUTHORIZED_COOLDOWN_MS
+    ws.close(PAIRING_CLOSE_CODES.unauthorized)
+  }
 
   const paired = (ws: WebSocket): void => {
     const previous = session
@@ -145,7 +163,7 @@ export async function createPairingServer(o: PairingServerOptions): Promise<Pair
     sockets.add(ws)
     let phase: Phase = 'handshake'
     ws.on('error', () => {})
-    if (handshaking !== null || closing) {
+    if (handshaking !== null || closing || now() < refuseUntil) {
       phase = 'closed'
       ws.close(closing ? PAIRING_CLOSE_CODES.goingAway : PAIRING_CLOSE_CODES.busy)
     } else {
@@ -171,20 +189,23 @@ export async function createPairingServer(o: PairingServerOptions): Promise<Pair
       clearTimeout(timer)
       handshaking = null
       phase = 'closed'
-      const hello = isBinary ? null : parseHello(frameText(data))
+      const hello =
+        isBinary || frameBytes(data) > MAX_HANDSHAKE_FRAME_BYTES
+          ? null
+          : parseHello(frameText(data))
       if (hello === null) {
         ws.close(PAIRING_CLOSE_CODES.invalidFrame)
         return
       }
       if (hello.type === 'pair') {
         if (!codes!.verify(hello.code)) {
-          ws.close(PAIRING_CLOSE_CODES.unauthorized)
+          unauthorized(ws)
           return
         }
         token = generateToken()
       } else if (!tokenMatches(token, hello.token)) {
         codes!.fail()
-        ws.close(PAIRING_CLOSE_CODES.unauthorized)
+        unauthorized(ws)
         return
       }
       phase = 'paired'

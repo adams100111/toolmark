@@ -359,6 +359,81 @@ describe('PageLink', () => {
     )
   })
 
+  it('call_ended_while_detached_cancelled_on_same_client_resume', async () => {
+    const { link, err, port } = await start({ callTimeoutMs: 200 })
+    const a = await rawPage(port, { type: 'pair', code: err.code() })
+    a.s.send({ protocol: 1, type: 'manifest', clientId: 'page-a', rev: 1, tools: [summary('a.b')] })
+    await until(() => link.state() === 'paired')
+    const controller = new AbortController()
+    const timedOut = link.call('a.b', {}, { signal: new AbortController().signal })
+    const aborted = link.call('a.b', {}, { signal: controller.signal })
+    const sent = [(await a.s.next()) as { id: string }, (await a.s.next()) as { id: string }]
+    a.s.ws.close()
+    await a.s.closed
+    controller.abort()
+    // Both end inside the grace while no socket is attached: the page still holds them.
+    expect(await aborted).toEqual({ status: 'cancelled', by: 'signal' })
+    expect(await timedOut).toEqual({ status: 'cancelled', by: 'signal' })
+    const b = await rawPage(port, { type: 'resume', token: a.token })
+    b.s.send({ protocol: 1, type: 'manifest', clientId: 'page-a', rev: 1, tools: [summary('a.b')] })
+    const first = [await b.s.next(), await b.s.next()]
+    expect(first).toEqual([
+      { protocol: 1, type: 'cancel', clientId: 'page-a', id: sent[1]!.id },
+      { protocol: 1, type: 'cancel', clientId: 'page-a', id: sent[0]!.id },
+    ])
+    // Sent once: a later resume of the same page gets none.
+    b.s.ws.close()
+    await b.s.closed
+    const c = await rawPage(port, { type: 'resume', token: a.token })
+    c.s.send({ protocol: 1, type: 'manifest', clientId: 'page-a', rev: 1, tools: [summary('a.b')] })
+    await new Promise((r) => setTimeout(r, 200))
+    expect(c.s.frames).toHaveLength(1)
+  })
+
+  it('call_ended_while_detached_not_cancelled_on_other_client', async () => {
+    const { link, err, port } = await start({ callTimeoutMs: 200 })
+    const a = await rawPage(port, { type: 'pair', code: err.code() })
+    a.s.send({ protocol: 1, type: 'manifest', clientId: 'page-a', rev: 1, tools: [summary('a.b')] })
+    await until(() => link.state() === 'paired')
+    const timedOut = link.call('a.b', {}, { signal: new AbortController().signal })
+    await a.s.next()
+    a.s.ws.close()
+    await a.s.closed
+    expect(await timedOut).toEqual({ status: 'cancelled', by: 'signal' })
+    const b = await rawPage(port, { type: 'resume', token: a.token })
+    b.s.send({ protocol: 1, type: 'manifest', clientId: 'page-b', rev: 1, tools: [summary('a.b')] })
+    await new Promise((r) => setTimeout(r, 200))
+    // Only the `paired` reply: nothing is cancelled on a different page.
+    expect(b.s.frames).toHaveLength(1)
+    // The queue was cleared, so the old page returning later gets nothing either.
+    b.s.ws.close()
+    await b.s.closed
+    const c = await rawPage(port, { type: 'resume', token: a.token })
+    c.s.send({ protocol: 1, type: 'manifest', clientId: 'page-a', rev: 1, tools: [summary('a.b')] })
+    await new Promise((r) => setTimeout(r, 200))
+    expect(c.s.frames).toHaveLength(1)
+  })
+
+  it('grace_expiry_cancels_on_same_client_return', async () => {
+    const { link, err, port } = await start()
+    const a = await rawPage(port, { type: 'pair', code: err.code() })
+    a.s.send({ protocol: 1, type: 'manifest', clientId: 'page-a', rev: 1, tools: [summary('a.b')] })
+    await until(() => link.state() === 'paired')
+    const pending = link.call('a.b', {}, { signal: new AbortController().signal })
+    const sent = (await a.s.next()) as { id: string }
+    a.s.ws.close()
+    expect((await pending).status).toBe('error')
+    expect(link.state()).toBe('unpaired')
+    const b = await rawPage(port, { type: 'resume', token: a.token })
+    b.s.send({ protocol: 1, type: 'manifest', clientId: 'page-a', rev: 1, tools: [summary('a.b')] })
+    expect(await b.s.next()).toEqual({
+      protocol: 1,
+      type: 'cancel',
+      clientId: 'page-a',
+      id: sent.id,
+    })
+  })
+
   it('oversize_call_input_fails_fast', async () => {
     const { link, err, port } = await start()
     const a = await rawPage(port, { type: 'pair', code: err.code() })
