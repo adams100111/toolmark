@@ -100,15 +100,15 @@ Not blocking. Nothing here gates any Toolmark unit. Toolmark `1.0.0` is on npm (
 track can start.
 
 - Innovation repo: `~/projects/innovation`. On 2026-10-01 the spec and plans were refreshed for 1.0
-  (npm `^1.0.0`, records in Innovation, codebase re-verified, owner decisions R1–R21) on local branch
-  `docs/assistant-page-tools-1.0` (off `next` @ `44f1ce1e2`, not pushed), worktree
+  (npm `^1.0.0`, records in Innovation, codebase re-verified, owner decisions R1–R33) and merged to
+  Innovation `next` (dits-sa/innovation PR #179, `88e315a91`; Forgejo synced). Worktree
   `~/projects/innovation-wt/assistant-page-tools`. The old branch `docs/assistant-page-tools` is
   superseded. A separate local branch `chore/speckit-1.0.11` re-scaffolds Spec Kit (unrelated).
 - The baseline (I-P0 Lane B) must be recorded **before** any change to Innovation's assistant Entry
   Mode code; baseline and results live in the Innovation repo (`docs/ai-assistant/`).
 
-| Innovation spec (C1, A1–A4, R1–R21) | innovation `docs/superpowers/specs/2026-09-24-assistant-page-tools-design.md` (branch `docs/assistant-page-tools-1.0`, unpushed) |
-| Innovation plans (Phase 0–3, refreshed 2026-10-01) | innovation `docs/superpowers/plans/2026-09-24-assistant-page-tools-phase{0,1,2,3}-*.md` (same branch) |
+| Innovation spec (C1, A1–A4, R1–R33) | innovation `docs/superpowers/specs/2026-09-24-assistant-page-tools-design.md` (on `next`) |
+| Innovation plans (Phase 0–3, refreshed 2026-10-01) | innovation `docs/superpowers/plans/2026-09-24-assistant-page-tools-phase{0,1,2,3}-*.md` (on `next`) |
 
 | Unit | Repo | Plan | Depends on | Exit check | Status | Branch | Updated |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -260,3 +260,5 @@ also record progress in Innovation's own branch history.
   license feature `ai_page_actions` + tenant switches; chat attachments and challenge edit split out;
   decisions R1–R21 after a grilling session). I-P0 ready; O4 (push) and O5 (LLM credentials + dev
   tenant for the baseline) still open.
+- 2026-10-01 — Innovation spec (R1–R33) and plans merged to Innovation `next` (PR #179) after three
+  grilling rounds and a 55-finding plan review. I-P0 ready; O5 (OpenAI key + dev tenant) open.
