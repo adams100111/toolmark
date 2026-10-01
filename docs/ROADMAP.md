@@ -96,23 +96,23 @@ its exit check passes. Task numbers refer to the unit's plan.
 
 ## Post-1.0 consumer track (Innovation)
 
-Not blocking. Nothing here gates any Toolmark unit. Resumes after `@toolmark/*` `1.0.0` is published.
+Not blocking. Nothing here gates any Toolmark unit. Toolmark `1.0.0` is on npm (2026-09-25), so this
+track can start.
 
-- Innovation repo: `~/projects/innovation` — the spec + plans are parked on local branch
-  `docs/assistant-page-tools` (3 docs-only commits on top of `next`, not pushed). The owner's checkout
-  stays on `next` for other work. When I-P0 starts, rebase that branch onto the current `next` (or
-  cherry-pick its 3 commits) first, and re-point its plans from `-next` tarballs to npm `^1.0.0`.
+- Innovation repo: `~/projects/innovation`. On 2026-10-01 the spec and plans were refreshed for 1.0
+  (npm `^1.0.0`, records in Innovation, codebase re-verified, owner decisions R1–R21) on local branch
+  `docs/assistant-page-tools-1.0` (off `next` @ `44f1ce1e2`, not pushed), worktree
+  `~/projects/innovation-wt/assistant-page-tools`. The old branch `docs/assistant-page-tools` is
+  superseded. A separate local branch `chore/speckit-1.0.11` re-scaffolds Spec Kit (unrelated).
 - The baseline (I-P0 Lane B) must be recorded **before** any change to Innovation's assistant Entry
-  Mode code; baseline and results live in the Innovation repo.
+  Mode code; baseline and results live in the Innovation repo (`docs/ai-assistant/`).
 
-| What | Where |
-| --- | --- |
-| Innovation spec (C1–C3, A1–A4) | innovation `docs/superpowers/specs/2026-09-24-assistant-page-tools-design.md` (branch `docs/assistant-page-tools`, unpushed) |
-| Innovation plans (Phase 0–3) | innovation `docs/superpowers/plans/2026-09-24-assistant-page-tools-phase{0,1,2,3}-*.md` (same branch) |
+| Innovation spec (C1, A1–A4, R1–R21) | innovation `docs/superpowers/specs/2026-09-24-assistant-page-tools-design.md` (branch `docs/assistant-page-tools-1.0`, unpushed) |
+| Innovation plans (Phase 0–3, refreshed 2026-10-01) | innovation `docs/superpowers/plans/2026-09-24-assistant-page-tools-phase{0,1,2,3}-*.md` (same branch) |
 
 | Unit | Repo | Plan | Depends on | Exit check | Status | Branch | Updated |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| I-P0 Foundations | innovation | `…-phase0-foundations.md` | — (post-1.0 by owner) | 4 lanes merged; **baseline committed** | owner (post-1.0) | — | 2026-09-24 |
+| I-P0 Foundations | innovation | `…-phase0-foundations.md` | — | 4 lanes merged; **baseline committed** | todo (ready) | — | 2026-10-01 |
 | I-P1 Simple form | innovation | `…-phase1-simple-form.md` | `@toolmark/*` 1.0.0 published, I-P0 | SC-001/003/004 met | todo | — | — |
 | I-P2 Wizard & forms | innovation | `…-phase2-wizard-and-forms.md` | I-P1 | SC-002 met (T9 needs owner) | todo | — | — |
 | I-P3 Tours | innovation | `…-phase3-tours.md` | 1.0.0, I-P2 T1–T8 | e2e green | todo | — | — |
@@ -255,3 +255,8 @@ also record progress in Innovation's own branch history.
   docs site live; spec-watch live. First attempt failed with `EOTP` (bootstrap token lacked "Bypass
   2FA"). Owner still open: O-j `npm trust` ×8, O-k delete `NPM_BOOTSTRAP_TOKEN` and revoke the npm
   tokens.
+- 2026-10-01 — **Innovation track refreshed for 1.0**: spec + 4 plans updated on Innovation branch
+  `docs/assistant-page-tools-1.0` (npm `^1.0.0`; 7-step wizard; tours pilot on challenge create;
+  license feature `ai_page_actions` + tenant switches; chat attachments and challenge edit split out;
+  decisions R1–R21 after a grilling session). I-P0 ready; O4 (push) and O5 (LLM credentials + dev
+  tenant for the baseline) still open.
