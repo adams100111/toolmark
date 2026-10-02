@@ -45,7 +45,7 @@ catalog:
   pusher-js: 8.6.0
   ws: 8.21.3
   '@types/ws': 8.18.1
-  '@modelcontextprotocol/server': 2.1.0
+  '@modelcontextprotocol/server': 2.2.0
   '@modelcontextprotocol/client': 2.1.0
   '@opentelemetry/api': 1.9.1
   '@opentelemetry/sdk-trace-base': 2.11.0
