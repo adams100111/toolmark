@@ -36,7 +36,7 @@ catalog:
   '@types/react': 19.3.0
   '@types/react-dom': 19.3.0
   '@testing-library/react': 16.3.3
-  react-hook-form: 7.88.0
+  react-hook-form: 7.89.0
   '@inertiajs/react': 3.7.1
   '@inertiajs/core': 3.7.1
   zod: 4.6.5
