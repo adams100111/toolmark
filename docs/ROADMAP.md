@@ -1,7 +1,6 @@
-# Toolmark roadmap & live status (1.0) + post-1.0 consumer track
+# Toolmark roadmap & live status (1.0)
 
-**This file is the single source of truth for progress on Toolmark 1.0**; the Innovation consumer
-track resumes after `1.0.0` is published. Any new session starts here (see
+**This file is the single source of truth for progress on Toolmark 1.0**. Any new session starts here (see
 [Resume protocol](#resume-protocol)). Update it at every checkpoint listed in
 [Checkpoint rules](#checkpoint-rules) and commit it (`docs(roadmap): …`) so the state survives
 context compaction, new sessions and new machines.
@@ -39,7 +38,7 @@ Post-1.0 consumer track:          └─► Innov P0 ─► P1 ─► P2 ─► 
 | T-M4 Tours & tooling | toolmark | `…-m4-tours-tooling.md` | T-M3 | authored + planned tours (3 browsers, axe-clean); Laravel authored tour; same-tools e2e; Laravel + Next.js suites; `docs:build`; lint clean; tarball smoke | done | `feat/m4-tours` (PR #5) | 2026-09-25 |
 | T-M5 Release | toolmark | `…-m5-release.md` | T-M4 | all §21 gates (incl. round budget + smoke on the RC); publish (owner) | done (owner hardening O-j/O-k open) | `main` @ `21dc573`; npm `1.0.0` | 2026-09-25 |
 
-**Current focus:** Toolmark M1 → M5 (release). Innovation is post-1.0. Within Toolmark, units are
+**Current focus:** Toolmark M1 → M5 (release). Within Toolmark, units are
 sequential; parallelism is lane-level inside a unit (see
 [Parallel execution](#parallel-execution-and-resource-limits)).
 
@@ -94,69 +93,6 @@ its exit check passes. Task numbers refer to the unit's plan.
 | O6 | GitHub Actions budget for the private-repo CI matrix (3 browsers × Node × React/Inertia/zod), or self-hosted runners | T-M1 T16 / T-M5 T1 | open |
 | O7 | Go public: make the repo public; create environment `npm-release` (owner the only reviewer); enable Pages (GitHub Actions), private vulnerability reporting, "Allow GitHub Actions to create and approve pull requests", branch protection on `main`; set `TOOLMARK_PUBLISH_ENABLED`; approve the publish run | T-M5 T7c hand-off (O-c…O-i) — `docs/release/owner-handoff.md`, `scripts/owner-publish-wizard.sh` | open (owner) |
 
-## Post-1.0 consumer track (Innovation)
-
-Not blocking. Nothing here gates any Toolmark unit. Toolmark `1.0.0` is on npm (2026-09-25), so this
-track can start.
-
-- Innovation repo: `~/projects/innovation`. On 2026-10-01 the spec and plans were refreshed for 1.0
-  (npm `^1.0.0`, records in Innovation, codebase re-verified, owner decisions R1–R33) and merged to
-  Innovation `next` (dits-sa/innovation PR #179, `88e315a91`; Forgejo synced). Worktree
-  `~/projects/innovation-wt/assistant-page-tools`. The old branch `docs/assistant-page-tools` is
-  superseded. A separate local branch `chore/speckit-1.0.11` re-scaffolds Spec Kit (unrelated).
-- The baseline (I-P0 Lane B) must be recorded **before** any change to Innovation's assistant Entry
-  Mode code; baseline and results live in the Innovation repo (`docs/ai-assistant/`).
-
-| Innovation spec (C1, A1–A4, R1–R33) | innovation `docs/superpowers/specs/2026-09-24-assistant-page-tools-design.md` (on `next`) |
-| Innovation plans (Phase 0–3, refreshed 2026-10-01) | innovation `docs/superpowers/plans/2026-09-24-assistant-page-tools-phase{0,1,2,3}-*.md` (on `next`) |
-
-| Unit | Repo | Plan | Depends on | Exit check | Status | Branch | Updated |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| I-P0 Foundations | innovation | `…-phase0-foundations.md` | — | 4 lanes merged; **baseline committed** | todo (ready) | — | 2026-10-01 |
-| I-P1 Simple form | innovation | `…-phase1-simple-form.md` | `@toolmark/*` 1.0.0 published, I-P0 | SC-001/003/004 met | todo | — | — |
-| I-P2 Wizard & forms | innovation | `…-phase2-wizard-and-forms.md` | I-P1 | SC-002 met (T9 needs owner) | todo | — | — |
-| I-P3 Tours | innovation | `…-phase3-tours.md` | 1.0.0, I-P2 T1–T8 | e2e green | todo | — | — |
-
-### I-P0 Foundations (innovation)
-- [ ] Wave 1 · Lane A (T1) browser-result endpoint auth + binding **(security)**
-- [ ] Wave 1 · Lane B (T2) benchmark harness → **operator run: baseline 10×2** (Innovation repo)
-- [ ] Wave 1 · Lane C (T3) `AiAssistantSettings` switches
-- [ ] Wave 1 · Lane D (T4–T5) activity event + `CONTEXT.md`
-- [ ] Unit exit: merged to the working branch; baseline committed
-
-### I-P1 Simple form (innovation)
-- [ ] W0 · A (T1) deps (`@toolmark/*` ^1.0.0) + provider
-- [ ] W1 · B (T2–T4) bridge, `page_call`, confirmations **(security)** · C (T5–T6) chat bridge + approval card · D (T7) simple form tools
-- [ ] W2 · E (T8–T9) e2e + measurement (Phase 1 section, Innovation repo)
-- [ ] Unit exit: SC-001/003/004 met
-
-### I-P2 Wizard & forms (innovation)
-- [ ] W0 · A (T2) lookup options, file resolver
-- [ ] W1 · B (T1) chat attachments **(security)** · C (T3) wizard · D (T4, T6) simple form extras, ideas, projects · E (T5) attachment picker
-- [ ] W2 · F (T7–T8) e2e + measurement (SC-002)
-- [ ] W3 · G (T9) legacy removal — **owner go-ahead required**
-- [ ] Unit exit
-
-### I-P3 Tours (innovation)
-- [ ] W0 · A (T1) tour package + theming
-- [ ] W1 · B (T2) pre-written tours · C (T3–T4) tour-plan endpoint + `start_tour` · D (T6) chat launcher
-- [ ] W2 · E (T5) e2e
-- [ ] Unit exit
-
-| # | Item | Needed by | Status |
-| --- | --- | --- | --- |
-| O3 | Go-ahead for I-P2 Task 9 (remove legacy script/snapshot; every tenant has page actions on) | I-P2 W3 | open |
-| O4 | Permission to push `docs/assistant-page-tools` / feature branches in Innovation | any Innovation merge | open |
-| O5 | LLM credentials + a dev tenant for the baseline and measurement runs | I-P0 Lane B run | open |
-
-Innovation resource notes (from Innovation experience): at most **2 heavy operations at once** (ddev
-test runs, `npm run build`, image builds) across sessions; lane fan-out beyond 2 runs sequentially;
-implementers run tests in the **foreground only**. Worktrees need one-time setup: copy `vendor/` and
-`.env`, run `php artisan wayfinder:generate` (or copy `resources/js/{routes,actions,wayfinder}`), give
-the worktree's ddev a unique `name`, remap the pgvector host port; `ddev poweroff` is global — use
-`ddev stop` in the worktree. Per task: fast checks only; one full `npm run build` and one full
-backend suite at the unit gate.
-
 ## Resume protocol
 
 Every new session, before doing anything else:
@@ -183,8 +119,7 @@ and nowhere else:
 - a unit's exit check passes → tick the unit, status `done`, set dependents to `ready`;
 - release evidence lands (`round-budget.md`, tarball smoke) → link it.
 
-One line per event in the ledger; the board holds only lane-level state. Post-1.0 Innovation units
-also record progress in Innovation's own branch history.
+One line per event in the ledger; the board holds only lane-level state.
 
 ## Parallel execution and resource limits
 
@@ -213,11 +148,9 @@ also record progress in Innovation's own branch history.
 
 ## Log
 
-- 2026-09-24 — Specs and plans complete for both repos; roadmap created.
-- 2026-09-24 — Owner deferred Innovation; Innovation checkout back on `next`; plans parked on
-  `docs/assistant-page-tools`. Next: T-M1.
-- 2026-09-24 — Owner decision: Toolmark 1.0 is self-contained; Innovation becomes a post-1.0
-  consumer track; SC1 proven in-repo (round budget), SC2 by the same-tools e2e, packaging by the
+- 2026-09-24 — Specs and plans complete; roadmap created.
+- 2026-09-24 — Next: T-M1.
+- 2026-09-24 — Owner decision: Toolmark 1.0 is self-contained; SC1 proven in-repo (round budget), SC2 by the same-tools e2e, packaging by the
   tarball smoke test. Plan audit pass 1 applied to spec/overview (rulings R1–R9 in spec §23).
 - 2026-09-24 — Plan audit pass 3: pass-2 proposals applied to spec/overview; cross-plan consistency
   fixed (M1 owns Inertia visit outcomes and WebSocket hooks; shared-files table in the overview);
@@ -255,10 +188,3 @@ also record progress in Innovation's own branch history.
   docs site live; spec-watch live. First attempt failed with `EOTP` (bootstrap token lacked "Bypass
   2FA"). Owner still open: O-j `npm trust` ×8, O-k delete `NPM_BOOTSTRAP_TOKEN` and revoke the npm
   tokens.
-- 2026-10-01 — **Innovation track refreshed for 1.0**: spec + 4 plans updated on Innovation branch
-  `docs/assistant-page-tools-1.0` (npm `^1.0.0`; 7-step wizard; tours pilot on challenge create;
-  license feature `ai_page_actions` + tenant switches; chat attachments and challenge edit split out;
-  decisions R1–R21 after a grilling session). I-P0 ready; O4 (push) and O5 (LLM credentials + dev
-  tenant for the baseline) still open.
-- 2026-10-01 — Innovation spec (R1–R33) and plans merged to Innovation `next` (PR #179) after three
-  grilling rounds and a 55-finding plan review. I-P0 ready; O5 (OpenAI key + dev tenant) open.

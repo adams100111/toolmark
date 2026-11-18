@@ -1,8 +1,7 @@
 # Toolmark — project instructions
 
 **Start every session by reading [`docs/ROADMAP.md`](docs/ROADMAP.md)** and follow its resume
-protocol. It is the live status of Toolmark 1.0 (self-contained; no dependency on other repos) and
-of the post-1.0 consumer track (Innovation's assistant page tools).
+protocol. It is the live status of Toolmark 1.0 (self-contained; no dependency on other repos).
 
 ## Binding rules
 
@@ -15,7 +14,7 @@ of the post-1.0 consumer track (Innovation's assistant page tools).
 - **Stack currency:** before a milestone starts, re-check every version in the plans' overview with
   `npm view <pkg> version` and verify APIs against current docs (context7 / official docs); record
   bumps in the milestone ledger.
-- **No app-specific (e.g. Innovation) code** in any package (D3). No Toolmark exit check or release
+- **No app-specific code** in any package (D3). No Toolmark exit check or release
   gate may depend on another repository (spec §23, release independence).
 - **TSDoc with every export:** a task that adds a public export writes its doc comment in the same
   task.
