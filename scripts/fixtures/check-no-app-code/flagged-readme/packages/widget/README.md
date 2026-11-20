@@ -1,3 +1,3 @@
 # widget
 
-Use it with the ChallengeForm in entry mode.
+Use it with the WidgetForm in entry mode.

@@ -84,18 +84,18 @@ test('tour_guide_mode_waits_for_valid_input', async ({ page }) => {
   await expect(title(page)).toHaveText('Title')
 
   // A valid value advances.
-  await titleEn.fill('Innovation challenge')
+  await titleEn.fill('Smart water metering')
   await expect(title(page)).toHaveText('Type')
   await page.getByRole('combobox', { name: 'Type' }).selectOption('hackathon')
   await expect(title(page)).toHaveText('Create')
 
   // The last step waits for the user's own (valid) submit.
-  await page.getByLabel('Title (Arabic)').fill('تحدي الابتكار')
+  await page.getByLabel('Title (Arabic)').fill('القياس الذكي للمياه')
   await page.getByLabel('Starts at').fill('2026-10-01')
   await page.getByRole('button', { name: 'Create', exact: true }).click()
   await expect(overlay(page)).toHaveCount(0)
   await expect(page.getByTestId('tour-status')).toHaveText('done')
-  await expect(page.getByTestId('submitted')).toContainText('Innovation challenge')
+  await expect(page.getByTestId('submitted')).toContainText('Smart water metering')
 })
 
 test('tour_do_mode_fills_and_confirms', async ({ page }) => {
@@ -107,11 +107,11 @@ test('tour_do_mode_fills_and_confirms', async ({ page }) => {
   await expect(overlay(page)).toHaveAttribute('data-status', 'confirming', { timeout: 15_000 })
   const confirm = inlineConfirm(page)
   await expect(confirm).toBeVisible()
-  await expect(confirm).toContainText('Innovation challenge')
+  await expect(confirm).toContainText('Smart water metering')
 
   // Both fills ran, and every changed field was highlighted.
-  await expect(page.getByLabel('Title (English)')).toHaveValue('Innovation challenge')
-  await expect(page.getByLabel('Title (Arabic)')).toHaveValue('تحدي الابتكار')
+  await expect(page.getByLabel('Title (English)')).toHaveValue('Smart water metering')
+  await expect(page.getByLabel('Title (Arabic)')).toHaveValue('القياس الذكي للمياه')
   await expect(page.getByRole('combobox', { name: 'Type' })).toHaveValue('hackathon')
   await expect(page.getByLabel('Starts at')).toHaveValue('2026-10-01')
   const highlights = page.getByTestId('tour-highlights')
@@ -122,7 +122,7 @@ test('tour_do_mode_fills_and_confirms', async ({ page }) => {
 
   await confirm.getByRole('button', { name: 'Approve' }).click()
   await expect(confirm).toBeHidden()
-  await expect(page.getByTestId('submitted')).toContainText('Innovation challenge')
+  await expect(page.getByTestId('submitted')).toContainText('Smart water metering')
   await expect(overlay(page)).toHaveCount(0)
   await expect(page.getByTestId('tour-status')).toHaveText('done')
 })

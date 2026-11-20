@@ -12,7 +12,7 @@ const FILL = 'challenges.create.fill'
 const LLM_FILL = 'challenges__create__fill'
 
 const values = {
-  title: { ar: 'تحدي الابتكار', en: 'Innovation challenge' },
+  title: { ar: 'القياس الذكي للمياه', en: 'Smart water metering' },
   type: 'hackathon',
   startsAt: '2026-10-01',
 }
@@ -47,7 +47,7 @@ for (const era of ['legacy', 'modern'] as const satisfies readonly McpEra[]) {
     expect(r.isError).toBe(false)
     const result = r.structuredContent as ToolResult<unknown>
     expect(result.status).toBe('ok')
-    await expect(page.getByLabel('Title (English)')).toHaveValue('Innovation challenge')
+    await expect(page.getByLabel('Title (English)')).toHaveValue('Smart water metering')
     await expect(page.getByLabel('Starts at')).toHaveValue('2026-10-01')
   })
 }
@@ -72,5 +72,5 @@ test('reload_resumes_without_new_code', async ({ page, tools }) => {
 
   const r = await mcp.callWhenConnected(LLM_FILL, { values })
   expect((r.structuredContent as ToolResult<unknown>).status).toBe('ok')
-  await expect(page.getByLabel('Title (English)')).toHaveValue('Innovation challenge')
+  await expect(page.getByLabel('Title (English)')).toHaveValue('Smart water metering')
 })

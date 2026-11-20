@@ -1223,8 +1223,7 @@ M1 is done when all of these hold on `main`:
 3. `node scripts/tarball-smoke.mjs dist-tarballs` passes on the `0.1.0-next.0` tarballs and the result
    is logged in `docs/release/next-tarballs.md`.
 
-No exit condition depends on another repository. Innovation's measured before/after run is a post-1.0
-consumer track (spec §19).
+No exit condition depends on another repository. Consumer adoption is post-1.0 (spec §19).
 
 ## Self-review
 

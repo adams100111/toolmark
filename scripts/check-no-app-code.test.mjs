@@ -9,9 +9,13 @@ const here = dirname(fileURLToPath(import.meta.url))
 const SCRIPT = join(here, 'check-no-app-code.mjs')
 const FIXTURES = join(here, 'fixtures', 'check-no-app-code')
 
-function run(fixture) {
+const PATTERN = 'acme|WidgetForm|entry[ -]mode'
+
+function run(fixture, pattern = PATTERN) {
+  const env = { ...process.env, TOOLMARK_APP_CODE_PATTERN: pattern }
   const r = spawnSync(process.execPath, [SCRIPT, '--root', join(FIXTURES, fixture)], {
     encoding: 'utf8',
+    env,
   })
   return { status: r.status, output: `${r.stdout}${r.stderr}` }
 }
@@ -21,14 +25,20 @@ test('check_no_app_code_passes_generic_sources', () => {
   assert.equal(r.status, 0, r.output)
 })
 
-test('check_no_app_code_flags_innovation', () => {
+test('check_no_app_code_flags_app_name', () => {
   const r = run('flagged')
   assert.equal(r.status, 1, r.output)
-  assert.match(r.output, /FAIL packages\/widget\/src\/index\.ts:1: .*Innovation/)
+  assert.match(r.output, /FAIL packages\/widget\/src\/index\.ts:1: .*Acme/)
+})
+
+test('check_no_app_code_skips_without_pattern', () => {
+  const r = run('flagged', '')
+  assert.equal(r.status, 0, r.output)
+  assert.match(r.output, /skipped/)
 })
 
 test('check_no_app_code_flags_readme_terms', () => {
   const r = run('flagged-readme')
   assert.equal(r.status, 1, r.output)
-  assert.match(r.output, /FAIL packages\/widget\/README\.md:3: .*ChallengeForm/)
+  assert.match(r.output, /FAIL packages\/widget\/README\.md:3: .*WidgetForm/)
 })

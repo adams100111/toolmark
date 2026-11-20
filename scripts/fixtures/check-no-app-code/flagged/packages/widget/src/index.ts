@@ -1,2 +1,2 @@
-// Wired for the Innovation assistant page.
+// Wired for the Acme assistant page.
 export const x = 1
