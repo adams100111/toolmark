@@ -466,9 +466,8 @@ review works from is [threat-model.md](threat-model.md).
 
 **Verdict:** pass
 
-- `scripts/check-no-app-code.mjs` (Lane A) does not exist at the reviewed SHA. Its ruled pattern
-  `/innovation|dits-sa|ChallengeForm|entry[ -]mode/i` over `packages/*/src/**` and
-  `packages/*/README.md` has 0 hits.
+- `scripts/check-no-app-code.mjs` (Lane A) does not exist at the reviewed SHA. Its ruled deny pattern
+  over `packages/*/src/**` and `packages/*/README.md` has 0 hits.
 - `packages/core/package.json` has no `dependencies`.
 - No runtime package (`core`, `react`, `inertia`, `tour`, `testing`, `mcp`) imports an AI SDK. The
   only one in the repo is `@typesafe-ai/sdk`, which only `@toolmark/judge-typesafe` imports. That

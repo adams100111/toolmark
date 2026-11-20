@@ -233,7 +233,9 @@ jobs:
   browser:
     name: browser (${{ matrix.browser }})
     needs: plan
-    runs-on: ubuntu-latest
+    # Pinned: ubuntu-latest moved to 26.04, whose ICU/libxml2 sonames the Playwright WebKit build
+    # does not link against (libicu*.so.74, libxml2.so.2 missing).
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     timeout-minutes: 30

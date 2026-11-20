@@ -20,9 +20,9 @@ executors read both.
 | M4 | `2026-09-24-toolmark-m4-tours-tooling.md` | `@toolmark/tour`, lint + TypeSafe judge, docs site, examples (inertia-laravel, nextjs), same-tools e2e | authored + agent-planned tours e2e in `examples/react-vite` on Chromium/Firefox/WebKit (axe-clean); authored tour in `examples/inertia-laravel`; `same-tools.spec.ts` green; Laravel + Next.js example suites green; `pnpm docs:build`; `toolmark lint` clean on every example; tarball smoke passes |
 | M5 | `2026-09-24-toolmark-m5-release.md` | release gates §21, docs gap-fill, package metadata, security review, spec-watch, publish `1.0` | all §21 gates green (incl. round budget + tarball smoke on the RC); publish is owner-confirmed |
 
-**Release independence.** Toolmark 1.0 depends on no other repository. Innovation adoption (spec
-§19) is a post-1.0 consumer track planned and executed in `~/projects/innovation`; Toolmark plans
-never edit Innovation and no Toolmark exit check or gate waits on it.
+**Release independence.** Toolmark 1.0 depends on no other repository. Consumer adoption (spec
+§19) is post-1.0 and lives in each consumer's own repository; Toolmark plans never edit a consumer
+and no Toolmark exit check or gate waits on one.
 
 - **Success criterion 1 in-repo:** `examples/react-vite/e2e/round-budget.spec.ts` (M1 T15 creates it
   with `simple_form_within_3_rounds`; M2 T10 adds `wizard_within_5_rounds`). A scripted in-page agent
@@ -86,7 +86,7 @@ never edit Innovation and no Toolmark exit check or gate waits on it.
   `@toolmark/react` and `@inertiajs/react` for `@toolmark/inertia`).
 - No `eval`, `new Function`, or string-argument `setTimeout` anywhere: ESLint `no-eval`,
   `no-new-func`, `no-implied-eval` are errors.
-- No app-specific (e.g. Innovation) code, names or conventions in any package (D3); M5 adds an
+- No app-specific code, names or conventions in any package (D3); M5 adds an
   automated check.
 - Tool name regex: `^[A-Za-z0-9_.-]{1,128}$`. `llmName` = name with `.` → `__`; must match
   `^[a-zA-Z0-9_-]{1,64}$`; if longer than 64, truncate to 55 chars + `_` + first 8 hex of FNV-1a hash

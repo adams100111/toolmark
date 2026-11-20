@@ -13,16 +13,16 @@ test.beforeEach(async ({ page, tools }) => {
 test('wizard_fill_all_steps_one_call', async ({ page, tools }) => {
   const result = await tools.call(FILL, {
     steps: {
-      basics: { title: 'Innovation Summit', category: 'community' },
+      basics: { title: 'Riyadh Tech Summit', category: 'community' },
       schedule: { startsAt: '2026-11-01', endsAt: '2026-11-02' },
       people: { ownerId: 'ada-lovelace', reviewers: [{ name: 'Alan Turing' }] },
     },
   })
   expect(result.status).toBe('ok')
-  expect(result).toHaveChanged('basics.title', 'Innovation Summit')
+  expect(result).toHaveChanged('basics.title', 'Riyadh Tech Summit')
   expect(result).toHaveChanged('schedule.startsAt', '2026-11-01')
   expect(result).toHaveChanged('people.ownerId', 'ada-lovelace')
-  await expect(page.getByLabel('Title')).toHaveValue('Innovation Summit')
+  await expect(page.getByLabel('Title')).toHaveValue('Riyadh Tech Summit')
 
   // Navigate to the other steps (through the tool, like an agent would) and check their values
   // landed even though their forms were not the mounted one when filled.
@@ -38,7 +38,7 @@ test('wizard_fill_all_steps_one_call', async ({ page, tools }) => {
 test('wizard_submit_confirmation', async ({ page, tools }) => {
   const filled = await tools.call(FILL, {
     steps: {
-      basics: { title: 'Innovation Summit', category: 'community' },
+      basics: { title: 'Riyadh Tech Summit', category: 'community' },
       schedule: { startsAt: '2026-11-01', endsAt: '2026-11-02' },
       people: { ownerId: 'ada-lovelace', reviewers: [{ name: 'Alan Turing' }] },
     },
@@ -49,10 +49,10 @@ test('wizard_submit_confirmation', async ({ page, tools }) => {
   expect(submitted.status).toBe('needs_confirmation')
   const card = page.getByRole('dialog', { name: 'Confirm action' })
   await expect(card).toBeVisible()
-  await expect(card).toContainText('Innovation Summit')
+  await expect(card).toContainText('Riyadh Tech Summit')
   await card.getByRole('button', { name: 'Approve' }).click()
   await expect(card).toBeHidden()
-  await expect(page.getByTestId('events-created')).toContainText('Innovation Summit')
+  await expect(page.getByTestId('events-created')).toContainText('Riyadh Tech Summit')
 })
 
 test('wizard_user_typed_field_skipped', async ({ page, tools }) => {

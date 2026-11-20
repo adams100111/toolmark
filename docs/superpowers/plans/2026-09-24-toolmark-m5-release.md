@@ -122,7 +122,7 @@ token.
   release candidate, must meet success criterion 1 (simple form ≤ 3 rounds, wizard ≤ 5, zero
   `invalid`/`refused`). `scripts/tarball-smoke.mjs` must pass on the RC tarballs, and
   `same-tools.spec.ts` and the tours e2e must be green on the RC build. If any check fails, the
-  release stops. Innovation measurements are post-1.0 and never gate.
+  release stops. Consumer measurements are post-1.0 and never gate.
 
 ## Rulings made while fixing (pass 2)
 
@@ -144,9 +144,10 @@ token.
   job smoke-tests the changesets-packed tarballs as well as the `pnpm pack` ones (pass-1 ruling 19).
 - **Size compression is gzip.** Every size entry sets `"gzip": true`, because the spec and budget
   language say gzip.
-- **App-code check pattern.** `check-no-app-code.mjs` fails on
-  `/innovation|dits-sa|ChallengeForm|entry[ -]mode/i` in `packages/*/src/**` and `packages/*/README.md`.
-  A bare "challenge" is not matched, to avoid false positives.
+- **App-code check pattern.** `check-no-app-code.mjs` fails on a deny pattern of consumer-app
+  names in `packages/*/src/**` and `packages/*/README.md`. The pattern is not committed: the owner sets the
+  environment variable `TOOLMARK_APP_CODE_PATTERN` when running the release gates; without it the
+  check prints a notice and passes.
 - **The source condition stays published.** `docs/policies/versioning.md` states that
   `@toolmark/source` and the shipped `src/` are internal and outside semver (pass-1 ruling 9).
   `publishConfig.exports` is not used.
@@ -326,7 +327,7 @@ Every `ci.yml` job must be green (`gh run view --json jobs`).
   exit 1 naming the field.
 - `check_package_meta_rejects_tarball_without_license`: fixture tgz → exit 1.
 - `check_package_meta_rejects_workspace_protocol_in_tarball`: fixture tgz → exit 1.
-- `check_no_app_code_flags_innovation`: fixture src containing `Innovation` → exit 1.
+- `check_no_app_code_flags_app_name`: fixture src containing a denied app name → exit 1.
 - `check_workflows_rejects_unpinned_action`: fixture `uses: actions/checkout@v7` → exit 1.
 - `check_workflows_rejects_missing_top_level_permissions`: fixture → exit 1.
 - `smoke_typechecks_bundler_and_nodenext` (new case in M1's `scripts/tarball-smoke.test.mjs`): a

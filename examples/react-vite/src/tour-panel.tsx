@@ -26,7 +26,7 @@ export const AUTHORED_TOUR: TourStep[] = [
     param: 'title.en',
     title: 'Title',
     text: 'Give the challenge a title in English (and Arabic).',
-    input: { title: { en: 'Innovation challenge', ar: 'تحدي الابتكار' } },
+    input: { title: { en: 'Smart water metering', ar: 'القياس الذكي للمياه' } },
   },
   {
     tool: FILL,

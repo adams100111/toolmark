@@ -61,7 +61,7 @@ test('fill_create_form_via_bridge', async ({ page }) => {
       tool: 'challenges.create.fill',
       input: {
         values: {
-          title: { en: 'Innovation challenge', ar: 'تحدي الابتكار' },
+          title: { en: 'Smart water metering', ar: 'القياس الذكي للمياه' },
           type: 'hackathon',
           startsAt: '2026-10-01',
         },
@@ -71,8 +71,8 @@ test('fill_create_form_via_bridge', async ({ page }) => {
 
   expect(calls).toBe(1)
   expect(results[0]).toMatchObject(UNTRUSTED_OK)
-  await expect(page.getByLabel('Title (English)')).toHaveValue('Innovation challenge')
-  await expect(page.getByLabel('Title (Arabic)')).toHaveValue('تحدي الابتكار')
+  await expect(page.getByLabel('Title (English)')).toHaveValue('Smart water metering')
+  await expect(page.getByLabel('Title (Arabic)')).toHaveValue('القياس الذكي للمياه')
   await expect(page.getByLabel('Type')).toHaveValue('hackathon')
   await expect(page.getByLabel('Starts at')).toHaveValue('2026-10-01')
 })

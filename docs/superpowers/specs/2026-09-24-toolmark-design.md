@@ -3,8 +3,7 @@
 - **Date:** 2026-09-24 (revised after the grilling session and the plan audit, same day)
 - **Status:** agreed design (D1–D32), amended by the §23 rulings
 - **Owner:** adams100111
-- **First consumer (post-1.0):** Innovation (`dits-sa/innovation`), its AI assistant's form-filling
-  "Entry Mode". It adopts the published `1.0`; it is not a release dependency (§19).
+- **Consumers:** apps adopt the published `1.0`; no consumer is a release dependency (§19).
 - **Release model:** one complete, production-ready `1.0` of all eight packages. No MVP. Internal
   milestones end with `-next` versioned tarballs (`pnpm pack`) verified by the in-repo tarball smoke
   test; nothing is published to npm before M5 and nothing is public until every release gate (§21)
@@ -34,13 +33,13 @@ spec (a Community Group draft in origin trial) keeps changing underneath.
    in `docs/release/round-budget.md`). A **round** is one agent turn that issues ≥ 1 tool call
    (`describe`/`call`): every agent→page message sent before the agent next awaits results counts as
    one round. The human's confirmation of a deferred call and the §12.3 acknowledgement turn (no
-   page tools) are not rounds. A real consumer's before/after LLM measurement (Innovation, §19) is a
+   page tools) are not rounds. A real consumer's before/after LLM measurement (§19) is a
    post-1.0 case study, not a release gate.
 2. The same tool declarations work unchanged for the in-app agent, a WebMCP browser agent, a desktop
    MCP client, a tour and Playwright tests — asserted on one declaration by
    `examples/react-vite/e2e/same-tools.spec.ts`.
 3. Every release gate in §21 passes.
-4. No app-specific (e.g. Innovation) code exists in any Toolmark package (checked in CI, M5).
+4. No app-specific code exists in any Toolmark package (checked in CI, M5).
 
 ### Non-goals
 
@@ -57,7 +56,7 @@ spec (a Community Group draft in origin trial) keeps changing underneath.
 | --- | --- | --- |
 | D1  | **Registry-first core.** Tools live in Toolmark's registry; every agent surface is a consumer. | Gains don't depend on browser support; spec churn stays in one adapter. |
 | D2  | pnpm monorepo, **JS/TS only**. | Reuse, one release train. Packagist can't publish from a subfolder. |
-| D3  | No app-specific code in packages. Innovation is the first **post-1.0** consumer; `1.0` is proven on the in-repo examples. | General-purpose; the release never waits on another repo. |
+| D3  | No app-specific code in packages. Consumers adopt it **post-1.0**; `1.0` is proven on the in-repo examples. | General-purpose; the release never waits on another repo. |
 | D4  | No custom polyfill; native WebMCP or MCP-B's polyfill as optional peer. | MCP-B tracks the spec and its WPT suite. |
 | D5  | Types via **Standard Schema v1**; manifest JSON Schema via **Standard JSON Schema**, with fallbacks (D14). | Library-agnostic. |
 | D6  | Every call returns a typed `ToolResult`; expected outcomes never throw. | Structured outcomes for agents. |
@@ -65,7 +64,7 @@ spec (a Community Group draft in origin trial) keeps changing underneath.
 | D8  | Tour hooks (anchors, state, interaction events) in core. | Tours consume the registry. |
 | D9  | No AI model in runtime packages. | Stability, no lock-in, no keys in the browser. |
 | D10 | Name **Toolmark**, npm scope `@toolmark/*`. | Free on npm as of 2026-09-24. |
-| D11 | Form adapters: react-hook-form (primary), Inertia `useForm`; Inertia `<Form>` through the DOM path. | Innovation: 43 RHF files, 51 `zodResolver`, 0 Inertia `<Form>`; `<Form>` is uncontrolled. |
+| D11 | Form adapters: react-hook-form (primary), Inertia `useForm`; Inertia `<Form>` through the DOM path. | RHF with `zodResolver` is the common form stack; Inertia `<Form>` is uncontrolled. |
 | D12 | LLM exposure default: `page_call(tool, input)` (+ `page_describe`, D21); per-tool mode optional. | Stable cached tool prefix. |
 | D13 | Confirmation is headless in core/react (`useConfirmQueue`). | Apps own their design systems. |
 | D14 | Global `jsonSchema` converter option; per-tool override. | zod 3 apps plug in `zod-to-json-schema`. |
@@ -79,7 +78,7 @@ spec (a Community Group draft in origin trial) keeps changing underneath.
 | D22 | Calls are serialized per scope and parallel across scopes. | No interleaved fills or fill/submit races. |
 | D23 | Navigation returns `ok` before disposing its scope, then `changed`; a full reload yields server `timeout` and a fresh `manifest`. | Defined behaviour across page swaps. |
 | D24 | No-op under SSR; `description` is for LLMs, `title`/`summary` are app-localized; tool names are a public contract. | Portability, i18n, compatibility. |
-| D25 | **Wizard primitive** (`useWizardTool`) writing into parent state; per-step fallback. | Innovation's wizard: one `useForm` per step, parent `useState`. |
+| D25 | **Wizard primitive** (`useWizardTool`) writing into parent state; per-step fallback. | The common wizard shape: one `useForm` per step, parent `useState`. |
 | D26 | Async **`options`** fields with a companion `<form>.options` tool; field arrays map to arrays. | Lookups, member pickers, repeatable rows. |
 | D27 | **File fields** via app-resolved references, plus URLs from allow-listed origins (off by default). | Agents can't type bytes; URL fetching is an exfiltration risk. |
 | D28 | Single **`1.0`**; the WebMCP adapter is labelled **experimental** (outside semver) until the spec leaves origin trial. | Honest stability promise. |
@@ -275,7 +274,7 @@ interaction events), `inertiaAdapter(form)` (`@toolmark/inertia`, server errors 
 useWizardTool({
   name: 'create',
   description: 'The advanced new-challenge wizard.',
-  steps: [{ name: 'basicInfo', input: basicInfoSchema }, { name: 'innovationType', input: … }, …],
+  steps: [{ name: 'basicInfo', input: basicInfoSchema }, { name: 'category', input: … }, …],
   data, setData,                 // the parent's source of truth (e.g. useState slices)
   current, goTo,                 // step navigation
   submit: () => handleFinalSubmit(),
@@ -619,30 +618,14 @@ Latest stable versions checked on npm, 2026-09-24 (re-verify when the plan execu
 - **Release evidence (in-repo):** round budget (`examples/react-vite/e2e/round-budget.spec.ts`,
   success criterion 1), same-tools (`e2e/same-tools.spec.ts`, success criterion 2), authored and
   agent-planned tours on Chromium/Firefox/WebKit, and the tarball smoke test
-  (`scripts/tarball-smoke.mjs`). Innovation's measured before/after run is post-1.0 (§19).
+  (`scripts/tarball-smoke.mjs`). A consumer's measured before/after run is post-1.0 (§19).
 
-## 19. Post-1.0 consumer track: Innovation adoption (not a release dependency)
+## 19. Post-1.0 adoption (not a release dependency)
 
-Innovation adopts Toolmark after `1.0.0` is published. It may trial `-next` or release-candidate
-tarballs as a courtesy, but no Toolmark milestone, exit check or release gate waits on it. Its plan
-and evidence live in the Innovation repo with its own Spec Kit flow.
-
-0. **Baseline first:** before any change to Innovation's assistant Entry Mode code, record the
-   current snapshot-and-script flow — 10 runs each of the simple-form task and the wizard task,
-   recording rounds, wall time, input tokens and success rate — in the Innovation repo.
-1. Put `browser_script` behind a config flag defaulting to off (independent security fix).
-2. Depend on the published `@toolmark/*` `^1.0.0` from npm.
-3. `SimpleChallengeForm`: `useFormTool(rhfAdapter(form), …)` with a global `zod-to-json-schema`
-   converter; localized fields via an app-side adapter; lookups via async `options`.
-4. Advanced wizard: `useWizardTool` over `ChallengeForm`'s `formData`/`setFormData`.
-5. Chat popup: `bridge({ transport: echoTransport(…) })`, manifest with entry-mode messages, deferred
-   confirmation card (existing options-bubble pattern).
-6. `AiAssistant` module: `PageCallTool`/`PageDescribeTool`, protocol-v1 `BrowserBridge` with the
-   §12.2 security rules (adapted from §12.5). Snapshot stays as fallback for pages without tools.
-7. Measure after on the same tasks as the baseline; results stay in the Innovation repo and may be
-   linked from the Toolmark docs as a case study.
-8. Idea and project create/edit forms; then delete the snapshot scraper and the prompt's filling
-   recipes. Other pages migrate later (Innovation's scope).
+Consumer apps adopt Toolmark from the published `1.0.0` on npm. A consumer may trial `-next` or
+release-candidate tarballs as a courtesy, but no Toolmark milestone, exit check or release gate waits
+on it. A consumer's adoption plan, baseline and before/after measurement live in that consumer's own
+repository and may be linked from the Toolmark docs as a case study.
 
 ## 20. Build milestones (internal, all ship in `1.0`)
 
@@ -724,7 +707,7 @@ Where one amends a section above, that section has been updated to match.
 | **Node floor `>=22.12`** (global `WebSocket`); CI matrix Node 22.x and 24.x. | Overview constraints; M1 T1; M5 constraints |
 | **Tarball hand-off**: each milestone packs `-next` versioned tarballs (`pnpm -r --filter "./packages/*" pack --pack-destination "$PWD/dist-tarballs"`) and verifies them with `scripts/tarball-smoke.mjs` (created in M1 T16); nothing is published before M5; handing tarballs to any consumer is an optional courtesy, not a gate (header, D32, §19, §20 amended; supersedes "Tarball consumption"). | Overview; final lane of M1–M4; M5 T7 |
 | **Confirm rule**: `missing_confirm_handler` only when no allowed caller has a confirmation path; inline callers without a handler don't see the tool (§7, D7 amended). | M1 constraints, T4, T5 |
-| **Release independence (R1)**: `1.0` depends on no consumer repo. SC1 is proven by the round-budget e2e (scripted agent, no LLM; round = one agent turn issuing ≥ 1 tool call), SC2 by `same-tools.spec.ts`, packaging by the tarball smoke test, tours by authored + agent-planned e2e on three browsers. Innovation adoption, its baseline and before/after measurement are a post-1.0 consumer track (header, §1, D3, D32, §15, §18–§21 amended). | Overview; M1 T15–T16; M2 T10; M3 T7; M4 T5, T8; M5 T7b |
+| **Release independence (R1)**: `1.0` depends on no consumer repo. SC1 is proven by the round-budget e2e (scripted agent, no LLM; round = one agent turn issuing ≥ 1 tool call), SC2 by `same-tools.spec.ts`, packaging by the tarball smoke test, tours by authored + agent-planned e2e on three browsers. Consumer adoption and any baseline or before/after measurement are post-1.0 (header, §1, D3, D32, §15, §18–§21 amended). | Overview; M1 T15–T16; M2 T10; M3 T7; M4 T5, T8; M5 T7b |
 | **MCP pairing (R3)**: unpaired, the server lists only `toolmark_pairing` (result shows the code; code also on stderr); a correct code is consumed and re-issued and the page gets a session token for resume/reload; a newer pairing supersedes the old page with a terminal close code (no reconnect loop); call deadline (`--call-timeout`, default `600000`) or MCP cancellation sends protocol `cancel` to the page. `mcpPairing({ code?, port?, onStatus? })` (§11.3, §14 amended; see "M3 pass-2 API additions"). | M3 T4, T5 |
 | **MCP tool mapping**: MCP `name` = `llmName`; annotations always carry explicit `readOnlyHint`/`destructiveHint`; `untrustedContent` propagates as description note + result prefix + `_meta['toolmark/untrustedContent']` (§11.3, §14 amended). | M3 T4 |
 | **Versioning and publishing (R4)**: packages start at `0.0.0`; pre mode `next` for milestones; a `major` changeset for all 8 before the RC → `1.0.0`; one `fixed` group; owner bootstrap publish with a short-lived granular token, then trusted publishing (OIDC) per package and token revoked; publish job on Node 24 behind the owner-approved `npm-release` environment (§17, §21, §22 amended). | M1 T1, T16; M3 T1; M4 T0; M5 T7a–T7c |

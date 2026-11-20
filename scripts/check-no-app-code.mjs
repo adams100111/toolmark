@@ -3,14 +3,20 @@
 //
 //   node scripts/check-no-app-code.mjs [--root <repo>]
 //
-// Fails on /innovation|dits-sa|ChallengeForm|entry[ -]mode/i in `packages/*/src/**` and
-// `packages/*/README.md`. A bare "challenge" is deliberately not matched (false positives).
-// Prints one FAIL line per match (`<path>:<line>: <text>`) and exits 0 or 1.
+// Fails on the deny pattern in env TOOLMARK_APP_CODE_PATTERN (a case-insensitive regex of
+// consumer-app names, kept out of the repo and out of public CI logs; the owner sets it when running
+// the release gates) in `packages/*/src/**` and `packages/*/README.md`. Without the variable it
+// prints a notice and exits 0. Prints one FAIL line per match (`<path>:<line>: <text>`) and exits 0 or 1.
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const PATTERN = /innovation|dits-sa|ChallengeForm|entry[ -]mode/i
+const source = process.env.TOOLMARK_APP_CODE_PATTERN?.trim()
+if (!source) {
+  console.log('check-no-app-code: skipped (TOOLMARK_APP_CODE_PATTERN is not set)')
+  process.exit(0)
+}
+const PATTERN = new RegExp(source, 'i')
 
 const args = process.argv.slice(2)
 const rootArg = args.indexOf('--root')

@@ -29,7 +29,7 @@ test('simple_form_within_3_rounds', async ({ page }) => {
       rev: manifest.rev,
       input: {
         values: {
-          title: { ar: 'تحدي الابتكار', en: 'Innovation challenge' },
+          title: { ar: 'القياس الذكي للمياه', en: 'Smart water metering' },
           type: 'hackathon',
           startsAt: '2026-10-01',
         },
@@ -102,7 +102,7 @@ test('wizard_within_5_rounds', async ({ page }) => {
       tool: WIZARD_FILL,
       input: {
         steps: {
-          basics: { title: 'Innovation Summit', category: 'community' },
+          basics: { title: 'Riyadh Tech Summit', category: 'community' },
           schedule: { startsAt: '2026-11-01', endsAt: '2026-11-02' },
           people: { ownerId, reviewers: [{ name: 'Alan Turing' }] },
         },
@@ -126,7 +126,7 @@ test('wizard_within_5_rounds', async ({ page }) => {
   expect(confirmed.result.status).toBe('ok')
 
   // Every step's values ended up on the page (the last, "people" step was current at submit).
-  await expect(page.getByTestId('events-created')).toContainText('Innovation Summit')
+  await expect(page.getByTestId('events-created')).toContainText('Riyadh Tech Summit')
   await expect(page.getByTestId('events-created')).toContainText('2026-11-01')
   await expect(page.getByTestId('events-created')).toContainText('grace-hopper')
   await expect(page.getByTestId('events-created')).toContainText('Alan Turing')

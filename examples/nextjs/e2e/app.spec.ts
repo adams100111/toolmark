@@ -61,7 +61,7 @@ test('fill_via_in_page_agent', async ({ page }) => {
   await page.waitForFunction(() => globalThis.__toolmark_agent__?.manifest !== undefined)
 
   const values = {
-    title: { ar: 'تحدي الابتكار', en: 'Innovation challenge' },
+    title: { ar: 'القياس الذكي للمياه', en: 'Smart water metering' },
     type: 'hackathon',
     startsAt: '2026-10-01',
   }
@@ -83,8 +83,8 @@ test('fill_via_in_page_agent', async ({ page }) => {
 
   expect(replies).toHaveLength(1)
   expect(replies[0]).toMatchObject({ type: 'result', id: 'fill-1', result: { status: 'ok' } })
-  await expect(page.getByLabel('Title (English)')).toHaveValue('Innovation challenge')
-  await expect(page.getByLabel('Title (Arabic)')).toHaveValue('تحدي الابتكار')
+  await expect(page.getByLabel('Title (English)')).toHaveValue('Smart water metering')
+  await expect(page.getByLabel('Title (Arabic)')).toHaveValue('القياس الذكي للمياه')
   await expect(page.getByLabel('Type')).toHaveValue('hackathon')
   await expect(page.getByLabel('Starts at')).toHaveValue('2026-10-01')
 })

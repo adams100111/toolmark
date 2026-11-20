@@ -6,7 +6,7 @@ const FILL = 'challenges.create.fill'
 
 const input = {
   values: {
-    title: { ar: 'تحدي الابتكار', en: 'Innovation challenge' },
+    title: { ar: 'القياس الذكي للمياه', en: 'Smart water metering' },
     type: 'hackathon',
     startsAt: '2026-10-01',
   },
@@ -46,8 +46,8 @@ async function executeViaModelContext(page: Page, name: string): Promise<ToolRes
 }
 
 async function expectFormFilled(page: Page): Promise<void> {
-  await expect(page.getByLabel('Title (English)')).toHaveValue('Innovation challenge')
-  await expect(page.getByLabel('Title (Arabic)')).toHaveValue('تحدي الابتكار')
+  await expect(page.getByLabel('Title (English)')).toHaveValue('Smart water metering')
+  await expect(page.getByLabel('Title (Arabic)')).toHaveValue('القياس الذكي للمياه')
   await expect(page.getByLabel('Type')).toHaveValue('hackathon')
   await expect(page.getByLabel('Starts at')).toHaveValue('2026-10-01')
 }
